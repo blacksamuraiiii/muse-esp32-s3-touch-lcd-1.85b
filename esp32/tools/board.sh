@@ -28,12 +28,13 @@
 #              Seeed reTerminal E1001 (ESP32-S3) with a 7.5 inch e-paper
 #   reterminal-e1002
 #              Seeed reTerminal E1002 (ESP32-S3) with a 7.3 inch colour e-paper
+#   c6-nopsram ESP32-C6 devkit without PSRAM (status LED on GPIO8, no display)
 #
 # The action defaults to build. Without PORT, flash and monitor use the only
 # matching serial port, if there is exactly one.
 set -euo pipefail
 
-usage() { sed -n '16,33p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
+usage() { sed -n '16,34p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
 
 [ $# -ge 1 ] || usage 2
 case "$1" in -h|--help) usage ;; esac
@@ -48,6 +49,11 @@ DEFAULTS="sdkconfig.defaults"
 case "$BOARD" in
   devkit)
     TARGET=esp32c5
+    PORTS="/dev/cu.usbmodem* /dev/ttyACM*"
+    ;;
+  c6-nopsram)
+    TARGET=esp32c6
+    DEFAULTS="$DEFAULTS;devices/sdkconfig.c6-nopsram"
     PORTS="/dev/cu.usbmodem* /dev/ttyACM*"
     ;;
   ideaspark|sensecap-indicator)
