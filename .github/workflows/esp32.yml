@@ -152,6 +152,9 @@ jobs:
           - board: muse-m5stack-stickc-plus2
             target: esp32
             overlays: ";devices/sdkconfig.muse;devices/sdkconfig.muse-m5stack-stickc-plus2"
+          - board: muse-m5stack-core2
+            target: esp32
+            overlays: ";devices/sdkconfig.muse;devices/sdkconfig.muse-m5stack-core2"
     defaults:
       run:
         shell: bash
