@@ -182,6 +182,9 @@ jobs:
           - board: muse-fnk0104b
             target: esp32s3
             overlays: ";devices/sdkconfig.muse;devices/sdkconfig.muse-fnk0104b"
+          - board: muse-vn-s3-183
+            target: esp32s3
+            overlays: ";devices/sdkconfig.muse;devices/sdkconfig.muse-vn-s3-183"
     defaults:
       run:
         shell: bash
