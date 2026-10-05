@@ -33,6 +33,8 @@
 #   c6-nopsram ESP32-C6 devkit without PSRAM (status LED on GPIO8, no display)
 #   espressif-s3-devkitc-1
 #              ESP32-S3-DevKitC-1 v1.1 N8R8 (status LED, no display)
+#   waveshare-c6-lcd-147
+#              Waveshare ESP32-C6-LCD-1.47 with a 172x320 status screen
 #
 # The action defaults to build. Without PORT, flash and monitor use the only
 # matching serial port, if there is exactly one.
@@ -76,6 +78,12 @@ case "$BOARD" in
     DEFAULTS="$DEFAULTS;devices/sdkconfig.$BOARD"
     # The S3's own USB-Serial-JTAG, which looks like a DevKitC-1's; check
     # which board is on the port before flashing.
+    PORTS="/dev/cu.usbmodem* /dev/ttyACM*"
+    ;;
+  waveshare-c6-lcd-147)
+    TARGET=esp32c6
+    DEFAULTS="$DEFAULTS;devices/sdkconfig.$BOARD"
+    # The C6's own USB-Serial-JTAG.
     PORTS="/dev/cu.usbmodem* /dev/ttyACM*"
     ;;
   espressif-s3-devkitc-1)

@@ -42,7 +42,7 @@
 #include "esp_lcd_panel_ops.h"
 #include "happy_anim.h"
 #include "pixel_font.h"
-#if CONFIG_HOMEHUB_LED_BACKEND_IDEASPARK_ST7789
+#if CONFIG_HOMEHUB_LED_BACKEND_IDEASPARK_ST7789 || CONFIG_HOMEHUB_LED_BACKEND_WAVESHARE_C6_ST7789
 #include "driver/spi_master.h"
 #include "esp_lcd_panel_io.h"
 #include "esp_lcd_panel_st7789.h"
@@ -163,6 +163,24 @@ static const char *TAG = "link.led";
 #define LCD_DOT_MARGIN   10
 // Draw buffers are copied into the frame buffer by the CPU.
 #define LCD_BUF_CAPS     (MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)
+#elif CONFIG_HOMEHUB_LED_BACKEND_WAVESHARE_C6_ST7789
+// Waveshare ESP32-C6-LCD-1.47: 172x320 ST7789 panel on SPI.
+#define LCD_NAME         "Waveshare ESP32-C6 ST7789"
+#define LCD_HOST         SPI2_HOST
+#define LCD_PIN_SCLK     7
+#define LCD_PIN_MOSI     6
+#define LCD_PIN_CS       14
+#define LCD_PIN_DC       15
+#define LCD_PIN_RST      21
+#define LCD_PIN_BL       22
+#define LCD_PCLK_HZ      (40 * 1000 * 1000)
+#define LCD_H_RES        172
+#define LCD_V_RES        320
+#define LCD_X_GAP        34
+#define LCD_BAR_ROWS     10
+#define LCD_ANIM_SCALE   2
+#define LCD_DOT_MARGIN   4
+#define LCD_BUF_CAPS     MALLOC_CAP_DMA
 #endif
 
 #if CONFIG_HOMEHUB_DISPLAY
@@ -386,7 +404,7 @@ static bool s_dot_drawn = false;
 static bool s_image_mode = false;
 static const uint8_t s_dot_rows[LCD_DOT_CELLS] = {0x6, 0xf, 0xf, 0x6};
 
-#if CONFIG_HOMEHUB_LED_BACKEND_IDEASPARK_ST7789
+#if CONFIG_HOMEHUB_LED_BACKEND_IDEASPARK_ST7789 || CONFIG_HOMEHUB_LED_BACKEND_WAVESHARE_C6_ST7789
 static SemaphoreHandle_t s_draw_done = NULL;
 
 static bool lcd_draw_done(esp_lcd_panel_io_handle_t io,
@@ -599,7 +617,7 @@ static void anim_task(void *arg) {
     }
 }
 
-#if CONFIG_HOMEHUB_LED_BACKEND_IDEASPARK_ST7789
+#if CONFIG_HOMEHUB_LED_BACKEND_IDEASPARK_ST7789 || CONFIG_HOMEHUB_LED_BACKEND_WAVESHARE_C6_ST7789
 static esp_err_t lcd_panel_init(void) {
     s_draw_done = xSemaphoreCreateBinary();
     if (!s_draw_done) return ESP_ERR_NO_MEM;
@@ -1198,7 +1216,7 @@ static bool lcd_draw_image_rect(int x, int y, int w, int h, const void *pixels) 
         s_image_mode = true;
         lcd_clear_rows(0, LCD_V_RES);
     }
-#if CONFIG_HOMEHUB_LED_BACKEND_IDEASPARK_ST7789
+#if CONFIG_HOMEHUB_LED_BACKEND_IDEASPARK_ST7789 || CONFIG_HOMEHUB_LED_BACKEND_WAVESHARE_C6_ST7789
     // Already in the panel's format; copied only to reach DMA memory.
     memcpy(s_anim_buf, pixels, (size_t)w * h * sizeof(uint16_t));
 #else
