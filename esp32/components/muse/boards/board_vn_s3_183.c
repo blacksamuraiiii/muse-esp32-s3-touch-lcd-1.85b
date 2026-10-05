@@ -64,7 +64,10 @@ static const char *TAG = "board";
 #define LCD_DC GPIO_NUM_8
 #define LCD_RST GPIO_NUM_18
 #define LCD_BL GPIO_NUM_13     /* active high */
-#define DRAW_BUF_LINES 32
+/* Two buffers of 16 rows, 18 KB of internal RAM. 32 rows took 36 KB, which
+ * left no 8 KB block once Muse was paired, so the Muse VM lookup task couldn't
+ * start and every turn failed with CAN'T REACH MUSE. */
+#define DRAW_BUF_LINES 16
 
 #define I2C_SDA GPIO_NUM_12    /* ES8311 and ES7210 */
 #define I2C_SCL GPIO_NUM_11
