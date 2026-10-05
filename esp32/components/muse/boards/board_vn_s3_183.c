@@ -15,7 +15,7 @@
  */
 
 /*
- * VN ESP32-S3 1.83" NV3023: a Vietnamese ESP32-S3R8 board (16 MB flash, 8 MB
+ * VN ESP32-S3 1.83-inch NV3023: a Vietnamese ESP32-S3R8 board (16 MB flash, 8 MB
  * octal PSRAM) with a 1.83" 240x284 IPS LCD on an NV3023 over SPI (the Xingzhi
  * Cube 1.83" panel), an ES8311 codec for the speaker and an ES7210 ADC for the
  * mics, BOOT, Vol+ and Vol- buttons, and a battery with a charge-status pin.
@@ -364,7 +364,7 @@ static esp_err_t power_off(void)
 }
 
 static const muse_board_t s_board = {
-    .name = "VN ESP32-S3 1.83\" NV3023",
+    .name = "VN ESP32-S3 1.83-inch NV3023",
     .width = LCD_H_RES,
     .height = LCD_V_RES,
     .round = false,
