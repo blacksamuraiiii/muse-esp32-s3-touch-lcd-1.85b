@@ -125,6 +125,9 @@ jobs:
           - board: espressif-s3-devkitc-1
             target: esp32s3
             overlays: ";devices/sdkconfig.espressif-s3-devkitc-1"
+          - board: seeed-respeaker-lite
+            target: esp32s3
+            overlays: ";devices/sdkconfig.seeed-respeaker-lite"
           - board: muse-waveshare-s3-175c
             target: esp32s3
             overlays: ";devices/sdkconfig.muse;devices/sdkconfig.muse-waveshare-s3-175c"
