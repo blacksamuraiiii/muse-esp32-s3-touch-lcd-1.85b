@@ -32,8 +32,10 @@ VECTORS = json.loads((ROOT / "tests/vectors/link_pairing_v5.json").read_text())[
 
 def _cc_command() -> list[str]:
     cmd = shlex.split(os.environ.get("CC", "cc"))
+    # Fail rather than skip: a missing compiler must not let the pairing
+    # security checks pass silently.
     if not cmd or shutil.which(cmd[0]) is None:
-        raise unittest.SkipTest("C compiler not available")
+        raise RuntimeError("C compiler not available; set CC")
     return cmd
 
 
