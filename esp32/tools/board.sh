@@ -29,12 +29,14 @@
 #   reterminal-e1002
 #              Seeed reTerminal E1002 (ESP32-S3) with a 7.3 inch colour e-paper
 #   c6-nopsram ESP32-C6 devkit without PSRAM (status LED on GPIO8, no display)
+#   espressif-s3-devkitc-1
+#              ESP32-S3-DevKitC-1 v1.1 N8R8 (status LED, no display)
 #
 # The action defaults to build. Without PORT, flash and monitor use the only
 # matching serial port, if there is exactly one.
 set -euo pipefail
 
-usage() { sed -n '16,34p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
+usage() { sed -n '16,36p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
 
 [ $# -ge 1 ] || usage 2
 case "$1" in -h|--help) usage ;; esac
@@ -72,6 +74,13 @@ case "$BOARD" in
     DEFAULTS="$DEFAULTS;devices/sdkconfig.home-assistant-voice"
     # The S3's own USB-Serial-JTAG, which looks like a DevKitC-1's; check
     # which board is on the port before flashing.
+    PORTS="/dev/cu.usbmodem* /dev/ttyACM*"
+    ;;
+  espressif-s3-devkitc-1)
+    TARGET=esp32s3
+    DEFAULTS="$DEFAULTS;devices/sdkconfig.$BOARD"
+    # The "ESP32-S3 USB Port", the chip's own USB-Serial-JTAG. The
+    # USB-to-UART port works too; pass it explicitly.
     PORTS="/dev/cu.usbmodem* /dev/ttyACM*"
     ;;
   *) echo "error: unknown board '$BOARD'" >&2; usage 2 ;;

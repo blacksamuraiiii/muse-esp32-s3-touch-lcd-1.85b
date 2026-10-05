@@ -122,6 +122,9 @@ jobs:
           - board: home-assistant-voice
             target: esp32s3
             overlays: ";devices/sdkconfig.home-assistant-voice"
+          - board: espressif-s3-devkitc-1
+            target: esp32s3
+            overlays: ";devices/sdkconfig.espressif-s3-devkitc-1"
           - board: muse-waveshare-s3-175c
             target: esp32s3
             overlays: ";devices/sdkconfig.muse;devices/sdkconfig.muse-waveshare-s3-175c"

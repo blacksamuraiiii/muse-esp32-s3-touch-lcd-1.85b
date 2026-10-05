@@ -165,6 +165,7 @@ status screen.
 |---|---|---|
 | ESP32-C5 DevKitC-1 | Status light and button | `idf.py build` |
 | ESP32-C6 devkit without PSRAM | Status light and button | `tools/board.sh c6-nopsram build` |
+| Espressif ESP32-S3-DevKitC-1 | Status light and button | `tools/board.sh espressif-s3-devkitc-1 build` |
 | ideaspark ESP32 with 1.9" display | Status on screen, images | `tools/board.sh ideaspark build` |
 | Seeed SenseCAP Indicator | Status on a 4" screen, images | `tools/board.sh sensecap-indicator build` |
 | Seeed reTerminal E1001 | Status on a 7.5" e-paper, black and white images | `tools/board.sh reterminal-e1001 build` |
