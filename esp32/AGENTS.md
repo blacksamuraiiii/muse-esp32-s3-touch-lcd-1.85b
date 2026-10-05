@@ -66,6 +66,7 @@ before adding a feature to one.
 | M5Stack StopWatch | `esp32s3` | `devices/sdkconfig.muse;devices/sdkconfig.muse-m5stack-stopwatch` | manual |
 | M5Stack CoreS3 | `esp32s3` | `devices/sdkconfig.muse;devices/sdkconfig.muse-m5stack-cores3` | `tools/muse/board.sh build cores3` |
 | Freenove FNK0104B | `esp32s3` | `devices/sdkconfig.muse;devices/sdkconfig.muse-fnk0104b` | `tools/muse/board.sh build fnk0104b` |
+| Guition JC3248W535 | `esp32s3` | `devices/sdkconfig.muse;devices/sdkconfig.muse-guition-jc3248w535` | `tools/muse/board.sh build jc3248w535` |
 | M5Stack StickC Plus2 | `esp32` | `devices/sdkconfig.muse;devices/sdkconfig.muse-m5stack-stickc-plus2` | manual |
 | M5Stack Core2 (v1.0) | `esp32` | `devices/sdkconfig.muse;devices/sdkconfig.muse-m5stack-core2` | `tools/muse/board.sh build core2` |
 
@@ -124,7 +125,7 @@ voice note that Muse answers in the app, and the dial sets the speaker volume
 
 ### Boards with the full UI, by hand
 
-`tools/muse/board.sh build|flash <s3|s3n|aipi|box3|c6|watcher|sticks3|plus2|cardputer-adv|stopwatch|cores3|core2> [SERIAL|PORT]`
+`tools/muse/board.sh build|flash <s3|s3n|aipi|box3|c6|watcher|sticks3|plus2|cardputer-adv|stopwatch|cores3|core2|jc3248w535> [SERIAL|PORT]`
 builds one board in `build-muse-<profile>/`, logs to
 `/tmp/muse_build_<board>.log`, and clears `managed_components/` before and
 after so it doesn't clash with other boards. When flashing, it finds the
@@ -232,7 +233,7 @@ flash size and status backend.
    | `top` | Waveshare ESP32-S3-Touch-AMOLED-1.75C |
    | `bottom right` | AIPI Lite |
    | `wheel` | Seeed SenseCAP Watcher |
-   | `boot` | Waveshare ESP32-C6-Touch-AMOLED-1.8, or the ESP32-S3-Touch-AMOLED-1.75 — tell them apart by the target (`esp32c6` or `esp32s3`) |
+   | `boot` | Waveshare ESP32-C6-Touch-AMOLED-1.8, the ESP32-S3-Touch-AMOLED-1.75 or the Guition JC3248W535 — tell the C6 by its target (`esp32c6`), and the two S3 boards by the `muse: board:` line a reset logs |
 
 Ask the user only when these come up empty or contradict each other, and say
 what you found and what's ambiguous rather than asking from scratch.
