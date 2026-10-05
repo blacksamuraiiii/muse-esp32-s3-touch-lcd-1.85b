@@ -458,8 +458,8 @@ static void handle(muse_menu_key_t key)
         break;
     case VIEW_STATUS:
     case VIEW_BATTERY:
-        if (key == MUSE_MENU_BACK || key == MUSE_MENU_LEFT ||
-            key == MUSE_MENU_SELECT || key == MUSE_MENU_DOWN) show(VIEW_LIST);
+        if (key == MUSE_MENU_BACK || key == MUSE_MENU_LEFT || key == MUSE_MENU_SELECT ||
+            key == MUSE_MENU_DOWN || key == MUSE_MENU_UP) show(VIEW_LIST);
         break;
     case VIEW_POWER:
     case VIEW_RESET:
