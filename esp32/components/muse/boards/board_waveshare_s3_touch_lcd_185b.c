@@ -108,6 +108,7 @@ static const char *TAG = "board";
 #define TALK_GPIO GPIO_NUM_0   /* BOOT; the PWR key is hardware-only */
 
 static i2c_master_bus_handle_t s_i2c;
+static i2c_master_dev_handle_t s_bq;   /* BQ27220 fuel gauge, added to s_i2c */
 static esp_lcd_panel_handle_t s_panel;
 static muse_gpio_button_t s_talk;
 
@@ -122,6 +123,14 @@ static esp_err_t init(void)
         .flags.enable_internal_pullup = true,
     };
     ESP_RETURN_ON_ERROR(i2c_new_master_bus(&i2c_cfg, &s_i2c), TAG, "i2c");
+    /* i2c_master_transmit_receive() takes a device handle, not a bus handle:
+     * register the fuel gauge as one device on the shared bus. */
+    const i2c_device_config_t bq_cfg = {
+        .dev_addr_length = I2C_ADDR_BIT_LEN_7,
+        .device_address = BQ27220_ADDR,
+        .scl_speed_hz = 100000,
+    };
+    ESP_RETURN_ON_ERROR(i2c_master_bus_add_device(s_i2c, &bq_cfg, &s_bq), TAG, "bq27220 device");
     return muse_gpio_button_init(&s_talk, TALK_GPIO);
 }
 
@@ -328,7 +337,7 @@ static esp_err_t bq27220_read_word(uint8_t reg, uint16_t *out)
 {
     uint8_t data[2];
     ESP_RETURN_ON_ERROR(
-        i2c_master_transmit_receive(s_i2c, BQ27220_ADDR, &reg, 1, data, 2, 50),
+        i2c_master_transmit_receive(s_bq, &reg, 1, data, 2, 50),
         TAG, "bq27220 read");
     *out = (uint16_t)data[0] | ((uint16_t)data[1] << 8);
     return ESP_OK;
