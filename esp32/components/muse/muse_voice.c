@@ -49,7 +49,11 @@ static const char *TAG = "muse_voice";
 #else
 #define PRE_CHUNKS 16                                  /* 320 ms of audio kept from before the press */
 #endif
-#define SETTLE_CHUNKS 10   /* after Muse makes a sound, 200 ms of capture is its own tail */
+/* Barge-in (talk pressed while Muse is speaking) throws away this much
+ * capture first: it is the speaker's own tail still sounding. Tunable per
+ * board at build time (MUSE_BARGE_IN_SETTLE_MS); 200 ms is the measured
+ * tail on the reference boards. */
+#define SETTLE_CHUNKS (CONFIG_MUSE_BARGE_IN_SETTLE_MS * MUSE_AUDIO_RATE / 1000 / MUSE_AUDIO_CHUNK)
 #define REST_BACKSTOP_MS 60000
 
 #if CONFIG_MUSE_HATCH
