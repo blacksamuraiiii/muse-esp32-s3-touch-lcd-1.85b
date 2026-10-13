@@ -1,0 +1,94 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Waveshare ESP32-S3-Touch-LCD-1.85B: ESP32-S3R8, 16 MB flash, 8 MB octal
+# PSRAM, 1.85" 360x360 round ST77916 TFT over QSPI, CST816S touch, ES8311
+# speaker codec + ES7210 dual-mic ADC, BQ27220 fuel gauge, native USB.
+#
+# Pin/fact sources (cite per devices/AGENTS.md, do not guess pins):
+#  - Waveshare official docs: https://docs.waveshare.com/ESP32-S3-Touch-LCD-1.85B
+#    (LCD QSPI CS=21 PCLK=40 D0=46 D1=45 D2=42 D3=41 RST=3 BL=5;
+#     touch CST816S I2C addr 0x15: SCL=10 SDA=11 RST=1 INT=4;
+#     I2S MCLK=2 BCLK=48 LRCK=38 DOUT=47 DIN=39;
+#     ES8311 I2C 7-bit 0x18, ES7210 I2C 7-bit 0x40 (docs print 8-bit 0x30/0x80);
+#     amp enable PA_CTRL=9; BOOT=GPIO0; BQ27220 I2C 7-bit 0x55)
+#  - Vendor repo (clone it, do not read on the web):
+#    https://github.com/waveshareteam/ESP32-S3-Touch-LCD-1.85B
+#
+# Load last, after sdkconfig.muse.
+
+CONFIG_IDF_TARGET="esp32s3"
+CONFIG_MUSE_BOARD_WAVESHARE_S3_TOUCH_LCD_185B=y
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_OCT=y
+CONFIG_SPIRAM_SPEED_80M=y
+CONFIG_SPIRAM_FETCH_INSTRUCTIONS=y
+CONFIG_SPIRAM_RODATA=y
+CONFIG_SPIRAM_XIP_FROM_PSRAM=y
+CONFIG_SPIRAM_ALLOW_STACK_EXTERNAL_MEMORY=y
+CONFIG_ESP32S3_INSTRUCTION_CACHE_32KB=y
+CONFIG_ESP32S3_DATA_CACHE_64KB=y
+CONFIG_ESP32S3_DATA_CACHE_LINE_64B=y
+CONFIG_LV_DRAW_SW_DRAW_UNIT_CNT=2
+CONFIG_BT_NIMBLE_MEM_ALLOC_MODE_EXTERNAL=y
+CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
+
+# Static buffers in PSRAM: Wi-Fi's, lwIP's and BT's, and those marked
+# EXT_RAM_BSS_ATTR (Muse's chat turn, the tunnel batch). Without it light
+# sleep's code leaves Link under 16 KB of DMA RAM once connected, too little
+# to send link.register, so the tunnel never opens. The chip always has
+# PSRAM, so booting without it needn't be allowed.
+CONFIG_SPIRAM_ALLOW_BSS_SEG_EXTERNAL_MEMORY=y
+# CONFIG_SPIRAM_IGNORE_NOTFOUND is not set
+
+# That forces Wi-Fi's TX buffers static, in internal RAM: 8, not 16, at 1.6 KB
+# each, which voice over the tunnel doesn't fill.
+CONFIG_ESP_WIFI_STATIC_TX_BUFFER_NUM=8
+
+# Show Chinese and Japanese in captions: falls back to GNU Unifont 16x16
+# bitmaps for the CJK Unified Ideographs the caption font lacks. About
+# 850 KB of flash, no RAM.
+CONFIG_MUSE_CJK_FONT=y
+
+# Some CST816S variants fail the chip-ID read at init; the touch still works
+# once that check is skipped.
+CONFIG_ESP_LCD_TOUCH_CST816S_DISABLE_READ_ID=y
+
+# Screen off on battery: the CPU drops to the crystal clock and light-sleeps
+# between button polls (muse_input.c). BLE has to allow that with modem sleep;
+# there's no 32 kHz crystal, so its sleep clock is the main crystal, kept
+# powered. On USB power the chip stays awake at full speed.
+CONFIG_PM_ENABLE=y
+CONFIG_FREERTOS_USE_TICKLESS_IDLE=y
+CONFIG_BT_CTRL_MODEM_SLEEP=y
+CONFIG_BT_CTRL_MODEM_SLEEP_MODE_1=y
+CONFIG_BT_CTRL_LPCLK_SEL_MAIN_XTAL=y
+CONFIG_BT_CTRL_MAIN_XTAL_PU_DURING_LIGHT_SLEEP=y
+CONFIG_USJ_NO_AUTO_LS_ON_CONNECTION=y
+
+# The CPU stays powered in light sleep: saving its state takes 8.5 KB of
+# internal RAM, more than Wi-Fi can spare here.
+# CONFIG_PM_POWER_DOWN_CPU_IN_LIGHT_SLEEP is not set
+
+# Pins keep their state in light sleep. This workaround would float them all,
+# panel and touch reset and the amp enable included.
+# CONFIG_ESP_SLEEP_GPIO_RESET_WORKAROUND is not set
+
+# For the battery meter (muse_battery.h, ">power" on the console): time
+# actually slept, and how long each power lock kept the chip awake.
+CONFIG_PM_LIGHT_SLEEP_CALLBACKS=y
+CONFIG_PM_PROFILING=y
+
+# NOTE: no CONFIG_ESPTOOLPY_FLASHSIZE override. This board carries 16 MB
+# flash, which is the muse default (partitions_muse.csv needs 16 MB or more).
