@@ -49,16 +49,20 @@ def duration(secs):
 
 
 def memory(heap):
-    """Internal RAM, from the JSON's "heap": what Wi-Fi, BLE and the tunnel have to work with."""
+    """Internal RAM, from the JSON's "heap": what Wi-Fi, BLE and the tunnel have to work with.
+    With the CPU powered down in light sleep, its retention memory was taken at boot and kept,
+    so it's out of every figure: "lowest while resting" is the headroom while resting, not a dip."""
     kb = lambda n: f"{n / 1024:.1f} KB"
     mem = (f"Memory    internal RAM {kb(heap['free'])} free (largest block {kb(heap['largest'])}), "
            f"{kb(heap['min'])} lowest since boot")
     if heap.get("resting_min") is not None:
         mem += f", {kb(heap['resting_min'])} lowest while resting"
     if "cpu_pd" in heap:
-        mem += (f"\n          retention-capable {kb(heap['retention_free'])} free (largest block "
-                f"{kb(heap['retention_largest'])}); CPU {'powers down' if heap['cpu_pd'] else 'stays powered'}"
-                " in light sleep")
+        cpu = f"CPU {'powers down' if heap['cpu_pd'] else 'stays powered'} in light sleep"
+        if "retention_free" in heap:   # a saved record leaves them out
+            cpu = (f"retention-capable RAM left {kb(heap['retention_free'])} (largest block "
+                   f"{kb(heap['retention_largest'])}); " + cpu)
+        mem += "\n          " + cpu
     return mem
 
 
