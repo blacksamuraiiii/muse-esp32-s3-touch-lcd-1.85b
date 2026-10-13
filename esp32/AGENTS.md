@@ -85,11 +85,23 @@ like most WS2812s: turn the option off in `idf.py menuconfig`, or in
 
 ## Build
 
-Every build needs the user's SDK token (`mgst_…`, from gadgets.muse.ai >
+Every application build needs the user's SDK token (`mgst_…`, from gadgets.muse.ai >
 Account > SDK tokens). Ask for it, then set `CONFIG_GADGET_SDK_TOKEN="mgst_…"`
 in that build directory's `sdkconfig` (or with `idf.py menuconfig`) before
 building. Without it the build warns, and the gadget will stop pairing once
 Muse requires tokens. Never commit the token or print it in full.
+
+The opt-in `CONFIG_MUSE_POWER_TEST` image is an isolated board-load
+characterization harness, not a pairing application, and needs no SDK token or
+network credentials. Power measurement starts at `docs/power/README.md`. Read
+`docs/power/ppk2.md` before any PPK2 use (authorization and fixture gates,
+continuous source ownership, USB unplug/replug), and
+`docs/power/sensecap-watcher.md` for the Watcher's build and procedure. Never
+enable source output with unknown wiring, a connected battery, or
+USB-charger backfeed into PPK2. Other boards reuse the shared
+`muse_power_test_run()` core through `boards/muse_power_test_board.h` hooks
+and board-owned matrices, driven by `tools/power/power_sweep.py`; do not fork
+or rename the core for the next board.
 
 ### DevKitC-1 (default)
 
