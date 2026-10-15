@@ -37,13 +37,11 @@
  * D1/D0). GPIO45 selects VDD_SPI at reset: no external pull-ups on the LCD
  * data lines, and the panel must stay high-Z through reset.
  *
- * ST77916 bring-up note: espressif/esp_lcd_st77916 probes register 0x04 to
- * pick one of two init tables; on some ST77916 panels it picks the wrong one
- * (fine stripes / edge color bands). If the picture looks wrong, pass a
- * custom init table via st77916_vendor_config_t.init_cmds instead of the
- * default (see the component's README and
- * https://github.com/chuck3cz/ws-knob-meteoplaneradar for a panel that
- * needed it).
+ * ST77916 bring-up note: espressif/esp_lcd_st77916 2.x ships a single default
+ * init table (vendor_specific_init_default). The "probes register 0x04 to pick
+ * one of two tables" behaviour described in older write-ups is gone; if the
+ * panel needs a different sequence, pass it via
+ * st77916_vendor_config_t.init_cmds (see the component's README).
  *
  * Self-interruption note: Muse records only while the TALK button is held;
  * there is no always-on VAD and no full-duplex voice path, so the speaker
@@ -51,6 +49,7 @@
  * firmware. Pressing TALK mid-reply (barge-in) first discards
  * CONFIG_MUSE_BARGE_IN_SETTLE_MS of capture (muse_voice.c).
  */
+#include "driver/gpio.h"
 #include "driver/i2c_master.h"
 #include "driver/i2s_std.h"
 #include "driver/ledc.h"
@@ -70,6 +69,7 @@
 
 #include "muse_audio.h"
 #include "muse_board.h"
+#include "muse_lcd_bands.h"
 #include "muse_mem.h"
 
 static const char *TAG = "board";
@@ -85,9 +85,13 @@ static const char *TAG = "board";
 #define LCD_D3 GPIO_NUM_41
 #define LCD_RST GPIO_NUM_3
 #define LCD_BL GPIO_NUM_5       /* LEDC PWM dimming */
-/* Two 32-line buffers in PSRAM: 360*32*2*2 = 46 KB. Internal RAM stays free
- * for Wi-Fi/BLE. */
-#define DRAW_BUF_LINES 32
+/* Four bands to the screen (muse_lcd_bands.h). The SPI DMA cannot read PSRAM
+ * fast enough while both cores draw: ESP-IDF falls back to a private internal
+ * bounce buffer per PSRAM flush, and that shows up as "DMA TX underflow
+ * detected" the moment Wi-Fi and BLE are up. Bands draw in PSRAM but send
+ * through two fixed internal buffers instead. Same as the 1.75C and 2.16. */
+#define DRAW_BUF_LINES (LCD_V_RES / 4)
+#define LCD_CHUNK_BYTES (LCD_H_RES * 8 * 2)
 
 #define TP_ADDR 0x15           /* CST816S, 7-bit */
 #define TP_RST GPIO_NUM_1
@@ -106,6 +110,395 @@ static const char *TAG = "board";
 #define BQ27220_ADDR 0x55      /* fuel gauge, 7-bit */
 
 #define TALK_GPIO GPIO_NUM_0   /* BOOT; the PWR key is hardware-only */
+
+/*
+ * This board ships with two ST77916 panel revisions. The panel identifies
+ * itself through register 0x04 (read over QSPI with opcode 0x0B):
+ *   00 7F 7F 7F -> version 1      00 02 7F 7F -> version 2
+ * esp_lcd_st77916 only ever sends its own built-in default table, which
+ * matches neither revision - the screen comes up as coloured stripes. Both
+ * tables below are copied verbatim from Waveshare's own BSP for this board
+ * (Examples/ESP-IDF-V5.5.3/01_comprehensive_example/components/
+ *  waveshare__esp32_s3_touch_lcd_1_85B/esp32_s3_touch_lcd_1_85B.c,
+ *  vendor_specific_init_version_1 / _2), probe logic included.
+ */
+#define ST77916_OPCODE_WRITE_CMD 0x02
+#define ST77916_OPCODE_READ_CMD  0x0B
+#define ST77916_REG_VERSION      0x04
+#define ST77916_PROBE_HZ         (3 * 1000 * 1000)     /* the probe runs slowly */
+
+static const st77916_lcd_init_cmd_t s_init_version_1[] = {
+    {0xF0, (uint8_t []){0x28}, 1, 0},
+    {0xF2, (uint8_t []){0x28}, 1, 0},
+    {0x7C, (uint8_t []){0xD1}, 1, 0},
+    {0x83, (uint8_t []){0xE0}, 1, 0},
+    {0x84, (uint8_t []){0x61}, 1, 0},
+    {0xF2, (uint8_t []){0x82}, 1, 0},
+    {0xF0, (uint8_t []){0x00}, 1, 0},
+    {0xF0, (uint8_t []){0x01}, 1, 0},
+    {0xF1, (uint8_t []){0x01}, 1, 0},
+    {0xB0, (uint8_t []){0x49}, 1, 0},
+    {0xB1, (uint8_t []){0x4A}, 1, 0},
+    {0xB2, (uint8_t []){0x1F}, 1, 0},
+    {0xB4, (uint8_t []){0x46}, 1, 0},
+    {0xB5, (uint8_t []){0x34}, 1, 0},
+    {0xB6, (uint8_t []){0xD5}, 1, 0},
+    {0xB7, (uint8_t []){0x30}, 1, 0},
+    {0xB8, (uint8_t []){0x04}, 1, 0},
+    {0xBA, (uint8_t []){0x00}, 1, 0},
+    {0xBB, (uint8_t []){0x08}, 1, 0},
+    {0xBC, (uint8_t []){0x08}, 1, 0},
+    {0xBD, (uint8_t []){0x00}, 1, 0},
+    {0xC0, (uint8_t []){0x80}, 1, 0},
+    {0xC1, (uint8_t []){0x10}, 1, 0},
+    {0xC2, (uint8_t []){0x37}, 1, 0},
+    {0xC3, (uint8_t []){0x80}, 1, 0},
+    {0xC4, (uint8_t []){0x10}, 1, 0},
+    {0xC5, (uint8_t []){0x37}, 1, 0},
+    {0xC6, (uint8_t []){0xA9}, 1, 0},
+    {0xC7, (uint8_t []){0x41}, 1, 0},
+    {0xC8, (uint8_t []){0x01}, 1, 0},
+    {0xC9, (uint8_t []){0xA9}, 1, 0},
+    {0xCA, (uint8_t []){0x41}, 1, 0},
+    {0xCB, (uint8_t []){0x01}, 1, 0},
+    {0xD0, (uint8_t []){0x91}, 1, 0},
+    {0xD1, (uint8_t []){0x68}, 1, 0},
+    {0xD2, (uint8_t []){0x68}, 1, 0},
+    {0xF5, (uint8_t []){0x00, 0xA5}, 2, 0},
+    {0xF1, (uint8_t []){0x10}, 1, 0},
+    {0xF0, (uint8_t []){0x00}, 1, 0},
+    {0xF0, (uint8_t []){0x02}, 1, 0},
+    {0xE0, (uint8_t []){0x70, 0x09, 0x12, 0x0C, 0x0B, 0x27, 0x38, 0x54, 0x4E, 0x19, 0x15, 0x15, 0x2C, 0x2F}, 14, 0},
+    {0xE1, (uint8_t []){0x70, 0x08, 0x11, 0x0C, 0x0B, 0x27, 0x38, 0x43, 0x4C, 0x18, 0x14, 0x14, 0x2B, 0x2D}, 14, 0},
+    {0xF0, (uint8_t []){0x10}, 1, 0},
+    {0xF3, (uint8_t []){0x10}, 1, 0},
+    {0xE0, (uint8_t []){0x08}, 1, 0},
+    {0xE1, (uint8_t []){0x00}, 1, 0},
+    {0xE2, (uint8_t []){0x0B}, 1, 0},
+    {0xE3, (uint8_t []){0x00}, 1, 0},
+    {0xE4, (uint8_t []){0xE0}, 1, 0},
+    {0xE5, (uint8_t []){0x06}, 1, 0},
+    {0xE6, (uint8_t []){0x21}, 1, 0},
+    {0xE7, (uint8_t []){0x00}, 1, 0},
+    {0xE8, (uint8_t []){0x05}, 1, 0},
+    {0xE9, (uint8_t []){0x82}, 1, 0},
+    {0xEA, (uint8_t []){0xDF}, 1, 0},
+    {0xEB, (uint8_t []){0x89}, 1, 0},
+    {0xEC, (uint8_t []){0x20}, 1, 0},
+    {0xED, (uint8_t []){0x14}, 1, 0},
+    {0xEE, (uint8_t []){0xFF}, 1, 0},
+    {0xEF, (uint8_t []){0x00}, 1, 0},
+    {0xF8, (uint8_t []){0xFF}, 1, 0},
+    {0xF9, (uint8_t []){0x00}, 1, 0},
+    {0xFA, (uint8_t []){0x00}, 1, 0},
+    {0xFB, (uint8_t []){0x30}, 1, 0},
+    {0xFC, (uint8_t []){0x00}, 1, 0},
+    {0xFD, (uint8_t []){0x00}, 1, 0},
+    {0xFE, (uint8_t []){0x00}, 1, 0},
+    {0xFF, (uint8_t []){0x00}, 1, 0},
+    {0x60, (uint8_t []){0x42}, 1, 0},
+    {0x61, (uint8_t []){0xE0}, 1, 0},
+    {0x62, (uint8_t []){0x40}, 1, 0},
+    {0x63, (uint8_t []){0x40}, 1, 0},
+    {0x64, (uint8_t []){0x02}, 1, 0},
+    {0x65, (uint8_t []){0x00}, 1, 0},
+    {0x66, (uint8_t []){0x40}, 1, 0},
+    {0x67, (uint8_t []){0x03}, 1, 0},
+    {0x68, (uint8_t []){0x00}, 1, 0},
+    {0x69, (uint8_t []){0x00}, 1, 0},
+    {0x6A, (uint8_t []){0x00}, 1, 0},
+    {0x6B, (uint8_t []){0x00}, 1, 0},
+    {0x70, (uint8_t []){0x42}, 1, 0},
+    {0x71, (uint8_t []){0xE0}, 1, 0},
+    {0x72, (uint8_t []){0x40}, 1, 0},
+    {0x73, (uint8_t []){0x40}, 1, 0},
+    {0x74, (uint8_t []){0x02}, 1, 0},
+    {0x75, (uint8_t []){0x00}, 1, 0},
+    {0x76, (uint8_t []){0x40}, 1, 0},
+    {0x77, (uint8_t []){0x03}, 1, 0},
+    {0x78, (uint8_t []){0x00}, 1, 0},
+    {0x79, (uint8_t []){0x00}, 1, 0},
+    {0x7A, (uint8_t []){0x00}, 1, 0},
+    {0x7B, (uint8_t []){0x00}, 1, 0},
+    {0x80, (uint8_t []){0x38}, 1, 0},
+    {0x81, (uint8_t []){0x00}, 1, 0},
+    {0x82, (uint8_t []){0x04}, 1, 0},
+    {0x83, (uint8_t []){0x02}, 1, 0},
+    {0x84, (uint8_t []){0xDC}, 1, 0},
+    {0x85, (uint8_t []){0x00}, 1, 0},
+    {0x86, (uint8_t []){0x00}, 1, 0},
+    {0x87, (uint8_t []){0x00}, 1, 0},
+    {0x88, (uint8_t []){0x38}, 1, 0},
+    {0x89, (uint8_t []){0x00}, 1, 0},
+    {0x8A, (uint8_t []){0x06}, 1, 0},
+    {0x8B, (uint8_t []){0x02}, 1, 0},
+    {0x8C, (uint8_t []){0xDE}, 1, 0},
+    {0x8D, (uint8_t []){0x00}, 1, 0},
+    {0x8E, (uint8_t []){0x00}, 1, 0},
+    {0x8F, (uint8_t []){0x00}, 1, 0},
+    {0x90, (uint8_t []){0x38}, 1, 0},
+    {0x91, (uint8_t []){0x00}, 1, 0},
+    {0x92, (uint8_t []){0x08}, 1, 0},
+    {0x93, (uint8_t []){0x02}, 1, 0},
+    {0x94, (uint8_t []){0xE0}, 1, 0},
+    {0x95, (uint8_t []){0x00}, 1, 0},
+    {0x96, (uint8_t []){0x00}, 1, 0},
+    {0x97, (uint8_t []){0x00}, 1, 0},
+    {0x98, (uint8_t []){0x38}, 1, 0},
+    {0x99, (uint8_t []){0x00}, 1, 0},
+    {0x9A, (uint8_t []){0x0A}, 1, 0},
+    {0x9B, (uint8_t []){0x02}, 1, 0},
+    {0x9C, (uint8_t []){0xE2}, 1, 0},
+    {0x9D, (uint8_t []){0x00}, 1, 0},
+    {0x9E, (uint8_t []){0x00}, 1, 0},
+    {0x9F, (uint8_t []){0x00}, 1, 0},
+    {0xA0, (uint8_t []){0x38}, 1, 0},
+    {0xA1, (uint8_t []){0x00}, 1, 0},
+    {0xA2, (uint8_t []){0x03}, 1, 0},
+    {0xA3, (uint8_t []){0x02}, 1, 0},
+    {0xA4, (uint8_t []){0xDB}, 1, 0},
+    {0xA5, (uint8_t []){0x00}, 1, 0},
+    {0xA6, (uint8_t []){0x00}, 1, 0},
+    {0xA7, (uint8_t []){0x00}, 1, 0},
+    {0xA8, (uint8_t []){0x38}, 1, 0},
+    {0xA9, (uint8_t []){0x00}, 1, 0},
+    {0xAA, (uint8_t []){0x05}, 1, 0},
+    {0xAB, (uint8_t []){0x02}, 1, 0},
+    {0xAC, (uint8_t []){0xDD}, 1, 0},
+    {0xAD, (uint8_t []){0x00}, 1, 0},
+    {0xAE, (uint8_t []){0x00}, 1, 0},
+    {0xAF, (uint8_t []){0x00}, 1, 0},
+    {0xB0, (uint8_t []){0x38}, 1, 0},
+    {0xB1, (uint8_t []){0x00}, 1, 0},
+    {0xB2, (uint8_t []){0x07}, 1, 0},
+    {0xB3, (uint8_t []){0x02}, 1, 0},
+    {0xB4, (uint8_t []){0xDF}, 1, 0},
+    {0xB5, (uint8_t []){0x00}, 1, 0},
+    {0xB6, (uint8_t []){0x00}, 1, 0},
+    {0xB7, (uint8_t []){0x00}, 1, 0},
+    {0xB8, (uint8_t []){0x38}, 1, 0},
+    {0xB9, (uint8_t []){0x00}, 1, 0},
+    {0xBA, (uint8_t []){0x09}, 1, 0},
+    {0xBB, (uint8_t []){0x02}, 1, 0},
+    {0xBC, (uint8_t []){0xE1}, 1, 0},
+    {0xBD, (uint8_t []){0x00}, 1, 0},
+    {0xBE, (uint8_t []){0x00}, 1, 0},
+    {0xBF, (uint8_t []){0x00}, 1, 0},
+    {0xC0, (uint8_t []){0x22}, 1, 0},
+    {0xC1, (uint8_t []){0xAA}, 1, 0},
+    {0xC2, (uint8_t []){0x65}, 1, 0},
+    {0xC3, (uint8_t []){0x74}, 1, 0},
+    {0xC4, (uint8_t []){0x47}, 1, 0},
+    {0xC5, (uint8_t []){0x56}, 1, 0},
+    {0xC6, (uint8_t []){0x00}, 1, 0},
+    {0xC7, (uint8_t []){0x88}, 1, 0},
+    {0xC8, (uint8_t []){0x99}, 1, 0},
+    {0xC9, (uint8_t []){0x33}, 1, 0},
+    {0xD0, (uint8_t []){0x11}, 1, 0},
+    {0xD1, (uint8_t []){0xAA}, 1, 0},
+    {0xD2, (uint8_t []){0x65}, 1, 0},
+    {0xD3, (uint8_t []){0x74}, 1, 0},
+    {0xD4, (uint8_t []){0x47}, 1, 0},
+    {0xD5, (uint8_t []){0x56}, 1, 0},
+    {0xD6, (uint8_t []){0x00}, 1, 0},
+    {0xD7, (uint8_t []){0x88}, 1, 0},
+    {0xD8, (uint8_t []){0x99}, 1, 0},
+    {0xD9, (uint8_t []){0x33}, 1, 0},
+    {0xF3, (uint8_t []){0x01}, 1, 0},
+    {0xF0, (uint8_t []){0x00}, 1, 0},
+    {0x35, (uint8_t []){0x00}, 1, 0},
+    {0x21, (uint8_t []){0x00}, 0, 0},
+    {0x11, (uint8_t []){0x00}, 0, 120},
+    {0x29, (uint8_t []){0x00}, 0, 0},
+};
+
+static const st77916_lcd_init_cmd_t s_init_version_2[] = {
+    {0xF0, (uint8_t []){0x28}, 1, 0},
+    {0xF2, (uint8_t []){0x28}, 1, 0},
+    {0x73, (uint8_t []){0xF0}, 1, 0},
+    {0x7C, (uint8_t []){0xD1}, 1, 0},
+    {0x83, (uint8_t []){0xE0}, 1, 0},
+    {0x84, (uint8_t []){0x61}, 1, 0},
+    {0xF2, (uint8_t []){0x82}, 1, 0},
+    {0xF0, (uint8_t []){0x00}, 1, 0},
+    {0xF0, (uint8_t []){0x01}, 1, 0},
+    {0xF1, (uint8_t []){0x01}, 1, 0},
+    {0xB0, (uint8_t []){0x56}, 1, 0},
+    {0xB1, (uint8_t []){0x4D}, 1, 0},
+    {0xB2, (uint8_t []){0x24}, 1, 0},
+    {0xB4, (uint8_t []){0x87}, 1, 0},
+    {0xB5, (uint8_t []){0x44}, 1, 0},
+    {0xB6, (uint8_t []){0x8B}, 1, 0},
+    {0xB7, (uint8_t []){0x40}, 1, 0},
+    {0xB8, (uint8_t []){0x86}, 1, 0},
+    {0xBA, (uint8_t []){0x00}, 1, 0},
+    {0xBB, (uint8_t []){0x08}, 1, 0},
+    {0xBC, (uint8_t []){0x08}, 1, 0},
+    {0xBD, (uint8_t []){0x00}, 1, 0},
+    {0xC0, (uint8_t []){0x80}, 1, 0},
+    {0xC1, (uint8_t []){0x10}, 1, 0},
+    {0xC2, (uint8_t []){0x37}, 1, 0},
+    {0xC3, (uint8_t []){0x80}, 1, 0},
+    {0xC4, (uint8_t []){0x10}, 1, 0},
+    {0xC5, (uint8_t []){0x37}, 1, 0},
+    {0xC6, (uint8_t []){0xA9}, 1, 0},
+    {0xC7, (uint8_t []){0x41}, 1, 0},
+    {0xC8, (uint8_t []){0x01}, 1, 0},
+    {0xC9, (uint8_t []){0xA9}, 1, 0},
+    {0xCA, (uint8_t []){0x41}, 1, 0},
+    {0xCB, (uint8_t []){0x01}, 1, 0},
+    {0xD0, (uint8_t []){0x91}, 1, 0},
+    {0xD1, (uint8_t []){0x68}, 1, 0},
+    {0xD2, (uint8_t []){0x68}, 1, 0},
+    {0xF5, (uint8_t []){0x00, 0xA5}, 2, 0},
+    {0xDD, (uint8_t []){0x4F}, 1, 0},
+    {0xDE, (uint8_t []){0x4F}, 1, 0},
+    {0xF1, (uint8_t []){0x10}, 1, 0},
+    {0xF0, (uint8_t []){0x00}, 1, 0},
+    {0xF0, (uint8_t []){0x02}, 1, 0},
+    {0xE0, (uint8_t []){0xF0, 0x0A, 0x10, 0x09, 0x09, 0x36, 0x35, 0x33, 0x4A, 0x29, 0x15, 0x15, 0x2E, 0x34}, 14, 0},
+    {0xE1, (uint8_t []){0xF0, 0x0A, 0x0F, 0x08, 0x08, 0x05, 0x34, 0x33, 0x4A, 0x39, 0x15, 0x15, 0x2D, 0x33}, 14, 0},
+    {0xF0, (uint8_t []){0x10}, 1, 0},
+    {0xF3, (uint8_t []){0x10}, 1, 0},
+    {0xE0, (uint8_t []){0x07}, 1, 0},
+    {0xE1, (uint8_t []){0x00}, 1, 0},
+    {0xE2, (uint8_t []){0x00}, 1, 0},
+    {0xE3, (uint8_t []){0x00}, 1, 0},
+    {0xE4, (uint8_t []){0xE0}, 1, 0},
+    {0xE5, (uint8_t []){0x06}, 1, 0},
+    {0xE6, (uint8_t []){0x21}, 1, 0},
+    {0xE7, (uint8_t []){0x01}, 1, 0},
+    {0xE8, (uint8_t []){0x05}, 1, 0},
+    {0xE9, (uint8_t []){0x02}, 1, 0},
+    {0xEA, (uint8_t []){0xDA}, 1, 0},
+    {0xEB, (uint8_t []){0x00}, 1, 0},
+    {0xEC, (uint8_t []){0x00}, 1, 0},
+    {0xED, (uint8_t []){0x0F}, 1, 0},
+    {0xEE, (uint8_t []){0x00}, 1, 0},
+    {0xEF, (uint8_t []){0x00}, 1, 0},
+    {0xF8, (uint8_t []){0x00}, 1, 0},
+    {0xF9, (uint8_t []){0x00}, 1, 0},
+    {0xFA, (uint8_t []){0x00}, 1, 0},
+    {0xFB, (uint8_t []){0x00}, 1, 0},
+    {0xFC, (uint8_t []){0x00}, 1, 0},
+    {0xFD, (uint8_t []){0x00}, 1, 0},
+    {0xFE, (uint8_t []){0x00}, 1, 0},
+    {0xFF, (uint8_t []){0x00}, 1, 0},
+    {0x60, (uint8_t []){0x40}, 1, 0},
+    {0x61, (uint8_t []){0x04}, 1, 0},
+    {0x62, (uint8_t []){0x00}, 1, 0},
+    {0x63, (uint8_t []){0x42}, 1, 0},
+    {0x64, (uint8_t []){0xD9}, 1, 0},
+    {0x65, (uint8_t []){0x00}, 1, 0},
+    {0x66, (uint8_t []){0x00}, 1, 0},
+    {0x67, (uint8_t []){0x00}, 1, 0},
+    {0x68, (uint8_t []){0x00}, 1, 0},
+    {0x69, (uint8_t []){0x00}, 1, 0},
+    {0x6A, (uint8_t []){0x00}, 1, 0},
+    {0x6B, (uint8_t []){0x00}, 1, 0},
+    {0x70, (uint8_t []){0x40}, 1, 0},
+    {0x71, (uint8_t []){0x03}, 1, 0},
+    {0x72, (uint8_t []){0x00}, 1, 0},
+    {0x73, (uint8_t []){0x42}, 1, 0},
+    {0x74, (uint8_t []){0xD8}, 1, 0},
+    {0x75, (uint8_t []){0x00}, 1, 0},
+    {0x76, (uint8_t []){0x00}, 1, 0},
+    {0x77, (uint8_t []){0x00}, 1, 0},
+    {0x78, (uint8_t []){0x00}, 1, 0},
+    {0x79, (uint8_t []){0x00}, 1, 0},
+    {0x7A, (uint8_t []){0x00}, 1, 0},
+    {0x7B, (uint8_t []){0x00}, 1, 0},
+    {0x80, (uint8_t []){0x48}, 1, 0},
+    {0x81, (uint8_t []){0x00}, 1, 0},
+    {0x82, (uint8_t []){0x06}, 1, 0},
+    {0x83, (uint8_t []){0x02}, 1, 0},
+    {0x84, (uint8_t []){0xD6}, 1, 0},
+    {0x85, (uint8_t []){0x04}, 1, 0},
+    {0x86, (uint8_t []){0x00}, 1, 0},
+    {0x87, (uint8_t []){0x00}, 1, 0},
+    {0x88, (uint8_t []){0x48}, 1, 0},
+    {0x89, (uint8_t []){0x00}, 1, 0},
+    {0x8A, (uint8_t []){0x08}, 1, 0},
+    {0x8B, (uint8_t []){0x02}, 1, 0},
+    {0x8C, (uint8_t []){0xD8}, 1, 0},
+    {0x8D, (uint8_t []){0x04}, 1, 0},
+    {0x8E, (uint8_t []){0x00}, 1, 0},
+    {0x8F, (uint8_t []){0x00}, 1, 0},
+    {0x90, (uint8_t []){0x48}, 1, 0},
+    {0x91, (uint8_t []){0x00}, 1, 0},
+    {0x92, (uint8_t []){0x0A}, 1, 0},
+    {0x93, (uint8_t []){0x02}, 1, 0},
+    {0x94, (uint8_t []){0xDA}, 1, 0},
+    {0x95, (uint8_t []){0x04}, 1, 0},
+    {0x96, (uint8_t []){0x00}, 1, 0},
+    {0x97, (uint8_t []){0x00}, 1, 0},
+    {0x98, (uint8_t []){0x48}, 1, 0},
+    {0x99, (uint8_t []){0x00}, 1, 0},
+    {0x9A, (uint8_t []){0x0C}, 1, 0},
+    {0x9B, (uint8_t []){0x02}, 1, 0},
+    {0x9C, (uint8_t []){0xDC}, 1, 0},
+    {0x9D, (uint8_t []){0x04}, 1, 0},
+    {0x9E, (uint8_t []){0x00}, 1, 0},
+    {0x9F, (uint8_t []){0x00}, 1, 0},
+    {0xA0, (uint8_t []){0x48}, 1, 0},
+    {0xA1, (uint8_t []){0x00}, 1, 0},
+    {0xA2, (uint8_t []){0x05}, 1, 0},
+    {0xA3, (uint8_t []){0x02}, 1, 0},
+    {0xA4, (uint8_t []){0xD5}, 1, 0},
+    {0xA5, (uint8_t []){0x04}, 1, 0},
+    {0xA6, (uint8_t []){0x00}, 1, 0},
+    {0xA7, (uint8_t []){0x00}, 1, 0},
+    {0xA8, (uint8_t []){0x48}, 1, 0},
+    {0xA9, (uint8_t []){0x00}, 1, 0},
+    {0xAA, (uint8_t []){0x07}, 1, 0},
+    {0xAB, (uint8_t []){0x02}, 1, 0},
+    {0xAC, (uint8_t []){0xD7}, 1, 0},
+    {0xAD, (uint8_t []){0x04}, 1, 0},
+    {0xAE, (uint8_t []){0x00}, 1, 0},
+    {0xAF, (uint8_t []){0x00}, 1, 0},
+    {0xB0, (uint8_t []){0x48}, 1, 0},
+    {0xB1, (uint8_t []){0x00}, 1, 0},
+    {0xB2, (uint8_t []){0x09}, 1, 0},
+    {0xB3, (uint8_t []){0x02}, 1, 0},
+    {0xB4, (uint8_t []){0xD9}, 1, 0},
+    {0xB5, (uint8_t []){0x04}, 1, 0},
+    {0xB6, (uint8_t []){0x00}, 1, 0},
+    {0xB7, (uint8_t []){0x00}, 1, 0},
+    {0xB8, (uint8_t []){0x48}, 1, 0},
+    {0xB9, (uint8_t []){0x00}, 1, 0},
+    {0xBA, (uint8_t []){0x0B}, 1, 0},
+    {0xBB, (uint8_t []){0x02}, 1, 0},
+    {0xBC, (uint8_t []){0xDB}, 1, 0},
+    {0xBD, (uint8_t []){0x04}, 1, 0},
+    {0xBE, (uint8_t []){0x00}, 1, 0},
+    {0xBF, (uint8_t []){0x00}, 1, 0},
+    {0xC0, (uint8_t []){0x10}, 1, 0},
+    {0xC1, (uint8_t []){0x47}, 1, 0},
+    {0xC2, (uint8_t []){0x56}, 1, 0},
+    {0xC3, (uint8_t []){0x65}, 1, 0},
+    {0xC4, (uint8_t []){0x74}, 1, 0},
+    {0xC5, (uint8_t []){0x88}, 1, 0},
+    {0xC6, (uint8_t []){0x99}, 1, 0},
+    {0xC7, (uint8_t []){0x01}, 1, 0},
+    {0xC8, (uint8_t []){0xBB}, 1, 0},
+    {0xC9, (uint8_t []){0xAA}, 1, 0},
+    {0xD0, (uint8_t []){0x10}, 1, 0},
+    {0xD1, (uint8_t []){0x47}, 1, 0},
+    {0xD2, (uint8_t []){0x56}, 1, 0},
+    {0xD3, (uint8_t []){0x65}, 1, 0},
+    {0xD4, (uint8_t []){0x74}, 1, 0},
+    {0xD5, (uint8_t []){0x88}, 1, 0},
+    {0xD6, (uint8_t []){0x99}, 1, 0},
+    {0xD7, (uint8_t []){0x01}, 1, 0},
+    {0xD8, (uint8_t []){0xBB}, 1, 0},
+    {0xD9, (uint8_t []){0xAA}, 1, 0},
+    {0xF3, (uint8_t []){0x01}, 1, 0},
+    {0xF0, (uint8_t []){0x00}, 1, 0},
+    {0x35, (uint8_t []){0x00}, 1, 0},
+    {0x21, (uint8_t []){0x00}, 1, 0},
+    {0x11, (uint8_t []){0x00}, 1, 120},
+    {0x29, (uint8_t []){0x00}, 1, 0},
+};
 
 static i2c_master_bus_handle_t s_i2c;
 static i2c_master_dev_handle_t s_bq;   /* BQ27220 fuel gauge, added to s_i2c */
@@ -154,20 +547,58 @@ static lv_display_t *display_start(lv_indev_t **touch)
         return NULL;
     }
 
+    /* Reset the panel by hand first: the driver's own reset only happens once
+     * the panel is created, which is after the 0x04 probe below. */
+    const gpio_config_t rst_cfg = {
+        .pin_bit_mask = 1ULL << LCD_RST,
+        .mode = GPIO_MODE_OUTPUT,
+        .pull_up_en = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE,
+    };
+    gpio_config(&rst_cfg);
+    gpio_set_level(LCD_RST, 0);
+    vTaskDelay(pdMS_TO_TICKS(10));
+    gpio_set_level(LCD_RST, 1);
+    vTaskDelay(pdMS_TO_TICKS(10));
+
     const spi_bus_config_t buscfg = ST77916_PANEL_BUS_QSPI_CONFIG(
-        LCD_PCLK, LCD_D0, LCD_D1, LCD_D2, LCD_D3,
-        LCD_H_RES * DRAW_BUF_LINES * sizeof(uint16_t));
+        LCD_PCLK, LCD_D0, LCD_D1, LCD_D2, LCD_D3, LCD_CHUNK_BYTES);
     if (spi_bus_initialize(LCD_HOST, &buscfg, SPI_DMA_CH_AUTO) != ESP_OK) {
         return NULL;
     }
+
+    /* Ask the panel which revision it is, on a slow clock, then init with the
+     * table that matches it (see the two tables above). */
     esp_lcd_panel_io_handle_t io;
-    const esp_lcd_panel_io_spi_config_t io_config = ST77916_PANEL_IO_QSPI_CONFIG(LCD_CS, NULL, NULL);
+    esp_lcd_panel_io_spi_config_t io_config = ST77916_PANEL_IO_QSPI_CONFIG(LCD_CS, NULL, NULL);
+    io_config.pclk_hz = ST77916_PROBE_HZ;
     if (esp_lcd_new_panel_io_spi((esp_lcd_spi_bus_handle_t)LCD_HOST, &io_config, &io) != ESP_OK) {
         return NULL;
     }
-    /* use_qspi_interface=1; init_cmds left NULL for the component default.
-     * See the ST77916 bring-up note at the top if the picture is wrong. */
+    uint8_t version[4] = { 0 };
+    const int probe_cmd = ((ST77916_REG_VERSION & 0xff) << 8) | (ST77916_OPCODE_READ_CMD << 24);
+    const esp_err_t probe_err = esp_lcd_panel_io_rx_param(io, probe_cmd, version, sizeof(version));
+    const st77916_lcd_init_cmd_t *init_cmds = s_init_version_2;
+    size_t init_cmds_size = sizeof(s_init_version_2) / sizeof(s_init_version_2[0]);
+    if (probe_err == ESP_OK && version[0] == 0x00 && version[1] == 0x7F &&
+        version[2] == 0x7F && version[3] == 0x7F) {
+        init_cmds = s_init_version_1;
+        init_cmds_size = sizeof(s_init_version_1) / sizeof(s_init_version_1[0]);
+    }
+    ESP_LOGI(TAG, "ST77916 reg 0x%02X = %02X %02X %02X %02X (%s) -> init table %s", ST77916_REG_VERSION,
+             version[0], version[1], version[2], version[3], esp_err_to_name(probe_err),
+             init_cmds == s_init_version_1 ? "v1" : "v2");
+    esp_lcd_panel_io_del(io);
+
+    /* Now put the device back on the fast clock for the draw path. */
+    io_config.pclk_hz = 40 * 1000 * 1000;
+    if (esp_lcd_new_panel_io_spi((esp_lcd_spi_bus_handle_t)LCD_HOST, &io_config, &io) != ESP_OK) {
+        return NULL;
+    }
     const st77916_vendor_config_t vendor_config = {
+        .init_cmds = init_cmds,
+        .init_cmds_size = init_cmds_size,
         .flags = {
             .use_qspi_interface = 1,
         },
@@ -200,13 +631,14 @@ static lv_display_t *display_start(lv_indev_t **touch)
             .rotation = ESP_LV_ADAPTER_ROTATE_0,
             .hor_res = LCD_H_RES,
             .ver_res = LCD_V_RES,
-            .buffer_height = DRAW_BUF_LINES,
-            .use_psram = true,
-            .require_double_buffer = true,
         },
         .tear_avoid_mode = ESP_LV_ADAPTER_TEAR_AVOID_MODE_NONE,
     };
-    lv_display_t *disp = esp_lv_adapter_register_display(&disp_cfg);
+    /* Bands, not esp_lv_adapter_register_display(): it sets the profile's
+     * buffer_height/use_psram/double-buffer itself (muse_lcd_bands.h). This
+     * runs in boot_task, pinned to MUSE_UI_CORE, so the panel's SPI interrupt
+     * is set up beside the task that sends to it. */
+    lv_display_t *disp = muse_lcd_bands_register(disp_cfg, DRAW_BUF_LINES, LCD_CHUNK_BYTES);
     if (!disp) {
         return NULL;
     }
@@ -249,11 +681,19 @@ static void set_brightness(int pct)
 {
     ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, pct * 1023 / 100);
     ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0);
+    ESP_LOGI(TAG, "backlight %d%%", pct);
+}
+
+/* Past muse_lcd_bands_register(), every use of the panel and its IO has to run
+ * on the task that owns the bus (muse_lcd_bands.h), so wrap these. */
+static void send_panel_sleep(void *sleep)
+{
+    esp_lcd_panel_disp_sleep(s_panel, *(bool *)sleep);   /* SLPIN/SLPOUT; GRAM is kept */
 }
 
 static void panel_sleep(bool sleep)
 {
-    esp_lcd_panel_disp_sleep(s_panel, sleep);   /* SLPIN/SLPOUT; GRAM is kept */
+    muse_lcd_bands_run(send_panel_sleep, &sleep);
 }
 
 static void display_pause(bool pause)
@@ -361,10 +801,16 @@ static esp_err_t read_power(muse_power_t *out)
     return ESP_OK;
 }
 
+static void send_disp_off(void *arg)
+{
+    (void)arg;
+    esp_lcd_panel_disp_on_off(s_panel, false);
+}
+
 static esp_err_t power_off(void)
 {
     set_brightness(0);
-    esp_lcd_panel_disp_on_off(s_panel, false);
+    muse_lcd_bands_run(send_disp_off, NULL);
     while (gpio_get_level(TALK_GPIO) == 0) {
         vTaskDelay(pdMS_TO_TICKS(20));
     }

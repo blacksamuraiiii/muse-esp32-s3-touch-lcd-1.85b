@@ -80,6 +80,7 @@
 #endif
 #if CONFIG_MUSE_ENABLED
 #include "muse_glue.h"
+#include "muse_audio_play.h"
 #include "muse_input.h"
 // Muse joins Wi-Fi from its own settings, before or without pairing.
 #define WIFI_WITHOUT_PAIRING 1
@@ -1579,6 +1580,32 @@ static void draw_url_done(const image_fetch_result_t *r, void *user) {
 }
 #endif
 
+#if CONFIG_MUSE_ENABLED
+// Same shape as draw_url: the download and the playback happen on the
+// player's task, so the command answers asynchronously when it is done.
+typedef struct {
+    noise_ctrl_session_generation_t session_generation;
+    char request_id[64];
+} play_url_ctx_t;
+
+static void audio_play_url_done(bool ok, const char *code, const char *message, void *user) {
+    play_url_ctx_t *ctx = user;
+    cJSON *result = cJSON_CreateObject();
+    cJSON_AddBoolToObject(result, "ok", ok);
+    if (ok) {
+        cJSON *payload = cJSON_AddObjectToObject(result, "payload");
+        cJSON_AddStringToObject(payload, "status", "played");
+        cJSON_AddStringToObject(payload, "detail", message ? message : "");
+    } else {
+        cJSON *error = cJSON_AddObjectToObject(result, "error");
+        cJSON_AddStringToObject(error, "code", code ? code : "unavailable");
+        cJSON_AddStringToObject(error, "message", message ? message : "playback failed");
+    }
+    noise_ctrl_send_command_result(ctx->session_generation, ctx->request_id, result);
+    free(ctx);
+}
+#endif
+
 #if CONFIG_MUSE_WATCHER_CAMERA
 typedef struct {
     noise_ctrl_session_generation_t session_generation;
@@ -1928,6 +1955,30 @@ static cJSON *on_ws_command(
 #if CONFIG_HOMEHUB_VOICE
     if (strcmp(command, "voice.configure") == 0) {
         return voice_configure_command(params);
+    }
+#endif
+#if CONFIG_MUSE_ENABLED
+    // audio.play_url: hand the clip to the player and answer when it is done.
+    // Muse waits on this one, so the reply carries what actually happened.
+    if (strcmp(command, "audio.play_url") == 0) {
+        cJSON *url = cJSON_GetObjectItem(params, "url");
+        if (!cJSON_IsString(url) || !url->valuestring || !url->valuestring[0]) {
+            return command_error("missing_param", "url is required");
+        }
+        play_url_ctx_t *ctx = calloc(1, sizeof(*ctx));
+        if (!ctx) return command_error("out_of_memory", "failed to allocate");
+        ctx->session_generation = session_generation;
+        strncpy(ctx->request_id, request_id, sizeof(ctx->request_id) - 1);
+        if (!muse_audio_play_url(url->valuestring, audio_play_url_done, ctx)) {
+            free(ctx);
+            return command_error(muse_audio_play_busy() ? "busy" : "unavailable",
+                                 muse_audio_play_busy()
+                                     ? "something is already playing"
+                                     : "could not start playback");
+        }
+        cJSON *async = cJSON_CreateObject();
+        cJSON_AddBoolToObject(async, "_async", true);
+        return async;
     }
 #endif
 #if CONFIG_HOMEHUB_SENSECAP_SENSORS

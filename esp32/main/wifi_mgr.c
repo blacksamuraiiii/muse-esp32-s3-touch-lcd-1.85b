@@ -148,10 +148,58 @@ static bool drop_rssi_floor(uint8_t reason) {
 }
 #endif
 
+// Pin the station to a fixed address (CONFIG_HOMEHUB_STATIC_IP and friends).
+// Called from the STA_START handler: the netif and its DHCP client are already
+// up by then, which is the state a static address needs - the client has to be
+// stopped before the address sticks, and the call fails on a netif that is
+// still down. Nothing else restarts DHCP afterwards, so the lease never lands.
+static void apply_static_ip(void) {
+    if (!CONFIG_HOMEHUB_STATIC_IP[0]) {
+        return;    // DHCP, the usual case
+    }
+    esp_netif_ip_info_t ip = { 0 };
+    if (esp_netif_str_to_ip4(CONFIG_HOMEHUB_STATIC_IP, &ip.ip) != ESP_OK
+        || esp_netif_str_to_ip4(CONFIG_HOMEHUB_STATIC_NETMASK, &ip.netmask) != ESP_OK
+        || esp_netif_str_to_ip4(CONFIG_HOMEHUB_STATIC_GATEWAY, &ip.gw) != ESP_OK) {
+        ESP_LOGE(TAG, "static IP %s/%s gw %s is not parseable; staying on DHCP",
+                 CONFIG_HOMEHUB_STATIC_IP, CONFIG_HOMEHUB_STATIC_NETMASK,
+                 CONFIG_HOMEHUB_STATIC_GATEWAY);
+        return;
+    }
+    esp_err_t err = esp_netif_dhcpc_stop(s_sta_netif);
+    if (err != ESP_OK && err != ESP_ERR_ESP_NETIF_DHCP_ALREADY_STOPPED) {
+        ESP_LOGW(TAG, "stopping DHCP client: %s", esp_err_to_name(err));
+    }
+    err = esp_netif_set_ip_info(s_sta_netif, &ip);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "setting static IP failed (%s); back to DHCP",
+                 esp_err_to_name(err));
+        esp_netif_dhcpc_start(s_sta_netif);
+        return;
+    }
+    if (CONFIG_HOMEHUB_STATIC_DNS[0]) {
+        esp_netif_dns_info_t dns = { 0 };
+        dns.ip.type = ESP_IPADDR_TYPE_V4;
+        if (esp_netif_str_to_ip4(CONFIG_HOMEHUB_STATIC_DNS,
+                                 &dns.ip.u_addr.ip4) == ESP_OK) {
+            esp_netif_set_dns_info(s_sta_netif, ESP_NETIF_DNS_MAIN, &dns);
+        } else {
+            ESP_LOGW(TAG, "static DNS %s is not parseable; left unset",
+                     CONFIG_HOMEHUB_STATIC_DNS);
+        }
+    }
+    ESP_LOGI(TAG, "static IP " IPSTR " mask " IPSTR " gw " IPSTR " dns %s",
+             IP2STR(&ip.ip), IP2STR(&ip.netmask), IP2STR(&ip.gw),
+             CONFIG_HOMEHUB_STATIC_DNS[0] ? CONFIG_HOMEHUB_STATIC_DNS : "(unchanged)");
+}
+
 static void event_handler(void *arg, esp_event_base_t base,
                           int32_t id, void *data) {
     if (base == WIFI_EVENT && id == WIFI_EVENT_STA_START) {
-        // Don't auto-connect — wait for explicit wifi_mgr_connect() call.
+        // Don't auto-connect - wait for explicit wifi_mgr_connect() call.
+        // The default glue handler for this event ran first and started the
+        // netif, which is what apply_static_ip() needs.
+        apply_static_ip();
     } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
         const wifi_event_sta_disconnected_t *ev =
             (const wifi_event_sta_disconnected_t *)data;
