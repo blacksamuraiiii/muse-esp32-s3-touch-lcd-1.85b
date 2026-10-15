@@ -1469,6 +1469,31 @@ static char *build_register_json(void) {
                 nullptr, volume_optional);
 #endif
 
+#if CONFIG_MUSE_ENABLED
+    // The audio counterpart of display.draw_url: Muse (or an agent behind it)
+    // synthesises the speech somewhere that has a TTS service and hands us the
+    // result to play. The SDK ships no TTS of its own.
+    cJSON *audio_required = cJSON_CreateObject();
+    cJSON *audio_url_param = cJSON_CreateObject();
+    cJSON_AddStringToObject(audio_url_param, "type", "string");
+    cJSON_AddStringToObject(audio_url_param, "description",
+                            "http(s) URL of an MP3 to play on this gadget's "
+                            "speaker. It is fetched over the gadget's own "
+                            "network connection, so the URL has to be "
+                            "reachable from the gadget, not just from you.");
+    cJSON_AddItemToObject(audio_required, "url", audio_url_param);
+    add_command(commands, "audio.play_url",
+                "Play an audio file on the speaker. Use this to speak a reply: "
+                "synthesise it to MP3 with a text-to-speech service first, then "
+                "pass that URL here. Returns once playback has finished. Only "
+                "one clip plays at a time; a second call while one is playing "
+                "is refused.",
+                audio_required, nullptr);
+    // Long clips are the point, so allow far more than the default 30 s.
+    cJSON_AddNumberToObject(cJSON_GetObjectItem(commands, "audio.play_url"),
+                            "timeout_ms", 120000);
+#endif
+
 #if CONFIG_HOMEHUB_SENSECAP_SENSORS
     add_command(commands, "sensors.read",
                 "Read the air sensors: CO2 in ppm, the tVOC index (1-500, 100 "

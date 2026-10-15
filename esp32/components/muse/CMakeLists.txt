@@ -38,6 +38,8 @@ if(CONFIG_MUSE_ENABLED)
         "muse_settings.c"
         "muse_settings_ui.c"
         "muse_text.c"
+        "muse_tts.c"
+        "muse_audio_play.c"
         "muse_keypad.c"
         "muse_lv_mem.c"
         "muse_link.c"
@@ -101,7 +103,7 @@ if(CONFIG_MUSE_ENABLED)
     elseif(CONFIG_MUSE_BOARD_VN_S3_183)
         list(APPEND srcs "boards/board_vn_s3_183.c")
     elseif(CONFIG_MUSE_BOARD_WAVESHARE_S3_TOUCH_LCD_185B)
-        list(APPEND srcs "boards/board_waveshare_s3_touch_lcd_185b.c")
+        list(APPEND srcs "boards/board_waveshare_s3_touch_lcd_185b.c" "boards/muse_lcd_bands.c")
     elseif(CONFIG_MUSE_BOARD_AI_PASSPORT)
         list(APPEND srcs "boards/board_ai_passport.c")
     endif()

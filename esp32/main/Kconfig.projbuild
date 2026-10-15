@@ -59,6 +59,34 @@ menu "ESP32 Device SDK"
             Password for CONFIG_HOMEHUB_WIFI_SSID. Ignored when the SSID
             override is empty.
 
+    config HOMEHUB_STATIC_IP
+        string "Static IPv4 address (empty = DHCP)"
+        default ""
+        help
+            Pin the station to a fixed address instead of taking one from
+            DHCP. Useful when the router hands out leases slowly, or when the
+            gadget has to sit on an address the rest of the LAN already knows
+            (a bypass router that does the DNS work, for example).
+
+            Needs CONFIG_HOMEHUB_STATIC_NETMASK and CONFIG_HOMEHUB_STATIC_GATEWAY
+            as well; the DHCP client is stopped once the address is applied, so
+            the router must not also serve this address to another host.
+
+    config HOMEHUB_STATIC_NETMASK
+        string "Static IPv4 netmask (empty = DHCP)"
+        default ""
+
+    config HOMEHUB_STATIC_GATEWAY
+        string "Static IPv4 gateway (empty = DHCP)"
+        default ""
+
+    config HOMEHUB_STATIC_DNS
+        string "Static DNS server (empty = keep DHCP's, or none)"
+        default ""
+        help
+            Primary DNS for the station. Set this to the router that resolves
+            names for the tunnel when the gadget is behind a bypass router.
+
     config HOMEHUB_TOKEN_REFRESH_INTERVAL_DAYS
         int "Proactive device token refresh interval (days, 0 = disabled)"
         range 0 365
