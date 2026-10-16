@@ -26,9 +26,27 @@
 | GET | `/tts?voice=<音色>&text=<URL 编码文本>` | 返回 `audio/mpeg`；`q=` 与 `text=` 都收；缺文本 → 400，上游非 MP3 → 502 |
 | GET | `/health` | JSON：生效音色、rate、pitch、max_chars、缓存条目与字节数 |
 
-可选参数：`rate`（默认 `+8%`）、`pitch`（默认 `+0Hz`）。**pitch 必须带 Hz，不能写百分号**——
+可选参数：`rate`（默认 `+8%`）、`pitch`（默认 `+0Hz`）、`stream`（默认 `1`）。**pitch 必须带 Hz，不能写百分号**——
 edge-tts 校验 `^[+-]\d+Hz$`，写 `+4%` 会直接 502（这是照搬 timmy 的 Azure 版 `+4%` 时踩的坑；
 Azure Speech 收百分比，edge-tts 不收）。非法取值会被忽略并回落默认值，不会打断这一轮朗读。
+
+### 流式返回（v1.3，首音提速）
+
+默认 `stream=1`：边合成边用 `Transfer-Encoding: chunked` 推送，先攒够 1024 字节确认是 MP3 再发 200，
+之后来一块发一块；整段结束仍写入缓存。`stream=0` 回到「合成完再发」的旧行为。
+
+实测 A/B（同一段 170 字中文 ≈ 20.6 秒音频，各自冷启动，容器重启清缓存）：
+
+| 模式 | 首字节 | 全部完成 | 字节数 |
+|---|---|---|---|
+| `stream=0` 缓冲 | 3.15 s | 3.15 s | 123552 |
+| `stream=1` 流式 | **1.29 s** | 3.05 s | 123552 |
+
+首字节提前 **1.86 s（降 59%）**；两份字节数一致，取回后 `ffprobe` 校验 `mp3 / 24000 Hz / mono / 20.59 s / 48 kbps`，内容完整。
+固件侧同步加了度量：串口 `muse.tts` 行现在会打 `content-length`、`first byte N ms`、`total N ms`——
+流式响应没有 Content-Length（值为 -1），所以字节数改由固件自己累计。
+
+**注意端到端的瓶颈不在这一环**：Muse 服务端把回复文本吐给板子要 4–7.6 秒，本机合成只占约 2–3 秒。
 
 **v1.2 相对你初版新增**（参考 `timmy2048/muse-gadget-185b` 的 `tools/tts_wg_proxy.py`）：
 
