@@ -21,9 +21,11 @@
 #include <string.h>
 
 #include "esp_crt_bundle.h"
+#include "esp_heap_caps.h"
 #include "esp_http_client.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/idf_additions.h"
 #include "freertos/stream_buffer.h"
 #include "freertos/task.h"
 
@@ -45,10 +47,12 @@ static const char *TAG = "muse.tts";
 #define TTS_SEND_TIMEOUT_MS 3000
 #define TTS_HTTP_TIMEOUT_MS 15000
 
-static StreamBufferHandle_t s_ring;
-static TaskHandle_t s_task;
-static volatile bool s_fetch_done;   /* the task has finished every request */
+static StreamBufferHandle_t s_ring;   /* storage in PSRAM: internal RAM is the scarce one */
+static TaskHandle_t s_task;           /* one long-lived worker; its stack lives in PSRAM */
+static volatile bool s_fetch_done;    /* the worker has finished every request */
 static volatile bool s_abort;
+static volatile bool s_busy;          /* a reply is being fetched right now */
+static char *volatile s_pending;      /* text handed to the worker by muse_tts_speak */
 
 static size_t url_encode(char *out, size_t cap, const char *in, size_t in_len)
 {
@@ -155,9 +159,8 @@ static bool fetch(const char *url)
     return true;
 }
 
-static void tts_task(void *arg)
+static void fetch_reply(char *text)
 {
-    char *text = (char *)arg;
     const char *url = CONFIG_MUSE_TTS_URL;
     const char *ph = strstr(url, "{text}");
     size_t prefix_len = ph ? (size_t)(ph - url) : strlen(url);
@@ -182,21 +185,48 @@ static void tts_task(void *arg)
         pos += n;
     }
 
-    free(text);
-    s_fetch_done = true;
-    s_task = NULL;
-    vTaskDelete(NULL);
+}
+
+/* One long-lived worker: created once with its stack in PSRAM, then woken per
+ * reply. It never exits, so there is no caps-aware self-delete to get wrong
+ * (and vStreamBufferDeleteWithCaps() double-frees on IDF 6.0.1, esp-idf#18855). */
+static void tts_task(void *arg)
+{
+    (void)arg;
+    for (;;) {
+        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+        char *text = s_pending;
+        s_pending = NULL;
+        if (text) {
+            fetch_reply(text);
+            free(text);
+        }
+        s_fetch_done = true;
+        s_busy = false;
+    }
 }
 
 bool muse_tts_speak(const char *text)
 {
-    if (!CONFIG_MUSE_TTS_URL[0] || s_task || !text || !text[0]) {
+    if (!CONFIG_MUSE_TTS_URL[0] || s_busy || !text || !text[0]) {
         return false;
     }
     if (!s_ring) {
-        s_ring = xStreamBufferCreate(TTS_RING_BYTES, 1);
+        /* PSRAM: a 16 KB stream buffer out of internal RAM starves the rest. */
+        s_ring = xStreamBufferCreateWithCaps(TTS_RING_BYTES, 1, MALLOC_CAP_SPIRAM);
         if (!s_ring) {
             ESP_LOGW(TAG, "no stream buffer for TTS audio");
+            return false;
+        }
+    }
+    if (!s_task) {
+        /* 12 KB of stack does not fit internal RAM here (largest free block was
+         * 9 KB on the 185B), so the worker's stack comes from PSRAM. */
+        if (xTaskCreateWithCaps(tts_task, "muse_tts", TTS_TASK_STACK, NULL,
+                                TTS_TASK_PRIO, &s_task,
+                                MALLOC_CAP_SPIRAM) != pdPASS) {
+            s_task = NULL;
+            ESP_LOGW(TAG, "no task for TTS (PSRAM stack)");
             return false;
         }
     }
@@ -205,13 +235,9 @@ bool muse_tts_speak(const char *text)
     s_fetch_done = false;
     char *copy = strdup(text);
     if (!copy) return false;
-    if (xTaskCreate(tts_task, "muse_tts", TTS_TASK_STACK, copy, TTS_TASK_PRIO,
-                    &s_task) != pdPASS) {
-        free(copy);
-        s_task = NULL;
-        ESP_LOGW(TAG, "no task for TTS");
-        return false;
-    }
+    s_pending = copy;
+    s_busy = true;
+    xTaskNotifyGive(s_task);
     return true;
 }
 
@@ -228,7 +254,7 @@ bool muse_tts_drained(void)
 
 bool muse_tts_active(void)
 {
-    return s_task != NULL;
+    return s_busy;
 }
 
 void muse_tts_cancel(void)

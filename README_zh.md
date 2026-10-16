@@ -296,20 +296,28 @@ MP3），再把上面第二行填进去即可——令牌算法由上游维护�
 > 是"只显示文字"的设计（`muse_chat_session.cpp` 的 `message_done()` 在文字分支提前返回），
 > 所以**没法用串口命令触发一次朗读来做验证**，只能按住按钮说话。
 
-> ⚠️ **实现状态：已接线并编译刷入，但 2026-10-15 真机实测仍未出声，尚未定位。**
-> 下一轮排查请按这个顺序看串口日志（过滤 `muse.tts` 这个 tag）：
+> ✅ **实现状态：2026-10-16 已打通并真机验证出声。** 本地 edge-tts 服务（Docker @ 10.168.2.7:5050）→
+> 板子取回 MP3 → minimp3 解码 → 重采样 → 扬声器，三轮实测全部出声。
 >
-> | 日志 | 含义 | 下一步 |
+> 打通前卡住的两个真因（都记在案）：
+>
+> | 现象 | 根因 | 修法 |
 > |---|---|---|
-> | 完全没有 `muse.tts` 行 | 根本没发起请求 | 查 `start_tts()` 是否走到了发声分支：日志里应有 `speaking message …`。若打的是 `showing message …`，说明 `CONFIG_MUSE_TTS_URL[0] && s_turn.texts` 有一个不成立 |
-> | `TTS request failed: …` | TLS/DNS/网络 | 多半是证书：确认 `CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y`，或换成本机可直连的 URL |
-> | `TTS endpoint answered 4xx/5xx` | 服务端拒绝 | 403 一般是令牌/风控；404 是 URL 写错 |
-> | `TTS got N bytes` 有、但仍无声 | 音频到了但没播 | 查 `reply audio: … Hz … kbps` 有没有打、`s_out` 是否被排空 |
-> | `audio not being read, stopping the fetch` | 回合任务没来取数据 | `pump_tts()` 没被调到，或回合提前结束 |
+> | 只出字幕、`muse.tts: no task for TTS` | 内部 RAM 最大连续块只剩 9 KB，而 TTS 任务要 12 KB 连续栈 → `xTaskCreate` 失败，回合退回静音 | TTS 任务栈与 16 KB 环形缓冲都改从 PSRAM 分配（`xTaskCreateWithCaps` / `xStreamBufferCreateWithCaps`）。任务改为常驻 worker，不再自我删除 |
+> | 回复根本不入队 | `SUB_LINE_MAX` 只有 256 KB，长 `message_done` 事件整行被丢 | `muse_chat_session.cpp:94` → 1 MB |
 >
-> 另一个尚未排除的方向：百度返回的虽然是合法 MPEG（首字节 `ff f3 88 c4`），
-> 但帧结构与 minimp3 的预期可能不完全一致，必要时用 `CONFIG_MUSE_TTS_URL` 指向一个
-> 已知能播的 MP3（例如局域网里的静态文件服务）来隔离"取回"与"解码"两段。
+> 成功时的串口标志（可作以后回归的验收行）：
+>
+> ```
+> I muse_chat_session: speaking message assistant-msg-… (N chars)
+> I muse_chat_session: reply audio: 24000 Hz, 1 ch, 48 kbps
+> I muse.tts: TTS got NNNNN bytes
+> I muse_voice: muse reply: X.XXs of audio, N.NNs total
+> ```
+>
+> 另注：edge-tts 固定回 24 kHz MP3，固件自带重采样器会降到 codec 的 16 kHz，服务端不用管采样率。
+> 端到端首音约 8–10 秒（Muse 服务端回文本 4–7 秒为主因，本机合成约 4 秒）；嫌慢可把服务端改成流式返回。
+> 换后端仍只需改 `CONFIG_MUSE_TTS_URL` 一行；局域网服务见 `tts-server/README.md`。
 
 ---
 

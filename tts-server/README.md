@@ -10,7 +10,7 @@
 |---|---|
 | 主机 | **10.168.2.7**（Alpine 3.17.0 / x86_64，Docker 20.10.24，**无 compose**） |
 | 目录 | `/opt/muse-tts/`（`tts_server.py`、`requirements.txt`、`Dockerfile`，md5 与仓库一致） |
-| 镜像 | `muse-tts:1.0`（`python:3.12-alpine` + flask 3.1.3 + edge-tts 7.3.1） |
+| 镜像 | `muse-tts:1.2`（`python:3.12-alpine` + flask 3.1.3 + edge-tts 7.3.1；1.0 → 初版，1.1 → 韵律/校验/缓存，1.2 → pitch 单位修正） |
 | 容器 | `muse-tts`，`--restart unless-stopped`，映射 `0.0.0.0:5050->5050` |
 | 音色 | 容器环境变量 `TTS_VOICE`，当前 `zh-CN-XiaoxiaoNeural` |
 
@@ -23,8 +23,31 @@
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET | `/tts?voice=<音色>&text=<URL 编码文本>` | 返回 `audio/mpeg`；缺 `text` → 400，合成失败 → 502 |
-| GET | `/health` | 返回 `ok` |
+| GET | `/tts?voice=<音色>&text=<URL 编码文本>` | 返回 `audio/mpeg`；`q=` 与 `text=` 都收；缺文本 → 400，上游非 MP3 → 502 |
+| GET | `/health` | JSON：生效音色、rate、pitch、max_chars、缓存条目与字节数 |
+
+可选参数：`rate`（默认 `+8%`）、`pitch`（默认 `+0Hz`）。**pitch 必须带 Hz，不能写百分号**——
+edge-tts 校验 `^[+-]\d+Hz$`，写 `+4%` 会直接 502（这是照搬 timmy 的 Azure 版 `+4%` 时踩的坑；
+Azure Speech 收百分比，edge-tts 不收）。非法取值会被忽略并回落默认值，不会打断这一轮朗读。
+
+**v1.2 相对你初版新增**（参考 `timmy2048/muse-gadget-185b` 的 `tools/tts_wg_proxy.py`）：
+
+- 韵律参数 `rate`/`pitch`（他的 Azure 版用 `+8%`/`+4%`；`style=express-as` 是 Azure 专属，edge-tts 没有）
+- **MP3 合法性校验**：`len>64` 且首字节 `0xFF` 或前 3 字节 `ID3`，否则返 502——避免上游错误正文被当音频喂给解码器
+- `MAX_TEXT_LEN` 500 → **180**，与固件 180 字节分块对齐，首音更快
+- `/health` 由纯文本 `ok` 改为 JSON
+- 参数名兼容 `q`
+- 另加**结果 LRU 缓存**（同句重复回复直接命中；实测 4.13 s → 0.0033 s）
+
+## 实测结果（2026-10-16）
+
+- 主机自测：`GET /tts?...text=你好，我是慕思板子` → 200，13680 字节，4.13 s；同句二次请求 → 200，**0.0033 s**，`X-TTS-Cache: hit`
+- **从板子同网段（WSL 10.168.2.94）实测**：`GET /health` → 200；`GET /tts?text=测试第N次…` → 200，17.5 KB，3.9–4.0 s
+- 返回文件开头 `ff f3 64 c4`（MPEG 同步字，**无 ID3 头**），ffprobe 报时长 2.93 s → 合法可播 MP3，minimp3 直接能吃
+- **真机端到端出声已验证**（2026-10-16）：板子三轮全通，串口出现 `TTS got 29664/36144/48240 bytes` 与
+  `reply audio: 24000 Hz, 1 ch, 48 kbps`；edge-tts 固定 24 kHz，固件重采样到 16 kHz 输出。
+  时序样例（秒，自松手算）：`text +4.0 → done +4.9 → mp3 +7.8 → audio +7.8`
+- 主机出网：`registry-1.docker.io:443`、`speech.platform.bing.com:443` 均通；宿主**没装 python3**，所以必须走容器
 
 ## 固件侧接法
 
@@ -43,20 +66,13 @@ CONFIG_MUSE_TTS_URL="http://10.168.2.7:5050/tts?voice=zh-CN-XiaoxiaoNeural&text=
 # 1) 传文件（本地 → 主机，无 sshpass 时用 paramiko 小工具）
 python3 ssh_run.py 10.168.2.7 root '<password>' put tts_server.py /opt/muse-tts/tts_server.py
 # 2) 构建
-ssh 10.168.2.7 'cd /opt/muse-tts && docker build -t muse-tts:1.0 .'
+ssh 10.168.2.7 'cd /opt/muse-tts && docker build -t muse-tts:1.2 .'
 # 3) 运行
 ssh 10.168.2.7 'docker rm -f muse-tts; docker run -d --name muse-tts --restart unless-stopped \
-  -p 5050:5050 -e TTS_VOICE=zh-CN-XiaoxiaoNeural muse-tts:1.0'
+  -p 5050:5050 -e TTS_VOICE=zh-CN-XiaoxiaoNeural muse-tts:1.2'
 # 4) 验证
 ssh 10.168.2.7 'curl -sS "http://127.0.0.1:5050/tts?text=%E4%BD%A0%E5%A5%BD" -o /tmp/t.mp3 && ls -l /tmp/t.mp3'
 ```
-
-## 实测结果（2026-10-16）
-
-- 主机自测：`GET /tts?...text=你好，我是慕思板子` → 200，14688 字节，4.5 s。
-- **从板子同网段（WSL 10.168.2.94）实测**：`GET /health` → 200；`GET /tts?text=测试第N次…` → 200，17568 / 17712 字节，3.9–4.0 s。
-- 返回文件开头 `ff f3 64 c4`（MPEG 同步字，**无 ID3 头**），ffprobe 报时长 2.93 s → 合法可播 MP3，minimp3 直接能吃。
-- 主机出网：`registry-1.docker.io:443`、`speech.platform.bing.com:443` 均通；宿主**没装 python3**，所以必须走容器。
 
 ## 已知限制
 
