@@ -1,0 +1,24 @@
+# 统一行尾符：仓库内一律 LF，检出也是一律 LF
+# 原因：2026-10-16 前本仓 Windows 侧编辑把 628 个已跟踪文件改成 CRLF，
+#       使 git diff 全是整文件伪差异，真实改动被淹没。
+* text=auto eol=lf
+
+# Windows 脚本必须 CRLF，否则 cmd/PowerShell 解析异常
+*.ps1 text eol=crlf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# 二进制：不参与行尾转换
+*.bin binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.mp3 binary
+*.ppm binary
+# PEM 是文本，仓库内保持 LF（签名字节不受影响）
+*.pem text eol=lf
+*.ico binary
+*.zip binary
+*.woff binary
+*.woff2 binary
