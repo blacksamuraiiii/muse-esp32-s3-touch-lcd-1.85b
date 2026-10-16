@@ -24,6 +24,7 @@
 #include "esp_heap_caps.h"
 #include "esp_http_client.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/idf_additions.h"
 #include "freertos/stream_buffer.h"
@@ -36,6 +37,12 @@ static const char *TAG = "muse.tts";
  * fast as it goes out of the speaker. */
 #define TTS_RING_BYTES 16384
 #define TTS_HTTP_BUF 1024
+/* The request line must fit the client's TX buffer, whose default is only 512
+ * bytes (DEFAULT_HTTP_BUF_SIZE): percent-encoding turns one 3-byte Chinese
+ * character into 9 characters, so a 180-byte chunk of Chinese needs ~540 for
+ * the text plus ~53 of method/path/version. 512 overflows -> "Out of buffer"
+ * from esp_http_client and the chunk is lost (ESP_FAIL). */
+#define TTS_HTTP_TX_BUF 2048
 /* Per request. Short enough that any proxy in the path is happy with the URL,
  * and that playback starts before a long reply has finished synthesising. */
 #define TTS_TEXT_CHUNK 180
@@ -45,7 +52,7 @@ static const char *TAG = "muse.tts";
 #define TTS_TASK_STACK 12288
 #define TTS_TASK_PRIO 4
 #define TTS_SEND_TIMEOUT_MS 3000
-#define TTS_HTTP_TIMEOUT_MS 15000
+#define TTS_HTTP_TIMEOUT_MS 8000
 
 static StreamBufferHandle_t s_ring;   /* storage in PSRAM: internal RAM is the scarce one */
 static TaskHandle_t s_task;           /* one long-lived worker; its stack lives in PSRAM */
@@ -53,6 +60,8 @@ static volatile bool s_fetch_done;    /* the worker has finished every request *
 static volatile bool s_abort;
 static volatile bool s_busy;          /* a reply is being fetched right now */
 static char *volatile s_pending;      /* text handed to the worker by muse_tts_speak */
+static volatile size_t s_bytes;       /* bytes of the request being read */
+static volatile int64_t s_first_byte_us; /* when the first body byte arrived */
 
 static size_t url_encode(char *out, size_t cap, const char *in, size_t in_len)
 {
@@ -111,6 +120,9 @@ static esp_err_t on_http_data(esp_http_client_event_t *ev)
     if (ev->event_id != HTTP_EVENT_ON_DATA || ev->data_len <= 0) {
         return ESP_OK;
     }
+    if (s_first_byte_us == 0) {
+        s_first_byte_us = esp_timer_get_time();
+    }
     size_t off = 0;
     while (off < (size_t)ev->data_len) {
         size_t n = xStreamBufferSend(s_ring, (const uint8_t *)ev->data + off,
@@ -123,18 +135,20 @@ static esp_err_t on_http_data(esp_http_client_event_t *ev)
             s_abort = true;
             break;
         }
+        s_bytes += n;
         off += n;
     }
     return ESP_OK;
 }
 
-static bool fetch(const char *url)
+static bool fetch_once(const char *url)
 {
     const esp_http_client_config_t cfg = {
         .url = url,
         .method = HTTP_METHOD_GET,
         .timeout_ms = TTS_HTTP_TIMEOUT_MS,
         .buffer_size = TTS_HTTP_BUF,
+        .buffer_size_tx = TTS_HTTP_TX_BUF,
         .crt_bundle_attach = esp_crt_bundle_attach,
         .event_handler = on_http_data,
     };
@@ -143,20 +157,47 @@ static bool fetch(const char *url)
         ESP_LOGW(TAG, "http client init failed");
         return false;
     }
+    s_bytes = 0;
+    s_first_byte_us = 0;
+    int64_t t0 = esp_timer_get_time();
     esp_err_t err = esp_http_client_perform(c);
     int status = esp_http_client_get_status_code(c);
     int64_t body = esp_http_client_get_content_length(c);
     esp_http_client_cleanup(c);
     if (err != ESP_OK) {
-        ESP_LOGW(TAG, "TTS request failed: %s", esp_err_to_name(err));
+        ESP_LOGW(TAG, "TTS request failed: %s (url %u bytes, budget %u)",
+                 esp_err_to_name(err), (unsigned)strlen(url),
+                 (unsigned)TTS_HTTP_TX_BUF);
         return false;
     }
     if (status != 200) {
         ESP_LOGW(TAG, "TTS endpoint answered %d", status);
         return false;
     }
-    ESP_LOGI(TAG, "TTS got %lld bytes", (long long)body);
+    /* A streamed reply has no Content-Length (-1), so report what we read and
+     * how long the first byte took: that is the number the stream change moves. */
+    ESP_LOGI(TAG, "TTS got %u bytes (content-length %lld, first byte %d ms, total %d ms)",
+             (unsigned)s_bytes, (long long)body,
+             s_first_byte_us ? (int)((s_first_byte_us - t0) / 1000) : -1,
+             (int)((esp_timer_get_time() - t0) / 1000));
     return true;
+}
+
+/* One retry, but only when nothing was delivered: re-requesting after a partial
+ * stream would feed the decoder the same audio twice. */
+static bool fetch(const char *url)
+{
+    if (fetch_once(url)) {
+        return true;
+    }
+    if (s_bytes == 0) {
+        ESP_LOGW(TAG, "nothing delivered, retrying once");
+        vTaskDelay(pdMS_TO_TICKS(400));
+        if (fetch_once(url)) {
+            return true;
+        }
+    }
+    return false;
 }
 
 static void fetch_reply(char *text)

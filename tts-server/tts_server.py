@@ -29,7 +29,9 @@ import asyncio
 import json
 import logging
 import os
+import queue
 import re
+import threading
 import time
 from collections import OrderedDict
 
@@ -53,6 +55,12 @@ _PITCH_RE = re.compile(r"^[+-]\d+Hz$")
 MAX_TEXT_LEN = int(os.environ.get("TTS_MAX_CHARS", "180"))
 CACHE_MAX_ITEMS = int(os.environ.get("TTS_CACHE_ITEMS", "64"))
 CACHE_MAX_BYTES = int(os.environ.get("TTS_CACHE_BYTES", str(8 * 1024 * 1024)))
+# Streaming sends audio as it is synthesised, so playback starts ~1 s in instead
+# of after the whole reply. stream=0 asks for the old buffered behaviour.
+STREAM_DEFAULT = os.environ.get("TTS_STREAM", "1") != "0"
+# Bytes to hold before answering 200: enough to prove it really is MP3.
+STREAM_HEAD_BYTES = 1024
+STREAM_FIRST_TIMEOUT = 20.0
 
 _cache = OrderedDict()   # (voice, rate, pitch, text) -> mp3 bytes
 _cache_bytes = 0
@@ -81,6 +89,67 @@ async def _synth(text: str, voice: str, rate: str, pitch: str) -> bytes:
         if chunk["type"] == "audio":
             audio += chunk["data"]
     return bytes(audio)
+
+
+def _start_synth_thread(text, voice, rate, pitch, out: "queue.Queue"):
+    """Feed edge-tts audio into `out` from a thread; None ends it, an Exception reports it."""
+
+    async def run():
+        try:
+            async for chunk in edge_tts.Communicate(
+                text, voice, rate=rate, pitch=pitch
+            ).stream():
+                if chunk["type"] == "audio":
+                    out.put(chunk["data"])
+        except Exception as e:  # noqa: BLE001 - handed to the view, reported as 502
+            out.put(e)
+        finally:
+            out.put(None)
+
+    threading.Thread(target=lambda: asyncio.run(run()), daemon=True).start()
+
+
+def _stream_reply(key, text, voice, rate, pitch, started):
+    """Generator: yield audio as it arrives, cache the whole thing at the end."""
+    out: queue.Queue = queue.Queue()
+    _start_synth_thread(text, voice, rate, pitch, out)
+
+    head = bytearray()
+    deadline = time.monotonic() + STREAM_FIRST_TIMEOUT
+    while len(head) < STREAM_HEAD_BYTES:
+        try:
+            item = out.get(timeout=max(0.1, deadline - time.monotonic()))
+        except queue.Empty:
+            raise RuntimeError("upstream timed out before the first audio")
+        if item is None:
+            break
+        if isinstance(item, Exception):
+            raise item
+        head += item
+    if not is_mp3(bytes(head)):
+        raise RuntimeError(
+            "upstream did not return MP3: %d bytes head=%r" % (len(head), bytes(head[:16]))
+        )
+    log.info("first bytes after %.2fs (%d bytes)", time.monotonic() - started, len(head))
+
+    def gen():
+        buf = bytearray(head)
+        yield bytes(head)
+        while True:
+            item = out.get()
+            if item is None:
+                break
+            if isinstance(item, Exception):
+                log.warning("stream ended with %r", item)
+                break
+            buf += item
+            yield item
+        if is_mp3(bytes(buf)):
+            cache_put(key, bytes(buf))
+        log.info("streamed %d bytes in %.2fs (%s rate=%s pitch=%s)",
+                 len(buf), time.monotonic() - started, voice, rate, pitch)
+
+    return gen()
 
 
 def cache_get(key):
@@ -127,6 +196,17 @@ def tts():
         return resp
 
     started = time.monotonic()
+    if (request.args.get("stream") or ("1" if STREAM_DEFAULT else "0")) != "0":
+        try:
+            gen = _stream_reply(key, text, voice, rate, pitch, started)
+        except Exception as e:  # noqa: BLE001
+            log.warning("stream failed: %s", e)
+            return f"tts failed: {e}", 502
+        resp = Response(gen, mimetype="audio/mpeg")
+        resp.headers["X-TTS-Cache"] = "miss"
+        resp.headers["X-TTS-Stream"] = "1"
+        return resp
+
     try:
         audio = asyncio.run(_synth(text, voice, rate, pitch))
     except Exception as e:  # noqa: BLE001 - report it, don't crash the server

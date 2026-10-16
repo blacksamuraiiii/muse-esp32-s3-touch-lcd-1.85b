@@ -316,8 +316,10 @@ MP3），再把上面第二行填进去即可——令牌算法由上游维护�
 > ```
 >
 > 另注：edge-tts 固定回 24 kHz MP3，固件自带重采样器会降到 codec 的 16 kHz，服务端不用管采样率。
-> 端到端首音约 8–10 秒（Muse 服务端回文本 4–7 秒为主因，本机合成约 4 秒）；嫌慢可把服务端改成流式返回。
-> 换后端仍只需改 `CONFIG_MUSE_TTS_URL` 一行；局域网服务见 `tts-server/README.md`。
+> 端到端首音约 6–9 秒，其中 **Muse 服务端吐文本占 4–7.6 秒**（改不了），本机合成约 1.3–3 秒。
+> 服务端已改流式返回（`Transfer-Encoding: chunked`），首字节由 3.15 s 降到 **1.29 s**；
+> 串口 `muse.tts` 行会打 `first byte N ms` 便于回归对比。换后端仍只需改 `CONFIG_MUSE_TTS_URL` 一行；
+> 局域网服务见 `tts-server/README.md`。
 
 ---
 
