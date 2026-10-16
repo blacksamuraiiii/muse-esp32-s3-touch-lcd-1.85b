@@ -91,7 +91,7 @@ static const char *TAG = "muse_chat_session";
 #define DICT_CHUNK_BYTES 8192              /* ~170 ms at 24 kHz, as hatch-test sends */
 #define SCRATCH (64 * 1024)                /* inbound frames reassemble up to this */
 #define NDJSON_LINE_MAX (16 * 1024)               /* one NDJSON line / the chat ack */
-#define SUB_LINE_MAX (256 * 1024)          /* an event line grows its buffer up to this */
+#define SUB_LINE_MAX (1024 * 1024)         /* an event line grows its buffer up to this (was 256 KB: long message_done lines were dropped whole, so replies never queued) */
 #define CHAT_PART (16 * 1024)              /* one body chunk of a long typed message */
 #define MP3_BUF (512 * 1024)
 #define MP3_HOLD (1441 + 4)               /* the largest MP3 frame and the next header */
