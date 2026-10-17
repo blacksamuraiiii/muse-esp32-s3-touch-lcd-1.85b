@@ -1,25 +1,39 @@
 #!/usr/bin/env python3
 """
-Edge TTS bridge for muse-gadget-sdk firmware (MUSE_TTS_URL).
+Azure Speech TTS bridge for muse-gadget-sdk firmware (MUSE_TTS_URL), with the
+edge-tts bridge kept as a fallback.
 
 The firmware does:  GET /tts?voice=<voice>&text=<url-encoded text>
 and expects an MP3 back. Long replies are split into ~180-byte chunks
 by the firmware, so each request is short.
 
-Borrowed from timmy2048/muse-gadget-185b's tools/tts_wg_proxy.py (Azure Speech):
-  * rate / pitch prosody knobs (+8% / +4% there) - edge-tts takes them directly,
-    so no SSML; Azure's express-as *style* has no edge-tts equivalent.
-  * answer 502 unless the payload really is MP3 (0xFF sync or ID3 header), so an
-    upstream error body never reaches the board's decoder.
-  * MAX_TEXT_LEN aligned with the firmware's 180-byte chunking.
-  * /health answers with the effective settings instead of a bare "ok".
-  * accept both `q` (his parameter name) and `text` (ours).
-Added here: an LRU cache, so a repeated reply is served without re-synthesising.
+Backends (TTS_BACKEND, default azure):
+  azure  POST SSML to https://<region>.tts.speech.microsoft.com/cognitiveservices/v1
+         with the Ocp-Apim-Subscription-Key header. Shape, prosody and the
+         punctuation breaks are ported from timmy2048/muse-gadget-185b's
+         tools/tts_wg_proxy.py; style=express-as (mstts) is Azure-only.
+         Output format audio-24khz-48kbitrate-mono-mp3 is what the board
+         already plays (its log line reads back "24000 Hz, 1 ch, 48 kbps").
+  edge   the previous edge-tts path, still here for when the Azure key is out of
+         quota or the service is down. NOTE edge-tts wants pitch in Hz while
+         Azure wants percent, so pitch is validated per backend.
 
-Install:  pip install flask edge-tts
-Run:      python tts_server.py            # listens on 0.0.0.0:5050
+Falling back: when the chosen backend fails before any audio is delivered and
+TTS_FALLBACK names the other one, the request is retried on it.
+
+Install:  pip install flask waitress edge-tts
+Run:      python tts_server.py            # listens on 0.0.0.0:5050, served by waitress
 Test:     curl "http://127.0.0.1:5050/tts?text=%E4%BD%A0%E5%A5%BD" -o t.mp3
           curl "http://127.0.0.1:5050/health"
+
+Server: waitress by default. The Flask/werkzeug dev server (TTS_SERVER=werkzeug)
+truncated the body for the board: it read ~1440 bytes of a 51264-byte reply and
+then saw EOF, on both the chunked and the Content-Length path, while a raw-socket
+server on the same port, same container image and same payload delivered all of
+it. Serve with waitress; keep the dev server only for quick local pokes.
+
+Secrets come from the environment, or from a .env beside this file
+(AZURE_SPEECH_KEY / AZURE_SPEECH_REGION). .env is not in the repo.
 
 Firmware side (in the board's build sdkconfig, then rebuild + flash):
     CONFIG_MUSE_TTS_URL="http://<this-machine-lan-ip>:5050/tts?voice=zh-CN-XiaoxiaoNeural&text={text}"
@@ -33,26 +47,69 @@ import queue
 import re
 import threading
 import time
+import urllib.error
+import urllib.request
 from collections import OrderedDict
+from xml.sax.saxutils import escape
 
-import edge_tts
 from flask import Flask, Response, request
 
 app = Flask(__name__)
 log = logging.getLogger("tts")
 
+
+def _load_env(path):
+    """Minimal .env reader (no python-dotenv dependency); real env wins."""
+    try:
+        with open(path) as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                k, v = line.split("=", 1)
+                os.environ.setdefault(k.strip(), v.strip())
+    except FileNotFoundError:
+        pass
+
+
+_load_env(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
+
+BACKEND = os.environ.get("TTS_BACKEND", "azure").strip().lower()
+# The other backend to retry on when the chosen one delivers nothing. Off by
+# default: edge-tts currently answers 403 (its Sec-MS-GEC token handshake broke),
+# and a fallback that always fails just adds its timeout to the 502.
+FALLBACK = os.environ.get("TTS_FALLBACK", "").strip().lower()
+if FALLBACK == BACKEND:
+    FALLBACK = ""
+
+AZURE_KEY = os.environ.get("AZURE_SPEECH_KEY", "").strip()
+AZURE_REGION = os.environ.get("AZURE_SPEECH_REGION", "eastasia").strip()
+AZURE_STYLE = os.environ.get("AZURE_SPEECH_STYLE", "friendly").strip()
+AZURE_STYLE_DEGREE = os.environ.get("AZURE_SPEECH_STYLE_DEGREE", "1.2").strip()
+AZURE_FORMAT = os.environ.get(
+    "AZURE_SPEECH_FORMAT", "audio-24khz-48kbitrate-mono-mp3"
+).strip()
+
 DEFAULT_VOICE = os.environ.get("TTS_VOICE", "zh-CN-XiaoxiaoNeural")
+# The board's CONFIG_MUSE_TTS_URL carries its own voice=... query param, and that
+# would win over TTS_VOICE. Set TTS_FORCE_VOICE to try another timbre without
+# rebuilding/reflashing the firmware (e.g. zh-CN-XiaoyiNeural).
+FORCE_VOICE = os.environ.get("TTS_FORCE_VOICE", "").strip()
 # timmy2048's proxy reads at +8% / +4% for a livelier voice; override with env
-# or per request via ?rate=/&pitch=. NOTE: edge-tts wants pitch in Hz, not the
-# Azure-style percent, so a value must match [+-]<digits>Hz (rate/volume are %).
+# or per request via ?rate=/&pitch=. Units differ per backend, see file header.
 DEFAULT_RATE = os.environ.get("TTS_RATE", "+8%")
-DEFAULT_PITCH = os.environ.get("TTS_PITCH", "+0Hz")
+DEFAULT_PITCH = os.environ.get("TTS_PITCH", "+4%")
 
 _RATE_RE = re.compile(r"^[+-]\d+%$")
-_PITCH_RE = re.compile(r"^[+-]\d+Hz$")
+_PITCH_RE = {"azure": re.compile(r"^[+-]\d+%$"), "edge": re.compile(r"^[+-]\d+Hz$")}
 # Keep in sync with the firmware's per-request chunking; longer single
 # requests are slower to start playing.
 MAX_TEXT_LEN = int(os.environ.get("TTS_MAX_CHARS", "180"))
+# Port to listen on; the firmware's CONFIG_MUSE_TTS_URL points at 5050.
+PORT = int(os.environ.get("TTS_PORT", "5050"))
+# "waitress" (default, HTTP/1.1 server) or "werkzeug" (Flask dev server, local
+# poking only). See the file header for why the dev server is not the default.
+SERVER = os.environ.get("TTS_SERVER", "waitress").strip().lower()
 CACHE_MAX_ITEMS = int(os.environ.get("TTS_CACHE_ITEMS", "64"))
 CACHE_MAX_BYTES = int(os.environ.get("TTS_CACHE_BYTES", str(8 * 1024 * 1024)))
 # Streaming sends audio as it is synthesised, so playback starts ~1 s in instead
@@ -61,8 +118,10 @@ STREAM_DEFAULT = os.environ.get("TTS_STREAM", "1") != "0"
 # Bytes to hold before answering 200: enough to prove it really is MP3.
 STREAM_HEAD_BYTES = 1024
 STREAM_FIRST_TIMEOUT = 20.0
+AZURE_TIMEOUT = 20.0
+EDGE_FAIL_HINT = "the Azure key may be out of quota or the region wrong"
 
-_cache = OrderedDict()   # (voice, rate, pitch, text) -> mp3 bytes
+_cache = OrderedDict()   # (backend, voice, rate, pitch, text) -> mp3 bytes
 _cache_bytes = 0
 
 
@@ -81,26 +140,118 @@ def is_mp3(data: bytes) -> bool:
     return len(data) > 64 and (data[0] == 0xFF or data[:3] == b"ID3")
 
 
-async def _synth(text: str, voice: str, rate: str, pitch: str) -> bytes:
-    audio = bytearray()
-    async for chunk in edge_tts.Communicate(
-        text, voice, rate=rate, pitch=pitch
-    ).stream():
+# ---------------------------------------------------------------- Azure Speech
+
+def _ssml(text: str, voice: str, rate: str, pitch: str) -> str:
+    """SSML with short breaks at sentence punctuation (from tts_wg_proxy.py)."""
+    parts = []
+    buf = []
+    for ch in text:
+        if ch in "。！？!?；;":
+            buf.append(ch)
+            parts.append(escape("".join(buf)))
+            parts.append("<break time='280ms'/>")
+            buf = []
+        elif ch in "，、,":
+            buf.append(ch)
+            parts.append(escape("".join(buf)))
+            parts.append("<break time='120ms'/>")
+            buf = []
+        else:
+            buf.append(ch)
+    if buf:
+        parts.append(escape("".join(buf)))
+    inner = "<prosody rate='%s' pitch='%s'>%s</prosody>" % (
+        escape(rate, {"'": "&apos;"}),
+        escape(pitch, {"'": "&apos;"}),
+        "".join(parts),
+    )
+    if AZURE_STYLE:
+        inner = (
+            "<mstts:express-as style='%s' styledegree='%s'>%s</mstts:express-as>"
+            % (escape(AZURE_STYLE, {"'": "&apos;"}),
+               escape(AZURE_STYLE_DEGREE, {"'": "&apos;"}), inner)
+        )
+    return (
+        "<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' "
+        "xmlns:mstts='https://www.w3.org/2001/mstts' xml:lang='zh-CN'>"
+        "<voice xml:lang='zh-CN' name='%s'>%s</voice></speak>"
+        % (escape(voice, {"'": "&apos;"}), inner)
+    )
+
+
+def _azure_request(text: str, voice: str, rate: str, pitch: str):
+    """The open response object; raises on a non-200 so callers can fall back."""
+    if not AZURE_KEY:
+        raise RuntimeError("AZURE_SPEECH_KEY is not set")
+    url = "https://%s.tts.speech.microsoft.com/cognitiveservices/v1" % AZURE_REGION
+    req = urllib.request.Request(
+        url,
+        data=_ssml(text, voice, rate, pitch).encode("utf-8"),
+        method="POST",
+        headers={
+            "Ocp-Apim-Subscription-Key": AZURE_KEY,
+            "Content-Type": "application/ssml+xml",
+            "X-Microsoft-OutputFormat": AZURE_FORMAT,
+            "User-Agent": "muse-tts-proxy",
+        },
+    )
+    try:
+        resp = urllib.request.urlopen(req, timeout=AZURE_TIMEOUT)
+    except urllib.error.HTTPError as e:
+        detail = e.read()[:200].decode("utf-8", "replace")
+        raise RuntimeError("azure http %d: %s" % (e.code, detail)) from e
+    if resp.status != 200:
+        detail = resp.read()[:200].decode("utf-8", "replace")
+        resp.close()
+        raise RuntimeError("azure http %d: %s" % (resp.status, detail))
+    return resp
+
+
+def _synth_azure(text, voice, rate, pitch) -> bytes:
+    with _azure_request(text, voice, rate, pitch) as r:
+        return r.read()
+
+
+def _stream_azure(text, voice, rate, pitch, out: "queue.Queue"):
+    try:
+        with _azure_request(text, voice, rate, pitch) as r:
+            while True:
+                chunk = r.read(4096)
+                if not chunk:
+                    break
+                out.put(chunk)
+    except Exception as e:  # noqa: BLE001 - handed to the view, reported as 502
+        out.put(e)
+    finally:
+        out.put(None)
+
+
+# ------------------------------------------------------------------- edge-tts
+
+async def _edge_chunks(text, voice, rate, pitch):
+    import edge_tts
+
+    async for chunk in edge_tts.Communicate(text, voice, rate=rate, pitch=pitch).stream():
         if chunk["type"] == "audio":
-            audio += chunk["data"]
-    return bytes(audio)
+            yield chunk["data"]
 
 
-def _start_synth_thread(text, voice, rate, pitch, out: "queue.Queue"):
-    """Feed edge-tts audio into `out` from a thread; None ends it, an Exception reports it."""
+def _synth_edge(text, voice, rate, pitch) -> bytes:
+    async def run():
+        audio = bytearray()
+        async for data in _edge_chunks(text, voice, rate, pitch):
+            audio += data
+        return bytes(audio)
 
+    return asyncio.run(run())
+
+
+def _stream_edge(text, voice, rate, pitch, out: "queue.Queue"):
     async def run():
         try:
-            async for chunk in edge_tts.Communicate(
-                text, voice, rate=rate, pitch=pitch
-            ).stream():
-                if chunk["type"] == "audio":
-                    out.put(chunk["data"])
+            async for data in _edge_chunks(text, voice, rate, pitch):
+                out.put(data)
         except Exception as e:  # noqa: BLE001 - handed to the view, reported as 502
             out.put(e)
         finally:
@@ -109,10 +260,28 @@ def _start_synth_thread(text, voice, rate, pitch, out: "queue.Queue"):
     threading.Thread(target=lambda: asyncio.run(run()), daemon=True).start()
 
 
-def _stream_reply(key, text, voice, rate, pitch, started):
-    """Generator: yield audio as it arrives, cache the whole thing at the end."""
+# ------------------------------------------------------------------- plumbing
+
+SYNTH = {"azure": _synth_azure, "edge": _synth_edge}
+STREAM = {"azure": _stream_azure, "edge": _stream_edge}
+
+
+def _start_stream_thread(backend, text, voice, rate, pitch, out: "queue.Queue"):
+    if backend == "edge":
+        _stream_edge(text, voice, rate, pitch, out)   # starts its own thread
+    else:
+        threading.Thread(
+            target=STREAM[backend], args=(text, voice, rate, pitch, out), daemon=True
+        ).start()
+
+
+def _stream_reply(key, text, voice, rate, pitch, started, backend):
+    """Generator: yield audio as it arrives, cache the whole thing at the end.
+
+    Raises before the first yield when the backend delivers nothing usable, so
+    the caller can still answer 502 (or retry on the fallback backend)."""
     out: queue.Queue = queue.Queue()
-    _start_synth_thread(text, voice, rate, pitch, out)
+    _start_stream_thread(backend, text, voice, rate, pitch, out)
 
     head = bytearray()
     deadline = time.monotonic() + STREAM_FIRST_TIMEOUT
@@ -146,8 +315,8 @@ def _stream_reply(key, text, voice, rate, pitch, started):
             yield item
         if is_mp3(bytes(buf)):
             cache_put(key, bytes(buf))
-        log.info("streamed %d bytes in %.2fs (%s rate=%s pitch=%s)",
-                 len(buf), time.monotonic() - started, voice, rate, pitch)
+        log.info("streamed %d bytes in %.2fs (%s %s rate=%s pitch=%s)",
+                 len(buf), time.monotonic() - started, backend, voice, rate, pitch)
 
     return gen()
 
@@ -168,18 +337,22 @@ def cache_put(key, data: bytes):
         _cache_bytes -= len(old)
 
 
+def _synth(backend, text, voice, rate, pitch) -> bytes:
+    return SYNTH[backend](text, voice, rate, pitch)
+
+
 @app.route("/tts")
 def tts():
     text = request.args.get("text") or request.args.get("q") or ""
-    voice = request.args.get("voice") or DEFAULT_VOICE
+    voice = FORCE_VOICE or request.args.get("voice") or DEFAULT_VOICE
     rate = request.args.get("rate") or DEFAULT_RATE
     pitch = request.args.get("pitch") or DEFAULT_PITCH
     # A malformed knob must not 502 the reply: fall back to the default.
     if not _RATE_RE.match(rate):
         log.warning("ignoring bad rate %r", rate)
         rate = DEFAULT_RATE
-    if not _PITCH_RE.match(pitch):
-        log.warning("ignoring bad pitch %r", pitch)
+    if not _PITCH_RE[BACKEND].match(pitch):
+        log.warning("ignoring bad pitch %r for %s", pitch, BACKEND)
         pitch = DEFAULT_PITCH
     if not text:
         return "missing text", 400
@@ -187,41 +360,77 @@ def tts():
     if not text:
         return "empty after cleaning", 400
 
-    key = (voice, rate, pitch, text)
+    key = (BACKEND, voice, rate, pitch, text)
     hit = cache_get(key)
     if hit is not None:
         log.info("cache hit %d chars -> %d bytes (%s)", len(text), len(hit), voice)
         resp = Response(hit, mimetype="audio/mpeg")
         resp.headers["X-TTS-Cache"] = "hit"
+        resp.headers["X-TTS-Backend"] = BACKEND
         return resp
 
     started = time.monotonic()
-    if (request.args.get("stream") or ("1" if STREAM_DEFAULT else "0")) != "0":
+    streaming = (request.args.get("stream") or ("1" if STREAM_DEFAULT else "0")) != "0"
+    try:
+        if streaming:
+            gen = _stream_reply(key, text, voice, rate, pitch, started, BACKEND)
+        else:
+            audio = _synth(BACKEND, text, voice, rate, pitch)
+            if not is_mp3(audio):
+                raise RuntimeError(
+                    "upstream did not return MP3: %d bytes head=%r" % (len(audio), audio[:16])
+                )
+    except Exception as e:  # noqa: BLE001 - report it, don't crash the server
+        log.warning("%s failed: %s (%s)", BACKEND, e, EDGE_FAIL_HINT if BACKEND == "azure" else "")
+        if not FALLBACK:
+            return "tts failed: %s" % e, 502
+        # Nothing reached the board yet, so the other backend can still serve it.
+        fb_key = (FALLBACK, voice, rate, pitch, text)
+        fb_rate, fb_pitch = _fallback_prosody(rate, pitch)
+        log.warning("retrying on %s (rate=%s pitch=%s)", FALLBACK, fb_rate, fb_pitch)
         try:
-            gen = _stream_reply(key, text, voice, rate, pitch, started)
-        except Exception as e:  # noqa: BLE001
-            log.warning("stream failed: %s", e)
-            return f"tts failed: {e}", 502
+            if streaming:
+                gen = _stream_reply(fb_key, text, voice, fb_rate, fb_pitch, started, FALLBACK)
+            else:
+                audio = _synth(FALLBACK, text, voice, fb_rate, fb_pitch)
+                if not is_mp3(audio):
+                    raise RuntimeError("fallback payload is not MP3")
+                cache_put(fb_key, audio)
+                gen = None
+        except Exception as e2:  # noqa: BLE001
+            log.exception("fallback %s failed too", FALLBACK)
+            return "tts failed: %s / fallback %s: %s" % (e, FALLBACK, e2), 502
+        if gen is None:
+            resp = Response(audio, mimetype="audio/mpeg")
+            resp.headers["X-TTS-Backend"] = FALLBACK
+            resp.headers["X-TTS-Cache"] = "miss"
+            return resp
         resp = Response(gen, mimetype="audio/mpeg")
         resp.headers["X-TTS-Cache"] = "miss"
         resp.headers["X-TTS-Stream"] = "1"
+        resp.headers["X-TTS-Backend"] = FALLBACK
         return resp
 
-    try:
-        audio = asyncio.run(_synth(text, voice, rate, pitch))
-    except Exception as e:  # noqa: BLE001 - report it, don't crash the server
-        log.exception("synthesis failed")
-        return f"tts failed: {e}", 502
-    if not is_mp3(audio):
-        log.warning("upstream did not return MP3: %d bytes head=%r",
-                    len(audio), audio[:16])
-        return "upstream did not return MP3", 502
+    if streaming:
+        resp = Response(gen, mimetype="audio/mpeg")
+        resp.headers["X-TTS-Cache"] = "miss"
+        resp.headers["X-TTS-Stream"] = "1"
+        resp.headers["X-TTS-Backend"] = BACKEND
+        return resp
+
     cache_put(key, audio)
-    log.info("served %d chars -> %d bytes (%s rate=%s pitch=%s) in %.2fs",
-             len(text), len(audio), voice, rate, pitch, time.monotonic() - started)
+    log.info("served %d chars -> %d bytes (%s %s rate=%s pitch=%s) in %.2fs",
+             len(text), len(audio), BACKEND, voice, rate, pitch, time.monotonic() - started)
     resp = Response(audio, mimetype="audio/mpeg")
     resp.headers["X-TTS-Cache"] = "miss"
+    resp.headers["X-TTS-Backend"] = BACKEND
     return resp
+
+
+def _fallback_prosody(rate, pitch):
+    """Rate is a percentage on both backends; pitch is percent on Azure and Hz
+    on edge-tts, so a copy of the Azure default would be rejected there."""
+    return rate, ("+0Hz" if FALLBACK == "edge" else DEFAULT_PITCH)
 
 
 @app.route("/health")
@@ -230,10 +439,16 @@ def health():
         json.dumps(
             {
                 "service": "muse-tts",
+                "backend": BACKEND,
+                "fallback": FALLBACK or None,
                 "voice": DEFAULT_VOICE,
+                "force_voice": FORCE_VOICE or None,
+                "style": AZURE_STYLE or None,
                 "rate": DEFAULT_RATE,
                 "pitch": DEFAULT_PITCH,
                 "max_chars": MAX_TEXT_LEN,
+                "azure_region": AZURE_REGION,
+                "azure_key": "set" if AZURE_KEY else "missing",
                 "cache_items": len(_cache),
                 "cache_bytes": _cache_bytes,
             },
@@ -245,5 +460,15 @@ def health():
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
-    # 0.0.0.0 so the ESP32 on the LAN can reach it.
-    app.run(host="0.0.0.0", port=5050, threaded=True)
+    if BACKEND == "azure" and not AZURE_KEY:
+        log.warning("AZURE_SPEECH_KEY is empty: every request will fall back to %s", FALLBACK or "nothing")
+    if SERVER == "werkzeug":
+        # 0.0.0.0 so the ESP32 on the LAN can reach it.
+        app.run(host="0.0.0.0", port=PORT, threaded=True)
+    else:
+        from waitress import serve
+        # send_bytes at the head size so the first audio leaves without waiting
+        # for waitress's 1800-byte default to fill.
+        log.info("waitress on 0.0.0.0:%d (backend %s)", PORT, BACKEND)
+        serve(app, host="0.0.0.0", port=PORT, threads=8,
+              connection_limit=32, channel_timeout=120, send_bytes=1024)

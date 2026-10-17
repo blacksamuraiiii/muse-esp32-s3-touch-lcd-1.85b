@@ -155,6 +155,12 @@ unsigned muse_gpio_button_poll(muse_gpio_button_t *b);
  * state, the calling task is notified (xTaskNotifyGive) or timeout_ms passes. */
 void muse_gpio_buttons_wait(muse_gpio_button_t *const *b, int n, int timeout_ms);
 
+/* An extra level-triggered line that should wake the chip too, on top of the
+ * buttons: an IMU interrupt, an RTC alarm. `wake_high` is the level the line
+ * takes when the event happens. Registered at board init, armed and disarmed
+ * around muse_gpio_buttons_wait(), and the wait returns when it fires. */
+esp_err_t muse_gpio_wake_line_add(gpio_num_t gpio, bool wake_high);
+
 #ifdef __cplusplus
 }
 #endif

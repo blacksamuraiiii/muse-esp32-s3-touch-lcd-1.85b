@@ -228,3 +228,25 @@ void muse_wifi_forget(const char *ssid)
         s_ops->wifi_forget(ssid);
     }
 }
+
+bool muse_link_ota_ready(void)
+{
+    return s_ops && s_ops->ota_check && s_ops->ota_status;
+}
+
+bool muse_link_ota_check(void)
+{
+    return muse_link_ota_ready() && s_ops->ota_check();
+}
+
+void muse_link_ota_status(char *buf, size_t n)
+{
+    if (!buf || !n) {
+        return;
+    }
+    if (s_ops && s_ops->ota_status) {
+        s_ops->ota_status(buf, n);
+    } else {
+        strlcpy(buf, "Unavailable", n);
+    }
+}

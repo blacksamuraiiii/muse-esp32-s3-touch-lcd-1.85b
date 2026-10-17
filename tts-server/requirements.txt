@@ -1,2 +1,5 @@
 flask>=3.0
+# HTTP server. The Flask dev server truncated bodies for the ESP32; see the
+# tts_server.py header. waitress is the default in production.
+waitress>=3.0
 edge-tts>=7.0

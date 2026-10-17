@@ -16,6 +16,9 @@ limitations under the License.
 
 # Muse Gadgets
 
+> **中文完整操作指南（本板 1.85B 全程实操）：[`README_zh.md`](README_zh.md)** —— 含分步刷机、
+> 语音播报服务端、故障排查、已知限制与**更新记录（v1.0 → v1.1）**。本节以下的英文是上游原文。
+
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset=".github/images/muse-gadgets-dark.png">

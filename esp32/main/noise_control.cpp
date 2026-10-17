@@ -1520,6 +1520,11 @@ static char *build_register_json(void) {
         cJSON_GetObjectItem(commands, "camera.capture"), "timeout_ms", 30000);
 #endif
 
+    /* `device.ota` is still handled locally (see the invoke handler below), but
+     * it is no longer advertised: the cloud answered the advertisement with
+     * official Home Link firmware (chip mismatch, and it would have overwritten
+     * this build). Build with -DHOMEHUB_ADVERTISE_OTA=1 to advertise it again. */
+#if defined(HOMEHUB_ADVERTISE_OTA) && HOMEHUB_ADVERTISE_OTA
     if (ota_is_enabled()) {
         cJSON *ota_required = cJSON_CreateObject();
         cJSON_AddItemToObject(ota_required, "url",
@@ -1535,6 +1540,7 @@ static char *build_register_json(void) {
                     "(esp_https_ota), then reboot.",
                     ota_required, ota_optional);
     }
+#endif
 
 #if CONFIG_HOMEHUB_BLE_COMMANDS
     ble_commands_register(commands);
