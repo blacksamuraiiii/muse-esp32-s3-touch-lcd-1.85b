@@ -32,6 +32,7 @@
 #include "config_store.h"
 #include "identity.h"
 #include "noise_control.h"
+#include "ota_github.h"
 #include "stack_monitor.h"
 #include "wifi_known.h"
 #include "wifi_mgr.h"
@@ -380,6 +381,15 @@ static void op_reset_setup(void) {
     app_reset_setup_async();
 }
 
+/* Muse's Update page, over the air from this repo's release channel. */
+static bool op_ota_check(void) {
+    return ota_github_check();
+}
+
+static void op_ota_status(char *buf, size_t n) {
+    ota_github_status(buf, n);
+}
+
 static const muse_link_ops_t s_ops = {
     .wifi_status = op_wifi_status,
     .wifi_apply = op_wifi_apply,
@@ -402,6 +412,8 @@ static const muse_link_ops_t s_ops = {
     .wifi_nap = op_wifi_nap,
     .wifi_saved = op_wifi_saved,
     .wifi_forget = op_wifi_forget,
+    .ota_check = op_ota_check,
+    .ota_status = op_ota_status,
 };
 
 // ---- Keeper: joins a saved network and applies BLE, on an internal stack ----

@@ -73,7 +73,8 @@ typedef struct {
 } page_t;
 
 /* Home values. */
-static lv_obj_t *s_home_wifi, *s_home_hatch, *s_home_ble, *s_home_sound, *s_home_sleep, *s_home_battery, *s_about;
+static lv_obj_t *s_home_wifi, *s_home_hatch, *s_home_ble, *s_home_sound, *s_home_sleep, *s_home_battery, *s_about,
+    *s_home_update;
 
 /* Wi-Fi page. */
 static lv_obj_t *s_wifi_sw, *s_wifi_status, *s_wifi_saved, *s_wifi_scan_btn, *s_wifi_scan_lbl, *s_wifi_list;
@@ -107,6 +108,9 @@ static lv_obj_t *s_sleep_checks[SLEEP_COUNT];
 static lv_obj_t *s_batt_status, *s_batt_level, *s_batt_drain, *s_batt_full, *s_batt_off, *s_batt_slept, *s_batt_wakes,
     *s_batt_busy, *s_batt_awake;
 static int64_t s_batt_shown_us;
+
+/* Update page (over the air, from Link's own release channel). */
+static lv_obj_t *s_update, *s_update_status, *s_update_running, *s_update_latest;
 
 /* Text entry page. */
 static lv_obj_t *s_text_title, *s_text_ta;
@@ -359,7 +363,7 @@ static lv_obj_t *info_row(lv_obj_t *list, const char *text)
 
 static void drop(lv_obj_t *p)
 {
-    lv_obj_t **const pages[] = { &s_wifi, &s_hatch, &s_ble, &s_sound, &s_sleep, &s_battery, &s_power, &s_text };
+    lv_obj_t **const pages[] = { &s_wifi, &s_hatch, &s_ble, &s_sound, &s_sleep, &s_battery, &s_power, &s_update, &s_text };
     for (size_t i = 0; i < sizeof(pages) / sizeof(pages[0]); i++) {
         if (*pages[i] == p) {
             *pages[i] = NULL;
@@ -1236,6 +1240,46 @@ static void build_power_page(lv_obj_t *tile)
     note(list, text);
 }
 
+/* ---------- Update ---------- */
+
+static void on_update_check(lv_event_t *e)
+{
+    (void)e;
+    /* The row and the note both follow the check from here: the tick reads
+     * Link's status line, which is also where the failure text lands. */
+    muse_link_ota_check();
+    muse_settings_ui_tick(true);
+}
+
+static void build_update_page(lv_obj_t *tile)
+{
+    lv_obj_t *list;
+    s_update = page(tile, "UPDATE", true, &list);
+    s_update_status = note(list, "");
+    s_update_running = info_row(list, "On this device");
+    s_update_latest = info_row(list, "Latest release");
+    button(list, LV_SYMBOL_DOWNLOAD "  Check for updates", COLOR_ACCENT, on_update_check, NULL);
+    note(list, "Reads the latest GitHub release and installs it if it is newer. Wi-Fi must be on; Muse restarts by "
+               "itself when the update is done. Settings, pairing and saved networks survive.");
+}
+
+static void tick_update(void)
+{
+    char buf[96];
+    set_text(s_update_running, esp_app_get_description()->version);
+    muse_link_ota_status(buf, sizeof(buf));
+    set_text(s_update_status, buf);
+    /* Split the same line: "Installing 1.1 42%" -> latest stays readable. */
+    const char *sp = strchr(buf, ' ');
+    if (sp && strncmp(buf, "latest", 6) == 0) {
+        set_text(s_update_latest, sp + 1);
+    } else if (sp && strncmp(buf, "Installing", 10) == 0) {
+        set_text(s_update_latest, sp + 1);
+    } else {
+        set_text(s_update_latest, "-");
+    }
+}
+
 /* ---------- Home ---------- */
 
 static const page_t WIFI = { &s_wifi, build_wifi_page };
@@ -1245,6 +1289,7 @@ static const page_t SOUND = { &s_sound, build_sound_page };
 static const page_t SLEEP = { &s_sleep, build_sleep_page };
 static const page_t BATTERY = { &s_battery, build_battery_page };
 static const page_t POWER = { &s_power, build_power_page };
+static const page_t UPDATE = { &s_update, build_update_page };
 
 static void build_home(lv_obj_t *tile)
 {
@@ -1256,6 +1301,11 @@ static void build_home(lv_obj_t *tile)
     row(list, LV_SYMBOL_VOLUME_MAX, "Sound", &s_home_sound, on_nav, (void *)&SOUND);
     row(list, LV_SYMBOL_EYE_CLOSE, "Sleep", &s_home_sleep, on_nav, (void *)&SLEEP);
     row(list, LV_SYMBOL_BATTERY_FULL, "Battery", &s_home_battery, on_nav, (void *)&BATTERY);
+    /* Only when Link registered an updater (see muse_link.h): other boards and
+     * builds without OTA keep the plain list. */
+    if (muse_link_ota_ready()) {
+        row(list, LV_SYMBOL_DOWNLOAD, "Update", &s_home_update, on_nav, (void *)&UPDATE);
+    }
     row(list, LV_SYMBOL_POWER, "Power off", NULL, on_nav, (void *)&POWER);
     s_about = note(list, "");
 }
@@ -1294,6 +1344,12 @@ static void tick_home(void)
     snprintf(buf, sizeof(buf), "Muse %s  -  %s", esp_app_get_description()->version,
              w.state == MUSE_WIFI_CONNECTED ? w.ip : "offline");
     set_text(s_about, buf);
+
+    if (s_home_update) {
+        char ota[64];
+        muse_link_ota_status(ota, sizeof(ota));
+        set_text(s_home_update, ota);
+    }
 }
 
 /* ---------- public ---------- */
@@ -1333,6 +1389,8 @@ void muse_settings_ui_tick(bool visible)
         tick_sleep();
     } else if (s_current == s_battery) {
         tick_battery();
+    } else if (s_current == s_update) {
+        tick_update();
     }
 }
 

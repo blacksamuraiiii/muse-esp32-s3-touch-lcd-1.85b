@@ -697,7 +697,13 @@ static void build_answer(lv_obj_t *face, int ring_in)
     int spk_r = (SPEAKER_PX + SPEAKER_GROW_PX) / 2;
     int spk_x = -s_w / 2 + 8 + spk_r, spk_y = -s_h / 2 + 8 + spk_r;
     if (muse_board->round) {
-        spk_y = -ring_in * 5 / 8;
+        /* Upper left, on the ring's inner edge. The height sets how far left the
+         * button can sit: the rim is narrow at the top, so 5/8 of the radius left
+         * it only 75 px out and the full-size art covered it. Going lower on the
+         * rim widens it further: a third of the radius gives ~117 px, 42 px
+         * further from the face than the original, and keeps the reply box above
+         * where it was (art_bottom is the higher of the two). */
+        spk_y = -ring_in / 3;
         int d = ring_in - spk_r - 4;   /* just inside the ring, even when swollen */
         spk_x = -(int)sqrtf((float)(d * d - spk_y * spk_y));
     }

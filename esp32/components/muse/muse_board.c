@@ -28,6 +28,29 @@ static const char *TAG = "muse_board";
 
 static TaskHandle_t s_waiter;
 
+/* Extra wake lines a board registered (see muse_gpio_wake_line_add). */
+#define WAKE_LINES_MAX 2
+static struct {
+    gpio_num_t gpio;
+    bool wake_high;
+} s_wake_lines[WAKE_LINES_MAX];
+static int s_wake_line_n;
+
+static bool s_isr_service;
+
+static esp_err_t ensure_isr_service(void)
+{
+    if (s_isr_service) {
+        return ESP_OK;
+    }
+    esp_err_t err = gpio_install_isr_service(0);
+    if (err == ESP_ERR_INVALID_STATE) {
+        err = ESP_OK;   /* already installed */
+    }
+    s_isr_service = err == ESP_OK;
+    return err;
+}
+
 /* A button reached the level muse_gpio_buttons_wait() armed. Level-triggered,
  * so off until armed again. */
 static void on_button_line(void *arg)
@@ -54,14 +77,32 @@ static esp_err_t button_init(muse_gpio_button_t *b, gpio_num_t gpio, bool active
     ESP_RETURN_ON_ERROR(gpio_config(&io), TAG, "gpio %d", gpio);
     /* For muse_gpio_buttons_wait(); the line doesn't interrupt until then.
      * Installing twice works but logs an error. */
-    static bool isr_service;
-    if (!isr_service) {
-        esp_err_t err = gpio_install_isr_service(0);
-        ESP_RETURN_ON_FALSE(err == ESP_OK || err == ESP_ERR_INVALID_STATE, err, TAG, "gpio isr");
-        isr_service = true;
-    }
+    ESP_RETURN_ON_ERROR(ensure_isr_service(), TAG, "gpio isr");
     ESP_RETURN_ON_ERROR(gpio_isr_handler_add(gpio, on_button_line, (void *)(intptr_t)gpio), TAG, "gpio %d isr", gpio);
     return gpio_intr_disable(gpio);
+}
+
+esp_err_t muse_gpio_wake_line_add(gpio_num_t gpio, bool wake_high)
+{
+    if (s_wake_line_n == WAKE_LINES_MAX) {
+        return ESP_ERR_NO_MEM;
+    }
+    /* The line is driven push-pull by whichever part owns it; the pull-down
+     * keeps the pin defined while that part is still in high-Z. */
+    const gpio_config_t io = {
+        .pin_bit_mask = 1ULL << gpio,
+        .mode = GPIO_MODE_INPUT,
+        .pull_up_en = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_ENABLE,
+    };
+    ESP_RETURN_ON_ERROR(gpio_config(&io), TAG, "wake gpio %d", gpio);
+    ESP_RETURN_ON_ERROR(ensure_isr_service(), TAG, "gpio isr");
+    ESP_RETURN_ON_ERROR(gpio_isr_handler_add(gpio, on_button_line, (void *)(intptr_t)gpio), TAG, "gpio %d isr", gpio);
+    ESP_RETURN_ON_ERROR(gpio_intr_disable(gpio), TAG, "gpio %d intr", gpio);
+    s_wake_lines[s_wake_line_n].gpio = gpio;
+    s_wake_lines[s_wake_line_n].wake_high = wake_high;
+    s_wake_line_n++;
+    return ESP_OK;
 }
 
 esp_err_t muse_gpio_button_init(muse_gpio_button_t *b, gpio_num_t gpio)
@@ -114,9 +155,19 @@ void muse_gpio_buttons_wait(muse_gpio_button_t *const *b, int n, int timeout_ms)
         gpio_wakeup_enable(b[i]->gpio, high ? GPIO_INTR_HIGH_LEVEL : GPIO_INTR_LOW_LEVEL);
         gpio_intr_enable(b[i]->gpio);
     }
+    for (int i = 0; i < s_wake_line_n; i++) {
+        /* A board line: the IMU's tap interrupt, for one. */
+        gpio_wakeup_enable(s_wake_lines[i].gpio,
+                           s_wake_lines[i].wake_high ? GPIO_INTR_HIGH_LEVEL : GPIO_INTR_LOW_LEVEL);
+        gpio_intr_enable(s_wake_lines[i].gpio);
+    }
     ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(timeout_ms));
     for (int i = 0; i < n; i++) {
         gpio_intr_disable(b[i]->gpio);
         gpio_wakeup_disable(b[i]->gpio);
+    }
+    for (int i = 0; i < s_wake_line_n; i++) {
+        gpio_intr_disable(s_wake_lines[i].gpio);
+        gpio_wakeup_disable(s_wake_lines[i].gpio);
     }
 }

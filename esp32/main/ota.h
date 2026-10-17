@@ -47,3 +47,7 @@ bool ota_is_enabled(void);
 // immediately. `cb` may be NULL. When disabled, synchronously reports SKIPPED
 // without starting a download or task; force cannot override this setting.
 void ota_start(const char *url, bool force, ota_status_cb cb, void *user);
+
+// Percentage of the image read so far by the OTA in flight, or -1 when no
+// download is running. For progress on screen; safe from any task.
+int ota_progress_pct(void);

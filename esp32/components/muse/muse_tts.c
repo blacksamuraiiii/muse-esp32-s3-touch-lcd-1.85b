@@ -20,6 +20,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "esp_app_desc.h"
 #include "esp_crt_bundle.h"
 #include "esp_heap_caps.h"
 #include "esp_http_client.h"
@@ -62,6 +63,28 @@ static volatile bool s_busy;          /* a reply is being fetched right now */
 static char *volatile s_pending;      /* text handed to the worker by muse_tts_speak */
 static volatile size_t s_bytes;       /* bytes of the request being read */
 static volatile int64_t s_first_byte_us; /* when the first body byte arrived */
+
+/* Strict payload gate. The decoder plays noise out of anything it is handed, so
+ * an error page (HTML) or a truncated body must never reach the ring. The first
+ * bytes are held back until they look like MPEG audio: an MPEG frame sync
+ * (0xFF) or an ID3v2 tag. Matching only 0xFF would reject plenty of valid
+ * ID3-prefixed files. */
+#define TTS_PREFIX_BYTES 8
+static uint8_t s_prefix[TTS_PREFIX_BYTES];
+static size_t s_prefix_n;
+static bool s_payload_open;   /* the prefix passed: bytes go to the ring now */
+static bool s_payload_bad;    /* the prefix failed: drop the rest, do not retry */
+
+static bool mp3_prefix_ok(const uint8_t *p, size_t n)
+{
+    if (n < 4) {
+        return false;
+    }
+    if (p[0] == 0xFF) {
+        return true;                            /* MPEG frame sync */
+    }
+    return memcmp(p, "ID3", 3) == 0;            /* ID3v2 tag */
+}
 
 static size_t url_encode(char *out, size_t cap, const char *in, size_t in_len)
 {
@@ -115,6 +138,55 @@ static size_t chunk_len(const char *p, size_t left)
     return cut;
 }
 
+/* Bytes on their way to the decoder. False when nobody is draining. */
+static bool ring_send(const uint8_t *d, size_t len)
+{
+    size_t off = 0;
+    while (off < len) {
+        size_t n = xStreamBufferSend(s_ring, d + off, len - off, pdMS_TO_TICKS(TTS_SEND_TIMEOUT_MS));
+        if (n == 0) {
+            /* Nobody is draining: the turn moved on. Stop rather than wedge a
+             * socket, and let the task wind down. */
+            ESP_LOGW(TAG, "audio not being read, stopping the fetch");
+            s_abort = true;
+            return false;
+        }
+        off += n;
+    }
+    return true;
+}
+
+/* Holds the first TTS_PREFIX_BYTES back until they look like MPEG audio, then
+ * streams everything through. A failing prefix marks the whole reply bad so the
+ * rest is dropped and the caller does not retry. */
+static void gate_feed(const uint8_t *d, size_t len)
+{
+    size_t off = 0;
+    if (!s_payload_open) {
+        size_t room = TTS_PREFIX_BYTES - s_prefix_n;
+        size_t take = len < room ? len : room;
+        memcpy(s_prefix + s_prefix_n, d, take);
+        s_prefix_n += take;
+        off = take;
+        if (s_prefix_n < TTS_PREFIX_BYTES) {
+            return;                 /* not enough to judge yet */
+        }
+        if (!mp3_prefix_ok(s_prefix, s_prefix_n)) {
+            ESP_LOGW(TAG, "muse.tts: bad MP3 payload len=%u first=0x%02x", (unsigned)s_bytes, s_prefix[0]);
+            s_payload_bad = true;
+            s_abort = true;
+            return;
+        }
+        s_payload_open = true;
+        if (!ring_send(s_prefix, TTS_PREFIX_BYTES)) {
+            return;
+        }
+    }
+    if (off < len && !s_abort) {
+        ring_send(d + off, len - off);
+    }
+}
+
 static esp_err_t on_http_data(esp_http_client_event_t *ev)
 {
     if (ev->event_id != HTTP_EVENT_ON_DATA || ev->data_len <= 0) {
@@ -123,26 +195,33 @@ static esp_err_t on_http_data(esp_http_client_event_t *ev)
     if (s_first_byte_us == 0) {
         s_first_byte_us = esp_timer_get_time();
     }
-    size_t off = 0;
-    while (off < (size_t)ev->data_len) {
-        size_t n = xStreamBufferSend(s_ring, (const uint8_t *)ev->data + off,
-                                     (size_t)ev->data_len - off,
-                                     pdMS_TO_TICKS(TTS_SEND_TIMEOUT_MS));
-        if (n == 0) {
-            /* Nobody is draining: the turn moved on. Stop rather than wedge a
-             * socket, and let the task wind down. */
-            ESP_LOGW(TAG, "audio not being read, stopping the fetch");
-            s_abort = true;
-            break;
-        }
-        s_bytes += n;
-        off += n;
-    }
+    s_bytes += (size_t)ev->data_len;
+    gate_feed((const uint8_t *)ev->data, (size_t)ev->data_len);
     return ESP_OK;
+}
+
+/* A body shorter than the gate: judge it on what arrived and be done. */
+static void gate_finish(void)
+{
+    if (s_payload_open || s_payload_bad || !s_prefix_n) {
+        return;
+    }
+    if (mp3_prefix_ok(s_prefix, s_prefix_n)) {
+        s_payload_open = true;
+        ring_send(s_prefix, s_prefix_n);
+    } else {
+        ESP_LOGW(TAG, "muse.tts: bad MP3 payload len=%u first=0x%02x", (unsigned)s_bytes, s_prefix[0]);
+        s_payload_bad = true;
+    }
 }
 
 static bool fetch_once(const char *url)
 {
+    /* Some TTS endpoints refuse a request with no browser User-Agent. */
+    const esp_app_desc_t *app = esp_app_get_description();
+    char user_agent[48];
+    snprintf(user_agent, sizeof(user_agent), "MuseGadget/%s", app->version);
+
     const esp_http_client_config_t cfg = {
         .url = url,
         .method = HTTP_METHOD_GET,
@@ -150,6 +229,7 @@ static bool fetch_once(const char *url)
         .buffer_size = TTS_HTTP_BUF,
         .buffer_size_tx = TTS_HTTP_TX_BUF,
         .crt_bundle_attach = esp_crt_bundle_attach,
+        .user_agent = user_agent,
         .event_handler = on_http_data,
     };
     esp_http_client_handle_t c = esp_http_client_init(&cfg);
@@ -159,6 +239,9 @@ static bool fetch_once(const char *url)
     }
     s_bytes = 0;
     s_first_byte_us = 0;
+    s_prefix_n = 0;
+    s_payload_open = false;
+    s_payload_bad = false;
     int64_t t0 = esp_timer_get_time();
     esp_err_t err = esp_http_client_perform(c);
     int status = esp_http_client_get_status_code(c);
@@ -174,6 +257,11 @@ static bool fetch_once(const char *url)
         ESP_LOGW(TAG, "TTS endpoint answered %d", status);
         return false;
     }
+    gate_finish();
+    if (s_payload_bad) {
+        /* Nothing went to the decoder: the reply stays on screen as text. */
+        return false;
+    }
     /* A streamed reply has no Content-Length (-1), so report what we read and
      * how long the first byte took: that is the number the stream change moves. */
     ESP_LOGI(TAG, "TTS got %u bytes (content-length %lld, first byte %d ms, total %d ms)",
@@ -184,7 +272,8 @@ static bool fetch_once(const char *url)
 }
 
 /* One retry, but only when nothing was delivered: re-requesting after a partial
- * stream would feed the decoder the same audio twice. */
+ * stream would feed the decoder the same audio twice, and a bad payload would
+ * just come back. */
 static bool fetch(const char *url)
 {
     if (fetch_once(url)) {

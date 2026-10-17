@@ -20,6 +20,10 @@
 
 #include <stddef.h>
 
+/* Percentage of the image read by the OTA in flight, -1 when idle. Read by the
+ * settings Update page for its progress line. */
+static volatile int s_progress = -1;
+
 bool ota_is_enabled(void) {
 #if CONFIG_HOMEHUB_OTA_ENABLED
     return true;
@@ -209,10 +213,15 @@ static void ota_task(void *arg) {
         goto done;
     }
 
+    s_progress = 0;
     while ((err = esp_https_ota_perform(handle)) == ESP_ERR_HTTPS_OTA_IN_PROGRESS) {
+        int total = esp_https_ota_get_image_size(handle);
+        int read = esp_https_ota_get_image_len_read(handle);
+        s_progress = (total > 0 && read >= 0) ? (int)((int64_t)read * 100 / total) : -1;
         // streaming; yield briefly between reads
         vTaskDelay(pdMS_TO_TICKS(1));
     }
+    s_progress = -1;
     if (err != ESP_OK) {
         char msg[96];
         snprintf(msg, sizeof(msg), "download failed: %s", esp_err_to_name(err));
@@ -302,3 +311,11 @@ void ota_start(const char *url, bool force, ota_status_cb cb, void *user) {
 }
 
 #endif
+
+int ota_progress_pct(void) {
+#if CONFIG_HOMEHUB_OTA_ENABLED
+    return s_progress;
+#else
+    return -1;
+#endif
+}

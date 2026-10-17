@@ -17,10 +17,23 @@
 #include "sim_board.h"
 #include "sim_platform.h"
 
+#include <stdlib.h>
+
 #include "src/drivers/sdl/lv_sdl_mouse.h"
 #include "src/drivers/sdl/lv_sdl_window.h"
 
+/* Square panel size. The Watcher is 412; set MUSE_SIM_SIZE=360 to render a
+ * round touch board with the same layout code (e.g. the 1.85B) pixel-for-pixel
+ * at its real resolution instead of scaling a Watcher render. */
 #define WATCHER_RESOLUTION 412
+#define SIM_DEFAULT_RESOLUTION 412
+
+static int sim_resolution(void)
+{
+    const char *s = getenv("MUSE_SIM_SIZE");
+    int v = s ? atoi(s) : 0;
+    return v >= 120 && v <= 1024 ? v : SIM_DEFAULT_RESOLUTION;
+}
 
 static lv_display_t *s_display;
 
@@ -34,7 +47,7 @@ static esp_err_t sim_init(void)
 
 static lv_display_t *sim_display_start(lv_indev_t **touch)
 {
-    s_display = lv_sdl_window_create(WATCHER_RESOLUTION, WATCHER_RESOLUTION);
+    s_display = lv_sdl_window_create(sim_resolution(), sim_resolution());
     if (!s_display) {
         return NULL;
     }
@@ -74,7 +87,15 @@ static esp_err_t sim_power_off(void)
     return ESP_FAIL;
 }
 
-static const muse_board_t s_sim_board = {
+/* muse_ui.c hides the round speaker button unless the board reports an audio
+ * backend (muse_ui.c:1346, `paired && muse_board->audio_init`). The Watcher stub
+ * left it NULL, so bench renders of a reply page had no button to look at. */
+static esp_err_t sim_audio_init(void)
+{
+    return ESP_OK;
+}
+
+static muse_board_t s_sim_board = {
     .name = "SenseCAP Watcher Simulator",
     .width = WATCHER_RESOLUTION,
     .height = WATCHER_RESOLUTION,
@@ -92,10 +113,12 @@ static const muse_board_t s_sim_board = {
     .set_brightness = sim_set_brightness,
     .panel_sleep = sim_panel_sleep,
     .power_off = sim_power_off,
+    .audio_init = sim_audio_init,
 };
 
 const muse_board_t *sim_board_get(void)
 {
+    s_sim_board.width = s_sim_board.height = sim_resolution();
     return &s_sim_board;
 }
 

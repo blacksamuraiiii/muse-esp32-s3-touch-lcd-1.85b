@@ -36,6 +36,7 @@
 #include "muse_board.h"
 #include "muse_chat.h"
 #include "muse_console.h"
+#include "muse_imu_tap.h"
 #include "muse_link.h"
 #include "muse_mem.h"
 #include "muse_menu.h"
@@ -63,6 +64,9 @@ static const char *TAG = "muse_input";
 #define HINT_TICKS 60          /* 0.6 s: warn that holding powers off */
 #define LONG_TICKS 150         /* 1.5 s: power off */
 #define SLEEP_CHECK_MS 100
+/* While asleep, read the IMU's tap status this often: the sleep itself waits on
+ * the IMU's INT1 line, so this only has to cover an edge the wake missed. */
+#define IMU_TAP_POLL_MS 200
 
 #define SERIAL_RX 1024         /* the driver drops what doesn't fit, so a console line must */
 #define SERIAL_LINE 1024
@@ -79,6 +83,7 @@ static esp_pm_lock_handle_t s_awake;   /* with s_cpu_pd: held whenever !s_cpu_lo
 static bool s_awake_held;
 #endif
 static volatile bool s_nap_now;   /* ">nap": asleep, as if on battery, nap without waiting WIFI_NAP_MS */
+static TickType_t s_tap_checked;  /* last tap-status poll while asleep */
 
 static void post(muse_ptt_t type, bool wake)
 {
@@ -548,6 +553,15 @@ static void input_task(void *arg)
         }
 
         TickType_t now = xTaskGetTickCount();
+        /* A tap on the case wakes the screen. The IMU's INT1 is armed with the
+         * buttons in wait_buttons(), and STATUS1 latches until it is read, so
+         * this poll also catches a tap whose edge the sleep missed. */
+        if (muse_state_asleep() && now - s_tap_checked >= pdMS_TO_TICKS(IMU_TAP_POLL_MS)) {
+            s_tap_checked = now;
+            if (muse_imu_tap_tapped()) {
+                set_asleep(false, "tap");
+            }
+        }
         if (now - checked >= pdMS_TO_TICKS(SLEEP_CHECK_MS)) {
             checked = now;
             check_sleep();

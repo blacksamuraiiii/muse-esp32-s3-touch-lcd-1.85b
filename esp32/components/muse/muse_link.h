@@ -74,6 +74,9 @@ typedef struct {
     void (*wifi_nap)(bool nap);                   /* screen off a while: leave Wi-Fi until false */
     int (*wifi_saved)(muse_wifi_saved_t *out, int max);   /* most recently joined first */
     void (*wifi_forget)(const char *ssid);        /* one saved network; empty forgets them all */
+    /* Self-update from Link's release channel (main/ota_github.c). */
+    bool (*ota_check)(void);                      /* starts a check; false when one is already running */
+    void (*ota_status)(char *buf, size_t n);      /* one line for the settings row */
 } muse_link_ops_t;
 
 void muse_link_register(const muse_link_ops_t *ops);
@@ -99,3 +102,9 @@ int64_t muse_link_req_open(const char *verb, const char *path, const char *const
 bool muse_link_req_send(int64_t id, const void *data, size_t len, bool end_body, int wait_ms);
 void muse_link_req_cancel(int64_t id);
 void muse_link_ble_apply(void);
+/* Over-the-air self-update. ready() is false on a board whose Link registered
+ * no updater, and on a build with OTA compiled out: the settings page hides
+ * the row then. status() writes one short line for that row. */
+bool muse_link_ota_ready(void);
+bool muse_link_ota_check(void);
+void muse_link_ota_status(char *buf, size_t n);
