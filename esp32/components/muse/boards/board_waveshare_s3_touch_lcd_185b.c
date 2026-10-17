@@ -69,6 +69,7 @@
 
 #include "muse_audio.h"
 #include "muse_board.h"
+#include "muse_imu_tap.h"
 #include "muse_lcd_bands.h"
 #include "muse_mem.h"
 
@@ -108,6 +109,7 @@ static const char *TAG = "board";
 #define PA_EN GPIO_NUM_9       /* amp on while HIGH */
 
 #define BQ27220_ADDR 0x55      /* fuel gauge, 7-bit */
+#define QMI8658_ADDR 0x6B      /* IMU, 7-bit; SDO tied low on this board */
 
 #define TALK_GPIO GPIO_NUM_0   /* BOOT; the PWR key is hardware-only */
 
@@ -502,6 +504,7 @@ static const st77916_lcd_init_cmd_t s_init_version_2[] = {
 
 static i2c_master_bus_handle_t s_i2c;
 static i2c_master_dev_handle_t s_bq;   /* BQ27220 fuel gauge, added to s_i2c */
+static i2c_master_dev_handle_t s_imu;  /* QMI8658A: tap-to-wake only */
 static esp_lcd_panel_handle_t s_panel;
 static muse_gpio_button_t s_talk;
 
@@ -524,6 +527,23 @@ static esp_err_t init(void)
         .scl_speed_hz = 100000,
     };
     ESP_RETURN_ON_ERROR(i2c_master_bus_add_device(s_i2c, &bq_cfg, &s_bq), TAG, "bq27220 device");
+    /* QMI8658A at 0x6B, for tap-to-wake only (muse_imu_tap.c). A board whose
+     * IMU doesn't answer still runs: the screen just never wakes on a tap. */
+    const i2c_device_config_t imu_cfg = {
+        .dev_addr_length = I2C_ADDR_BIT_LEN_7,
+        .device_address = QMI8658_ADDR,
+        .scl_speed_hz = 400000,
+    };
+    if (i2c_master_bus_add_device(s_i2c, &imu_cfg, &s_imu) == ESP_OK) {
+        esp_err_t err = muse_imu_tap_init(s_imu);
+        if (err != ESP_OK) {
+            ESP_LOGW(TAG, "tap-to-wake off: %s", esp_err_to_name(err));
+        } else if ((err = muse_gpio_wake_line_add(MUSE_IMU_TAP_GPIO, true)) != ESP_OK) {
+            ESP_LOGW(TAG, "tap line not armed: %s", esp_err_to_name(err));
+        }
+    } else {
+        ESP_LOGW(TAG, "no IMU device handle");
+    }
     return muse_gpio_button_init(&s_talk, TALK_GPIO);
 }
 

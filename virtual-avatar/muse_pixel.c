@@ -1,10 +1,15 @@
 /*
- * Custom avatar: MaoMao (energetic Buttercup-style).
+ * Custom avatar: MaoMao (Buttercup-style), v2.
  *
  * 64x64 procedural pixel-art renderer for the muse-gadget-sdk avatar API.
- * Draws an energetic girl with short black hair, huge green eyes and a
- * big smile, with per-state animation (boot/idle/listening/thinking/
- * speaking/error/off + pet "happy" reaction).
+ * Redesigned for the 360x360 round LCD (ESP32-S3-Touch-LCD-1.85B): the
+ * character fills the frame, with Buttercup's signature flip-out bob,
+ * the curling cowlick, huge green eyes with bold lashes, a confident
+ * smirk, and the green dress with its black stripe.
+ *
+ * Per-state animation: boot fade, idle bob + blink, listening lean-in,
+ * thinking glance, speaking mouth, error wobble, off dim, pet "happy"
+ * reaction (big grin + floating heart).
  *
  * Drop this file at:  components/muse/avatar/muse_pixel.c
  * (that directory is gitignored; delete the file to go back to default)
@@ -26,7 +31,7 @@
 enum {
     C_BG = 0,
     C_OUT,      /* outline: near-black */
-    C_SKIN,     /* peach */
+    C_SKIN,     /* warm peach (won't blow out white on the LCD) */
     C_SKIND,    /* skin shadow */
     C_HAIR,     /* black hair */
     C_EYE,      /* eye white */
@@ -36,6 +41,7 @@ enum {
     C_SHINE,    /* white highlight */
     C_MOUTH,    /* mouth dark */
     C_TONGUE,   /* tongue */
+    C_TEETH,    /* teeth white */
     C_DRESS,    /* green dress */
     C_STRIPE,   /* dress black stripe */
     C_BLUSH,    /* pink blush */
@@ -45,27 +51,28 @@ enum {
 
 static const uint32_t PAL_RGB[C_COUNT] = {
     [C_BG]     = 0x000000,
-    [C_OUT]    = 0x201812,
-    [C_SKIN]   = 0xffd9b3,
-    [C_SKIND]  = 0xe8b48c,
-    [C_HAIR]   = 0x181818,
+    [C_OUT]    = 0x1a1410,
+    [C_SKIN]   = 0xffc890,
+    [C_SKIND]  = 0xe0a068,
+    [C_HAIR]   = 0x141414,
     [C_EYE]    = 0xffffff,
-    [C_IRIS]   = 0x58b368,
-    [C_IRISD]  = 0x3a8a48,
-    [C_PUPIL]  = 0x101010,
+    [C_IRIS]   = 0x3fae5a,
+    [C_IRISD]  = 0x2b7a40,
+    [C_PUPIL]  = 0x0c0c0c,
     [C_SHINE]  = 0xffffff,
     [C_MOUTH]  = 0x5c2420,
     [C_TONGUE] = 0xe07070,
-    [C_DRESS]  = 0x58b368,
-    [C_STRIPE] = 0x181818,
+    [C_TEETH]  = 0xffffff,
+    [C_DRESS]  = 0x3fae5a,
+    [C_STRIPE] = 0x141414,
     [C_BLUSH]  = 0xf09890,
-    [C_GLOW]   = 0x58b368,
+    [C_GLOW]   = 0x3fae5a,
 };
 
 /* State accent colours (also used for the glow). */
 static const uint32_t ACCENT[MUSE_MODE_COUNT] = {
     [MUSE_MODE_BOOT]      = 0x9fd0ff,
-    [MUSE_MODE_IDLE]      = 0x58b368,
+    [MUSE_MODE_IDLE]      = 0x3fae5a,
     [MUSE_MODE_LISTENING] = 0x5cb8ff,
     [MUSE_MODE_THINKING]  = 0xe07bff,
     [MUSE_MODE_SPEAKING]  = 0x6ff0bf,
@@ -77,7 +84,7 @@ static uint8_t  s_fb[W * H];
 static uint16_t s_pal[C_COUNT];
 static uint16_t s_pal_dim[C_COUNT];
 
-static uint32_t s_accent = 0x58b368;
+static uint32_t s_accent = 0x3fae5a;
 static int      s_size = 0;
 #define MAP_MAX 512
 static uint8_t s_map[MAP_MAX];
@@ -148,7 +155,7 @@ static void ellipse_o(int cx, int cy, int rx, int ry, uint8_t fill, uint8_t out)
     fill_ellipse(cx, cy, rx, ry, fill);
 }
 
-/* Down-pointing triangle (for bangs): apex at (cx, y_apex). */
+/* Down-pointing triangle (for bangs / hair flips): apex at (cx, y_top). */
 static void tri_down(int cx, int y_top, int half_w, int h, uint8_t c)
 {
     for (int i = 0; i < h; i++) {
@@ -207,12 +214,13 @@ void muse_pixel_scale(uint16_t *dst, int stride_px, int x0, int x1, int y0, int 
 }
 
 /* ------------------------------------------------------------------ */
-/* MaoMao                                                              */
+/* MaoMao v2                                                           */
 /* ------------------------------------------------------------------ */
 
 /* Blink state. */
 static float s_blink_t = 0;   /* time left with eyes closed */
 static float s_next_blink = 2.0f;
+static float s_heart_y = 18.0f;   /* the happy heart's row, rising as it floats */
 
 static float clampf(float v, float lo, float hi)
 {
@@ -224,16 +232,22 @@ static void draw_eye(int cx, int cy, float open, int look_dx, int look_dy)
 {
     if (open < 0.15f) {
         /* Closed: a curved lash line. */
-        for (int x = -6; x <= 6; x++)
-            px(cx + x, cy + (x * x) / 24, C_OUT);
+        for (int x = -8; x <= 8; x++)
+            px(cx + x, cy + (x * x) / 30, C_OUT);
         return;
     }
-    int rx = 7, ry = (int)(9 * open + 0.5f);
+    int rx = 8, ry = (int)(10 * open + 0.5f);
     /* Sclera with outline. */
     ellipse_o(cx, cy, rx, ry, C_EYE, C_OUT);
-    /* Iris (green), pupil, highlight — shift with look direction. */
+    /* Bold upper lash line, 2px. */
+    for (int x = -9; x <= 9; x++) {
+        int y = cy - ry - 1 + (x * x) / 34;
+        px(cx + x, y, C_OUT);
+        px(cx + x, y - 1, C_OUT);
+    }
+    /* Iris (green), pupil, highlights — shift with look direction. */
     int ix = cx + look_dx, iy = cy + look_dy;
-    int irx = (int)(rx * 0.72f), iry = (int)(ry * 0.78f);
+    int irx = (int)(rx * 0.74f), iry = (int)(ry * 0.8f);
     if (open > 0.5f) {
         fill_ellipse(ix, iy, irx, iry, C_IRIS);
         /* iris shading: darker crescent at bottom */
@@ -241,10 +255,9 @@ static void draw_eye(int cx, int cy, float open, int look_dx, int look_dy)
         fill_ellipse(ix, iy, irx - 1, iry - 2, C_IRIS);
         int prx = irx * 2 / 3, pry = iry * 2 / 3;
         fill_ellipse(ix, iy, prx, pry, C_PUPIL);
-        /* The signature highlight: small white dot, upper-left. */
-        fill_ellipse(ix - prx / 2, iy - pry / 2, 1, 1, C_SHINE);
-        if (prx >= 3)
-            px(ix - prx / 2 + 1, iy - pry / 2 + 1, C_SHINE);
+        /* Big signature highlight upper-left + tiny sparkle lower-right. */
+        fill_ellipse(ix - prx / 2 - 1, iy - pry / 2 - 1, 2, 2, C_SHINE);
+        px(ix + prx / 2, iy + pry / 2, C_SHINE);
     } else {
         /* Half-open: just iris + pupil slit. */
         fill_ellipse(ix, iy, irx, iry, C_IRIS);
@@ -252,58 +265,57 @@ static void draw_eye(int cx, int cy, float open, int look_dx, int look_dy)
     }
 }
 
-/* Mouth variants. */
-static void draw_mouth(int cx, int cy, muse_mode_t mode, float level,
-                       float happy, float t)
+/* Mouth variants. `my` is the mouth's centre row. The eyes are huge and reach
+ * down to row 41, and the chin is the row-44 tip of the face, so a mouth only
+ * has the rows around 39..43 and the columns cx-4..cx+4 to itself: anything
+ * wider or lower draws over the chin outline or the hair behind it. Every
+ * mouth is one pixel thick for the same reason - two rows read as a smear at
+ * three screen pixels a cell - and none of them use teeth. */
+static void draw_mouth(int cx, int my, muse_mode_t mode, float level,
+                       float happy)
 {
     switch (mode) {
     case MUSE_MODE_SPEAKING: {
-        /* Opens with the audio level. */
-        int h = 2 + (int)(level * 7);
-        int w = 4 + (int)(level * 3);
-        ellipse_o(cx, cy, w, h, C_MOUTH, C_OUT);
-        if (h > 4)
-            fill_ellipse(cx, cy + h / 3, w - 2, h / 3, C_TONGUE);
+        /* Opens with the audio level; tongue once it is wide open. Kept to
+         * h <= 3 so the chin outline at row 44 stays clear of the mouth. */
+        int h = 1 + (int)(level * 2);
+        int w = 3 + (int)(level);
+        ellipse_o(cx, my - 1, w, h, C_MOUTH, C_OUT);
+        if (h > 2)
+            fill_ellipse(cx, my + 1, w - 1, 1, C_TONGUE);
         break;
     }
     case MUSE_MODE_LISTENING:
         /* Small attentive "o". */
-        ellipse_o(cx, cy, 2, 3, C_MOUTH, C_OUT);
+        ellipse_o(cx, my - 1, 2, 2, C_MOUTH, C_OUT);
         break;
     case MUSE_MODE_THINKING:
-        /* Flat, slightly tilted. */
-        for (int x = -4; x <= 4; x++)
-            px(cx + x, cy + x / 4, C_OUT);
+        /* Flat and short, pulled to one side. */
+        for (int x = -3; x <= 3; x++)
+            px(cx + x + 1, my - 1, C_OUT);
         break;
     case MUSE_MODE_ERROR:
-        /* Worried wobble. */
-        for (int x = -5; x <= 5; x++) {
-            int y = cy - (x * x) / 12 + (int)(sinf(t * 9 + x) * 1.0f);
-            px(cx + x, y, C_OUT);
-        }
+        /* Worried: corners down, middle up. */
+        for (int x = -4; x <= 4; x++)
+            px(cx + x, my - 1 + (x * x) / 12, C_OUT);
         break;
     case MUSE_MODE_OFF:
         /* Soft closed smile. */
-        for (int x = -4; x <= 4; x++)
-            px(cx + x, cy + (x * x) / 14, C_OUT);
+        for (int x = -3; x <= 3; x++)
+            px(cx + x, my - (x * x) / 9, C_OUT);
         break;
-    default: {
-        /* Happy open smile; bigger when petted. */
-        int w = 5 + (int)(happy * 3);
-        int h = 4 + (int)(happy * 4);
-        /* Smile arc. */
-        for (int x = -w; x <= w; x++) {
-            int y = cy - 2 + (x * x * h) / (w * w * 2);
-            px(cx + x, y, C_OUT);
-            if (happy > 0.3f)
-                px(cx + x, y + 1, C_OUT);
-        }
+    default:
         if (happy > 0.3f) {
-            fill_ellipse(cx, cy + 1, w - 2, h - 2, C_MOUTH);
-            fill_ellipse(cx, cy + h / 2, w - 3, 2, C_TONGUE);
+            /* Open grin, tongue instead of teeth. */
+            ellipse_o(cx, my - 1, 4, 3, C_MOUTH, C_OUT);
+            fill_ellipse(cx, my + 1, 2, 1, C_TONGUE);
+        } else {
+            /* A thin closed smile, seven cells wide: at eight or more its ends
+             * touch the eyes' outlines and the three merge into one line. */
+            for (int x = -3; x <= 3; x++)
+                px(cx + x, my - (x * x) / 9, C_OUT);
         }
         break;
-    }
     }
 }
 
@@ -322,9 +334,6 @@ void muse_pixel_render(const muse_pose_t *p)
 
     /* Boot: fade the whole figure in over ~1s. */
     float fade = mode == MUSE_MODE_BOOT ? clampf(p->mode_t / 1.0f, 0, 1) : 1.0f;
-    /* Off: dim everything. */
-    float brightness = mode == MUSE_MODE_OFF ? 0.45f : 1.0f;
-    (void)brightness; /* applied via palette choice below */
 
     /* Blink timing (not while off / error). */
     float eye_open = 1.0f;
@@ -339,15 +348,15 @@ void muse_pixel_render(const muse_pose_t *p)
     }
 
     /* Gentle idle bob (frozen when off). */
-    int bob = mode == MUSE_MODE_OFF ? 0 : (int)(sinf(t * 2.2f) * 1.2f);
+    int bob = mode == MUSE_MODE_OFF ? 0 : (int)roundf(sinf(t * 2.2f) * 1.2f);
     /* Listening lean-in. */
     int lean = mode == MUSE_MODE_LISTENING ? -1 : 0;
 
     /* Thinking: pupils glance side to side. */
     int look_dx = 0, look_dy = 0;
     if (mode == MUSE_MODE_THINKING) {
-        look_dx = (int)(sinf(t * 3.1f) * 2.5f);
-        look_dy = (int)(cosf(t * 2.3f) * 1.0f);
+        look_dx = (int)roundf(sinf(t * 3.1f) * 2.5f);
+        look_dy = (int)roundf(cosf(t * 2.3f) * 1.0f);
     } else if (mode == MUSE_MODE_LISTENING) {
         look_dy = -1;
     }
@@ -357,75 +366,112 @@ void muse_pixel_render(const muse_pose_t *p)
         return;
 
     int cx = 32;
-    int cy = 26 + bob + lean;
+    int cy = 28 + bob + lean;
 
-    /* -- Dress (bottom of frame) -- */
-    fill_rect(20, 52 + bob / 2, 44, 63, C_DRESS);
-    fill_rect(20, 56 + bob / 2, 44, 59 + bob / 2, C_STRIPE);
-    /* shoulders */
-    fill_ellipse(cx, 52 + bob / 2, 13, 5, C_DRESS);
+    /* -- Dress (bottom of frame) --
+     * The UI keeps the grid's bottom three rows clear for the mic level meter
+     * it draws underneath and aligns the art's row 60 to that band
+     * (ART_BLANK_ROWS in muse_ui.c), so the hem stays on row 60: a hem on row
+     * 63 sits on top of the meter and hides its middle segments. The body sits
+     * three rows higher to keep the dress's fourteen rows. */
+    const int hem = 60;
+    int shoulder = hem - 13;
+    fill_rect(16, shoulder, 48, hem, C_DRESS);
+    fill_rect(16, shoulder + 5, 48, shoulder + 8, C_STRIPE);
+    fill_ellipse(cx, shoulder, 16, 6, C_DRESS);
+    /* neck */
+    fill_rect(cx - 4, 42, cx + 4, shoulder, C_SKIN);
+    fill_rect(cx - 4, 42, cx + 4, 44, C_SKIND);
 
-    /* -- Head -- */
-    ellipse_o(cx, cy, 20, 19, C_SKIN, C_OUT);
-    /* soft shading bottom-right */
-    fill_ellipse(cx + 7, cy + 8, 10, 8, C_SKIND);
-    fill_ellipse(cx + 4, cy + 5, 11, 9, C_SKIN);
+    /* -- Back hair mass -- */
+    fill_ellipse(cx, cy - 8, 22, 15, C_HAIR);
+    fill_ellipse(cx, cy + 10, 19, 9, C_HAIR);
+    /* Signature outward flips at the jaw: narrow at top, flaring wide. */
+    tri_down(cx - 20, cy + 4, 11, 16, C_HAIR);
+    tri_down(cx + 20, cy + 4, 11, 16, C_HAIR);
 
-    /* -- Hair: back mass -- */
-    fill_ellipse(cx, cy - 9, 22, 15, C_HAIR);
-    /* redraw face over the hair's lower part */
-    fill_ellipse(cx, cy + 2, 18, 16, C_SKIN);
-    fill_ellipse(cx + 6, cy + 9, 9, 7, C_SKIND);
-    fill_ellipse(cx + 3, cy + 6, 10, 8, C_SKIN);
+    /* -- Face (fills the frame) -- */
+    ellipse_o(cx, cy, 18, 16, C_SKIN, C_OUT);
+    /* thin shading crescent at the jaw edge */
+    fill_ellipse(cx + 9, cy + 9, 7, 5, C_SKIND);
+    fill_ellipse(cx + 6, cy + 7, 8, 6, C_SKIN);
 
-    /* Bangs: Buttercup's V tufts on the forehead. */
-    tri_down(cx - 11, cy - 16, 5, 9, C_HAIR);
-    tri_down(cx - 3, cy - 18, 5, 11, C_HAIR);
-    tri_down(cx + 6, cy - 18, 5, 11, C_HAIR);
-    tri_down(cx + 13, cy - 15, 4, 8, C_HAIR);
-    /* Side flips. */
-    tri_down(cx - 21, cy - 8, 4, 10, C_HAIR);
-    tri_down(cx + 21, cy - 8, 4, 10, C_HAIR);
-    /* Cowlick. */
-    for (int i = 0; i < 6; i++) {
-        px(cx + 8 + i, cy - 24 - i / 2, C_HAIR);
-        px(cx + 8 + i, cy - 23 - i / 2, C_HAIR);
+    /* -- Chunky bangs, short enough to show forehead -- */
+    tri_down(cx - 12, cy - 16, 6, 9, C_HAIR);
+    tri_down(cx - 4, cy - 18, 6, 11, C_HAIR);
+    tri_down(cx + 5, cy - 18, 6, 11, C_HAIR);
+    tri_down(cx + 12, cy - 16, 6, 9, C_HAIR);
+    /* middle part dip */
+    tri_down(cx, cy - 18, 3, 5, C_HAIR);
+
+    /* -- The cowlick: pokes above the hair silhouette, tip hooks down -- */
+    {
+        int hx = cx + 2, hy = cy - 23;
+        int tipx = hx, tipy = hy;
+        for (int i = 0; i < 12; i++) {
+            int x = hx + i;
+            int y = hy - (int)(i * 1.1f) + (i * i) / 26;
+            if (y < 1)
+                break;
+            tipx = x; tipy = y;
+            px(x, y, C_HAIR);
+            px(x, y + 1, C_HAIR);
+            px(x + 1, y, C_HAIR);
+        }
+        for (int i = 1; i <= 3; i++) {
+            px(tipx + i / 2, tipy + i, C_HAIR);
+            px(tipx + i / 2 + 1, tipy + i, C_HAIR);
+        }
     }
 
     /* -- Eyes (the huge signature ones) -- */
-    int ey = cy + 2;
-    int ex = mode == MUSE_MODE_LISTENING ? 8 : 7;
-    draw_eye(cx - 10, ey, eye_open, look_dx, look_dy);
-    draw_eye(cx + 10, ey, eye_open, look_dx, look_dy);
-    (void)ex;
+    int ey = cy + 3;
+    draw_eye(cx - 11, ey, eye_open, look_dx, look_dy);
+    draw_eye(cx + 11, ey, eye_open, look_dx, look_dy);
 
-    /* -- Blush (stronger when happy) -- */
-    uint8_t blush_c = happy > 0.25f ? C_BLUSH : C_BLUSH;
-    fill_ellipse(cx - 15, ey + 7, 3, 2, blush_c);
-    fill_ellipse(cx + 15, ey + 7, 3, 2, blush_c);
-    if (happy > 0.5f) {
-        fill_ellipse(cx - 15, ey + 7, 4, 2, blush_c);
-        fill_ellipse(cx + 15, ey + 7, 4, 2, blush_c);
-    }
+    /* -- Blush -- */
+    fill_ellipse(cx - 16, ey + 8, 3, 2, C_BLUSH);
+    fill_ellipse(cx + 16, ey + 8, 3, 2, C_BLUSH);
 
     /* -- Mouth -- */
-    draw_mouth(cx, cy + 14, mode, level, happy, t);
+    draw_mouth(cx, cy + 12, mode, level, happy);
 
     /* -- State glow ring (subtle) -- */
     if (mode == MUSE_MODE_LISTENING || mode == MUSE_MODE_THINKING ||
         mode == MUSE_MODE_SPEAKING) {
-        int gr = 24 + (int)(sinf(t * 4.0f) * 1.5f);
-        for (int a = 0; a < 64; a++) {
-            float ang = a * TAU / 64;
-            px(cx + (int)(cosf(ang) * gr), cy + (int)(sinf(ang) * gr), C_GLOW);
+        /* Radius 26 +/- 1: the listening lean puts the head on row 27, so the
+         * old 27 +/- 1.5 lost its top dot off the grid and flickered. */
+        int gr = 26 + (int)roundf(sinf(t * 4.0f));
+        for (int a = 0; a < 72; a++) {
+            float ang = a * TAU / 72;
+            px(cx + (int)roundf(cosf(ang) * gr), cy + (int)roundf(sinf(ang) * gr), C_GLOW);
         }
     }
-    /* Happy: little hearts. */
+    /* Happy: a heart floating up the left side. Seven by six pixels so it still
+     * reads as a heart at three screen pixels a cell; the old two-by-two block
+     * looked like a stray dot. Rows advance a third of a row per frame (~8
+     * rows a second) instead of teleporting back every 1.8s. */
     if (happy > 0.4f) {
-        int hx = cx - 24, hy = (int)(cy - 10 - (t * 8)) % 20;
-        if (hy < 0) hy += 20;
-        px(hx, cy - hy, C_BLUSH); px(hx + 1, cy - hy, C_BLUSH);
-        px(hx, cy - hy - 1, C_BLUSH); px(hx + 1, cy - hy - 1, C_BLUSH);
+        static const uint8_t HEART[6] = {
+            0x14,   /* ..X.X.. */
+            0x3e,   /* .XXXXX. */
+            0x7f,   /* XXXXXXX */
+            0x3e,   /* .XXXXX. */
+            0x1c,   /* ..XXX.. */
+            0x08,   /* ...X... */
+        };
+        s_heart_y -= 0.32f;
+        if (s_heart_y < 0.0f) {
+            s_heart_y = 18.0f;
+        }
+        int hy = 2 + (int)s_heart_y, hx = 4;
+        for (int r = 0; r < 6; r++) {
+            for (int c = 0; c < 7; c++) {
+                if (HEART[r] & (1u << (6 - c))) {
+                    px(hx + c, hy + r, C_BLUSH);
+                }
+            }
+        }
     }
 
     /* Boot fade: punch BG holes proportional to (1-fade). */
@@ -437,8 +483,7 @@ void muse_pixel_render(const muse_pose_t *p)
                     s_fb[y * W + x] = C_BG;
             }
     }
-    /* Off: dim by remapping through the dim palette is done in scale;
-       here just darken hair/skin slightly via overlay. */
+    /* Off: dim by punching BG holes. */
     if (mode == MUSE_MODE_OFF) {
         for (int i = 0; i < W * H; i++)
             if (s_fb[i] != C_BG && ((i * 7) & 3) == 0)

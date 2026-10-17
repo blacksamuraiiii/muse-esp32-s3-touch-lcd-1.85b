@@ -25,3 +25,6 @@ muse-simulator.ppm
 .sdk-token
 /backups/
 .workbuddy
+
+# Local service secrets (Azure Speech key and region for tts-server).
+tts-server/.env

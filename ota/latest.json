@@ -1,0 +1,7 @@
+{
+  "version": "1.1",
+  "url": "https://github.com/blacksamuraiiii/muse-esp32-s3-touch-lcd-1.85b/releases/download/v1.1/muse-gadget.bin",
+  "sha256": "4674c43f290f3176d145407d74f7fd75513360fcb8be7bf889b243343ab6e390",
+  "size": 3018752,
+  "notes": "1.1 更新：设置页新增 Update（GitHub 检查更新）；TTS 载荷严格校验，非 MP3 整段丢弃；音量按钮位置改为 y=-ring_in/3，距 Muse 净空 15→33 像素；新增敲击唤醒（QMI8658A tap + GPIO8）。服务端同步：TTS 从 edge-tts 切到 Azure Speech（eastasia，音色晓伊）+ waitress 服务器（Flask 开发服务器会截断板子的长响应）。详见 docs/20261017-进展记录.md。"
+}
