@@ -17,6 +17,7 @@
 #include "muse_input.h"
 
 #include <stdint.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -48,6 +49,13 @@
 #if CONFIG_MUSE_WATCHER_CAMERA
 #include "boards/watcher_camera.h"
 #endif
+
+static atomic_uint s_touch_talk_events;
+
+void muse_input_touch_talk(bool pressed)
+{
+    atomic_fetch_or(&s_touch_talk_events, pressed ? MUSE_BTN_TALK_PRESS : MUSE_BTN_TALK_RELEASE);
+}
 
 static const char *TAG = "muse_input";
 
@@ -86,6 +94,7 @@ static const char *TAG = "muse_input";
 #define CHAT_MAX (192 * 1024)  /* a typed message, assembled from "chat+=" lines */
 
 static QueueHandle_t s_queue;
+static bool (*s_console_hook)(const char *line);
 static TaskHandle_t s_input;
 static bool s_talk_down;
 static bool s_cpu_low;      /* display stopped and the CPU allowed to sleep */
@@ -112,6 +121,9 @@ static bool update_power(void);
 
 static void power_off(void)
 {
+    if (!muse_board->power_off) {
+        return;   /* a physical switch powers it off */
+    }
     ESP_LOGI(TAG, "shutting down");
     muse_state_set_asleep(false);
     update_power();
@@ -191,6 +203,9 @@ static void aux_button(bool pressed, bool edge)
         return;
     }
     if (pressed && !swallow) {
+        if (!muse_board->power_off) {
+            return;   /* no hold to power off: a press only sleeps */
+        }
         held++;
         if (held == HINT_TICKS) {
             uint32_t v = UINT32_MAX;
@@ -531,7 +546,7 @@ static void input_task(void *arg)
     TickType_t powered = xTaskGetTickCount() - pdMS_TO_TICKS(POWER_MS);
 
     for (;;) {
-        unsigned ev = muse_board->poll_buttons();
+        unsigned ev = muse_board->poll_buttons() | atomic_exchange(&s_touch_talk_events, 0);
         if (ev & (MUSE_BTN_TALK_PRESS | MUSE_BTN_TALK_RELEASE)) {
             ESP_LOGI(TAG, "talk key:%s%s", ev & MUSE_BTN_TALK_PRESS ? " press" : "",
                      ev & MUSE_BTN_TALK_RELEASE ? " release" : "");
@@ -732,6 +747,9 @@ static void set_face(const char *name)
  */
 static bool console_command(char *line, bool whole)
 {
+    if (whole && s_console_hook && s_console_hook(line)) {
+        return true;
+    }
     if (!strcmp(line, "status")) {
         size_t cap = 1024;   /* long SSID, host and VM names escaped: past 512 */
         char *json = heap_caps_malloc(cap, MUSE_BIG_CAPS);
@@ -883,6 +901,11 @@ static void serial_task(void *arg)
             post(c == 'd' ? MUSE_PTT_DOWN : MUSE_PTT_UP, false);
         }
     }
+}
+
+void muse_input_set_console_hook(bool (*hook)(const char *line))
+{
+    s_console_hook = hook;
 }
 
 esp_err_t muse_input_start(QueueHandle_t queue)

@@ -68,8 +68,14 @@ if(CONFIG_MUSE_ENABLED)
     if(CONFIG_MUSE_BOARD_WAVESHARE_S3_175C OR CONFIG_MUSE_BOARD_WAVESHARE_S3_175)
         # One driver: the 1.75 differs only in pins (its BSP's) and its PWR key.
         list(APPEND srcs "boards/board_waveshare_s3_175c.c" "boards/muse_lcd_bands.c")
+    elseif(CONFIG_MUSE_BOARD_OSTB_ECHOEAR_2ST)
+        list(APPEND srcs "boards/board_ostb_echoear_2st.c")
     elseif(CONFIG_MUSE_BOARD_WAVESHARE_S3_216)
         list(APPEND srcs "boards/board_waveshare_s3_216.c" "boards/muse_lcd_bands.c")
+    elseif(CONFIG_MUSE_BOARD_WAVESHARE_S3_185C)
+        list(APPEND srcs "boards/board_waveshare_s3_185c.c" "boards/muse_lcd_bands.c")
+    elseif(CONFIG_MUSE_BOARD_ESP_MOSAICO)
+        list(APPEND srcs "boards/board_esp_mosaico.c" "boards/muse_lcd_bands.c")
     elseif(CONFIG_MUSE_BOARD_AIPI)
         list(APPEND srcs "boards/board_aipi.c")
     elseif(CONFIG_MUSE_BOARD_ESPRESSIF_BOX_3)
@@ -101,6 +107,8 @@ if(CONFIG_MUSE_ENABLED)
         list(APPEND srcs "boards/board_guition_jc3248w535.c")
     elseif(CONFIG_MUSE_BOARD_WAVESHARE_S3_LCD7)
         list(APPEND srcs "boards/board_waveshare_s3_lcd7.c")
+    elseif(CONFIG_MUSE_BOARD_WAVESHARE_S3_LCD128)
+        list(APPEND srcs "boards/board_waveshare_s3_lcd128.c")
     elseif(CONFIG_MUSE_BOARD_VN_S3_183)
         list(APPEND srcs "boards/board_vn_s3_183.c")
     elseif(CONFIG_MUSE_BOARD_WAVESHARE_S3_TOUCH_LCD_185B)
@@ -125,7 +133,7 @@ set(muse_priv_requires
     bt esp-tls mbedtls esp_app_format esp_http_client
     noise_core minimp3
     esp_lcd esp_adc esp_driver_i2s esp_driver_ledc esp_driver_spi esp_driver_uart esp_wifi
-    esp_driver_pcnt)
+    esp_driver_pcnt efuse)
 list(APPEND muse_priv_requires camera)
 
 idf_component_register(
