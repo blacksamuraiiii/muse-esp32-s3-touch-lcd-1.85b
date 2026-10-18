@@ -763,6 +763,15 @@ static bool console_command(char *line, bool whole)
         fflush(stdout);
         return true;
     }
+    if (!strcmp(line, "ota")) {
+        /* The Update page needs a finger; this is the same call from a cable. */
+        bool started = muse_link_ota_check();
+        char buf[128];
+        muse_link_ota_status(buf, sizeof(buf));
+        printf("@ota started=%d %s\n", (int)started, buf);
+        fflush(stdout);
+        return true;
+    }
     if (!strcmp(line, "batt")) {
         if (muse_board->power_debug) {
             muse_board->power_debug();
@@ -837,7 +846,8 @@ static bool console_command(char *line, bool whole)
  * "power.reset" starts it over, "nap" sleeps and leaves Wi-Fi at once (as
  * two minutes asleep on battery would; 'w' rejoins), "imu" dumps the QMI8658A's
  * tap registers (plus "imu.check" and "imu.rearm" to force the repair paths),
- * "batt" dumps the fuel gauge's raw registers, "face=" shows a face
+ * "batt" dumps the fuel gauge's raw registers, "ota" starts the same GitHub
+ * update check the settings page's Update button does, "face=" shows a face
  * (see set_face), and "chat=" sends a typed message to Hatch (see chat_line
  * and tools/muse/chat.py).
  */

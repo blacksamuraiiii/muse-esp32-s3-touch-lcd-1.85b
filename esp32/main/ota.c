@@ -41,10 +41,12 @@ bool ota_is_enabled(void) {
 
 #include "esp_log.h"
 #include "esp_system.h"
+#include "esp_heap_caps.h"
 #include "esp_https_ota.h"
 #include "esp_http_client.h"
 #include "esp_crt_bundle.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/idf_additions.h"
 #include "freertos/task.h"
 
 static const char *TAG = "link.ota";
@@ -259,7 +261,25 @@ done:
     free(ctx->url);
     free(ctx);
     stack_monitor_record(NULL);
-    vTaskDelete(NULL);
+    // Paired with xTaskCreateWithCaps: the plain delete would leak the stack.
+    vTaskDeleteWithCaps(NULL);
+}
+
+/* The task's stack must come from internal RAM. esp_https_ota writes flash,
+ * and a flash write runs with the cache off: a stack in PSRAM cannot be
+ * touched in that window. 16 KB is the comfortable size for the TLS handshake
+ * plus those writes; on this board internal RAM is the scarce resource, so the
+ * size steps down instead of failing the update outright. Below 8 KB the
+ * handshake is not safe, so that is the floor. */
+static const size_t k_ota_stacks[] = { 16384, 12288, 10240, 8192 };
+
+static void log_heap(const char *when) {
+    ESP_LOGI(TAG, "%s: int free %u largest %u | psram free %u largest %u",
+             when,
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM));
 }
 
 void ota_start(const char *url, bool force, ota_status_cb cb, void *user) {
@@ -281,16 +301,29 @@ void ota_start(const char *url, bool force, ota_status_cb cb, void *user) {
         }
         return;
     }
-    // 8 KB stack: TLS handshake + flash writes during the OTA download.
-    if (xTaskCreate(ota_task, "ota", 16384, ctx, 5, NULL) != pdPASS) {
-        ESP_LOGE(TAG, "could not start OTA task");
-        free(ctx->url);
-        free(ctx);
-        if (cb) {
-            ota_event_t ev = { .result = OTA_RESULT_FAILED,
-                               .detail = "could not start ota task" };
-            cb(&ev, user);
+    log_heap("ota start");
+    size_t stack = 0;
+    for (size_t i = 0; i < sizeof(k_ota_stacks) / sizeof(k_ota_stacks[0]); i++) {
+        if (xTaskCreateWithCaps(ota_task, "ota", k_ota_stacks[i], ctx, 5, NULL,
+                                MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT) == pdPASS) {
+            stack = k_ota_stacks[i];
+            break;
         }
+        ESP_LOGW(TAG, "no %u-byte internal stack for the ota task",
+                 (unsigned)k_ota_stacks[i]);
+    }
+    if (stack) {
+        ESP_LOGI(TAG, "ota task up (%u-byte internal stack)", (unsigned)stack);
+        return;
+    }
+    ESP_LOGE(TAG, "could not start OTA task");
+    log_heap("ota start failed");
+    free(ctx->url);
+    free(ctx);
+    if (cb) {
+        ota_event_t ev = { .result = OTA_RESULT_FAILED,
+                           .detail = "could not start ota task" };
+        cb(&ev, user);
     }
 }
 
