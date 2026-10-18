@@ -1,7 +1,7 @@
 {
-  "version": "1.2",
-  "url": "https://github.com/blacksamuraiiii/muse-esp32-s3-touch-lcd-1.85b/releases/download/v1.2/muse-gadget.bin",
-  "sha256": "7afe8e6856373310ace4803ddbd1cb452f5457cfe29ac8d06cf2b5a75d6b8217",
+  "version": "1.3",
+  "url": "https://github.com/blacksamuraiiii/muse-esp32-s3-touch-lcd-1.85b/releases/download/v1.3/muse-gadget.bin",
+  "sha256": "26a38e5ec11dcdb38400313f32e0ae228e0e6cd3121235ccb6cfb406028c00cc",
   "size": 3018752,
-  "notes": "1.2 更新：敲击亮屏修复（I2C 事务加 PM 锁防 light sleep 截断、STATUS1 亮屏也读清锁存、1Hz 配置校验自动重配、睡着时 60s 重臂，新增 imu 诊断命令）；TTS 首音服务端连接池+预热，首音 1.2-1.8s 降到 0.5s；电量恒 100% 时按电压估算兜底，新增 batt 寄存器转储；仓库 v1.1 tag 改指 7a1dd26、文档入库、发版脚本不再依赖 gh。已知问题：电量计仍需按电芯写 Data Flash 并跑学习周期。"
+  "notes": "1.3 更新：① 修复 OTA 报 failed: could not start ota task——OTA 任务栈改为从内部 RAM 申请并按 16K/12K/10K/8K 逐级降档（栈在 PSRAM 时写 flash 会崩），并打印当时的内部/PSRAM 余量；② 修复电量恒显 100%——原来把 0x1C（StandbyTimeToEmpty）当 SoC，真机读出 1947 被夹成 100%，SoC 改读 0x2C，与 RC/FCC 交叉验证一致；③ 合入上游 muse-gadget-sdk 26 个提交：串口 sdk_token 设置与配对记忆、设置页 VM/token 状态、console hook、触摸当 talk 键、方屏 no_ring 布局、新增 LCD-1.28/1.85C/EchoEar-2ST/ESP-Mosaico 板型；④ 新增串口命令 ota/batt/imu。"
 }
