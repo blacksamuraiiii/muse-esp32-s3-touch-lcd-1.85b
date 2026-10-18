@@ -1,7 +1,7 @@
 {
-  "version": "1.1",
-  "url": "https://github.com/blacksamuraiiii/muse-esp32-s3-touch-lcd-1.85b/releases/download/v1.1/muse-gadget.bin",
-  "sha256": "3b6bd343502e156802dd2b8b24e38db06e45c031bf89f97809d7c733263d6184",
+  "version": "1.2",
+  "url": "https://github.com/blacksamuraiiii/muse-esp32-s3-touch-lcd-1.85b/releases/download/v1.2/muse-gadget.bin",
+  "sha256": "7afe8e6856373310ace4803ddbd1cb452f5457cfe29ac8d06cf2b5a75d6b8217",
   "size": 3018752,
-  "notes": "1.1 更新：设置页新增 Update（GitHub 检查更新）；TTS 载荷严格校验，非 MP3 整段丢弃；音量按钮位置改为 y=-ring_in/3（距 Muse 净空 15→33 像素）；新增敲击唤醒（QMI8658A tap + GPIO8）。服务端同步：TTS 从 edge-tts 切到 Azure Speech（eastasia，音色晓伊）+ waitress 服务器（Flask 开发服务器会截断板子长响应）。本镜像已清空开发者凭据：WiFi SSID/口令、SDK token、静态 IP 均留空，设备改用它配对时存在 NVS 里的凭据。已知问题：长时间睡眠（约 2 分钟以上）后敲击唤醒失效，见 docs/20261017-进展记录.md。"
+  "notes": "1.2 更新：敲击亮屏修复（I2C 事务加 PM 锁防 light sleep 截断、STATUS1 亮屏也读清锁存、1Hz 配置校验自动重配、睡着时 60s 重臂，新增 imu 诊断命令）；TTS 首音服务端连接池+预热，首音 1.2-1.8s 降到 0.5s；电量恒 100% 时按电压估算兜底，新增 batt 寄存器转储；仓库 v1.1 tag 改指 7a1dd26、文档入库、发版脚本不再依赖 gh。已知问题：电量计仍需按电芯写 Data Flash 并跑学习周期。"
 }

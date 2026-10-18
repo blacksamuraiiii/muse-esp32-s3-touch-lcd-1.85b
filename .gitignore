@@ -25,6 +25,8 @@ muse-simulator.ppm
 .sdk-token
 /backups/
 .workbuddy
+# Assistant workspace data (session notes, memory), not part of the firmware.
+.workbuddy-ai/
 
 # Local service secrets (Azure Speech key and region for tts-server).
 tts-server/.env

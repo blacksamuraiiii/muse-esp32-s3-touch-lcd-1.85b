@@ -64,9 +64,22 @@ static const char *TAG = "muse_input";
 #define HINT_TICKS 60          /* 0.6 s: warn that holding powers off */
 #define LONG_TICKS 150         /* 1.5 s: power off */
 #define SLEEP_CHECK_MS 100
-/* While asleep, read the IMU's tap status this often: the sleep itself waits on
- * the IMU's INT1 line, so this only has to cover an edge the wake missed. */
+/* A tap on the case wakes the screen. STATUS1 is read this often whether the
+ * screen is on or off: left latched, it keeps the engine from reporting the
+ * next tap, which is what made tap-to-wake die after a while. The INT1 line is
+ * armed with the buttons in wait_buttons(), so this poll only has to cover an
+ * edge the sleep missed. */
 #define IMU_TAP_POLL_MS 200
+/* CTRL7/CTRL8 are compared against what init wrote this often, and the tap
+ * parameters (CAL1..CAL4) this often again. A drifting chip is re-initialised
+ * by muse_imu_tap_check(). */
+#define IMU_TAP_VERIFY_MS 1000
+#define IMU_TAP_FULL_VERIFY_MS (60 * 1000)
+/* The engine is restarted from scratch this often while asleep. It covers the
+ * one failure that leaves no readable trace: an engine that stops detecting
+ * with its configuration intact. One minute, because the field failure showed
+ * up two minutes into sleep, well before a ten-minute timer would fire. */
+#define IMU_TAP_REARM_MS (60 * 1000)
 
 #define SERIAL_RX 1024         /* the driver drops what doesn't fit, so a console line must */
 #define SERIAL_LINE 1024
@@ -83,7 +96,10 @@ static esp_pm_lock_handle_t s_awake;   /* with s_cpu_pd: held whenever !s_cpu_lo
 static bool s_awake_held;
 #endif
 static volatile bool s_nap_now;   /* ">nap": asleep, as if on battery, nap without waiting WIFI_NAP_MS */
-static TickType_t s_tap_checked;  /* last tap-status poll while asleep */
+static TickType_t s_tap_checked;  /* last tap-status poll */
+static TickType_t s_tap_verified; /* last CTRL7/CTRL8 comparison */
+static TickType_t s_tap_full;     /* last tap-parameter comparison */
+static TickType_t s_tap_rearmed;  /* last engine restart, counted from the last wake */
 
 static void post(muse_ptt_t type, bool wake)
 {
@@ -553,13 +569,32 @@ static void input_task(void *arg)
         }
 
         TickType_t now = xTaskGetTickCount();
-        /* A tap on the case wakes the screen. The IMU's INT1 is armed with the
-         * buttons in wait_buttons(), and STATUS1 latches until it is read, so
-         * this poll also catches a tap whose edge the sleep missed. */
-        if (muse_state_asleep() && now - s_tap_checked >= pdMS_TO_TICKS(IMU_TAP_POLL_MS)) {
+        /* A tap on the case wakes the screen. Read STATUS1 in both states: it
+         * latches until it is read, and a tap taken while the screen was
+         * already on used to leave the bit set, after which the engine stopped
+         * reporting anything. The value only acts while asleep. */
+        if (now - s_tap_checked >= pdMS_TO_TICKS(IMU_TAP_POLL_MS)) {
             s_tap_checked = now;
-            if (muse_imu_tap_tapped()) {
+            bool tapped = muse_imu_tap_tapped();
+            if (tapped && muse_state_asleep()) {
                 set_asleep(false, "tap");
+            }
+            if (muse_imu_tap_ready()
+                && now - s_tap_verified >= pdMS_TO_TICKS(IMU_TAP_VERIFY_MS)) {
+                s_tap_verified = now;
+                bool full = now - s_tap_full >= pdMS_TO_TICKS(IMU_TAP_FULL_VERIFY_MS);
+                if (full) {
+                    s_tap_full = now;
+                }
+                muse_imu_tap_check(full);   /* re-inits the chip when it drifted */
+            }
+            if (muse_state_asleep()) {
+                if (now - s_tap_rearmed >= pdMS_TO_TICKS(IMU_TAP_REARM_MS)) {
+                    s_tap_rearmed = now;
+                    muse_imu_tap_rearm();
+                }
+            } else {
+                s_tap_rearmed = now;   /* the window counts from the last wake */
             }
         }
         if (now - checked >= pdMS_TO_TICKS(SLEEP_CHECK_MS)) {
@@ -728,6 +763,28 @@ static bool console_command(char *line, bool whole)
         fflush(stdout);
         return true;
     }
+    if (!strcmp(line, "batt")) {
+        if (muse_board->power_debug) {
+            muse_board->power_debug();
+        } else {
+            ESP_LOGI(TAG, "this board has no fuel gauge to dump");
+        }
+        return true;
+    }
+    if (!strcmp(line, "imu")) {
+        muse_imu_tap_log_diag("console");
+        return true;
+    }
+    if (!strcmp(line, "imu.check")) {
+        muse_imu_tap_check(true);
+        muse_imu_tap_log_diag("console check");
+        return true;
+    }
+    if (!strcmp(line, "imu.rearm")) {
+        muse_imu_tap_rearm();
+        muse_imu_tap_log_diag("console rearm");
+        return true;
+    }
     if (!strcmp(line, "nap")) {
         muse_state_set_as_if_battery(true);
         set_asleep(true, "serial");
@@ -778,7 +835,9 @@ static bool console_command(char *line, bool whole)
  * the BLE CMD characteristic, or one of the console's own: "status" prints
  * the device's state, "power" the battery meter (muse_battery.h) and
  * "power.reset" starts it over, "nap" sleeps and leaves Wi-Fi at once (as
- * two minutes asleep on battery would; 'w' rejoins), "face=" shows a face
+ * two minutes asleep on battery would; 'w' rejoins), "imu" dumps the QMI8658A's
+ * tap registers (plus "imu.check" and "imu.rearm" to force the repair paths),
+ * "batt" dumps the fuel gauge's raw registers, "face=" shows a face
  * (see set_face), and "chat=" sends a typed message to Hatch (see chat_line
  * and tools/muse/chat.py).
  */
