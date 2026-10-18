@@ -64,6 +64,19 @@ static const char *TAG = "muse.imu";
 #define REG_STATUS1     0x2F    /* bit1: tap detected (sticky until read) */
 #define REG_ACC_X_L     0x35    /* 6 bytes: X, Y, Z, little endian */
 #define REG_TAP_STATUS  0x59    /* which axis / single or double, informational */
+#define REG_FIFO_WTM_TH 0x13    /* FIFO watermark, in samples */
+#define REG_FIFO_CTRL   0x14    /* bit7 read mode, 3:2 size, 1:0 mode */
+#define REG_FIFO_SMPL_CNT 0x15  /* count LSBs, in words (2 bytes) */
+#define REG_FIFO_STATUS 0x16    /* 7 full, 6 WTM, 5 overflow, 4 not-empty, 1:0 count MSBs */
+#define REG_FIFO_DATA   0x17    /* the FIFO port */
+#define FIFO_CTRL_SIZE_128 (3u << 2)
+#define FIFO_CTRL_MODE_STREAM 2u    /* keep the newest samples */
+/* A poll drains the FIFO; 64 samples (128 ms at 500 Hz) is the most worth
+ * moving in one burst, and the newest are the ones that matter. */
+#define FIFO_WORDS_PER_SAMPLE 3     /* accel only: X, Y, Z as 16-bit words */
+#define FIFO_SAMPLES_MAX 64
+#define CTRL_CMD_REQ_FIFO 0x05
+#define CTRL_CMD_RST_FIFO 0x04
 #define REG_WHO_AM_I    0x00
 #define REG_RESET       0x60    /* write RESET_CMD to soft-reset the whole part */
 #define RESET_CMD       0xB0
@@ -139,7 +152,7 @@ static unsigned s_rearms;
  * configured.
  */
 #define DIARY_EVENTS 16
-#define DIARY_MAGIC  0x54415046u   /* "TAPF": 字段一改就换，旧的 RTC 内容作废 */
+#define DIARY_MAGIC  0x54415047u   /* "TAPG": 字段一改就换，旧的 RTC 内容作废 */
 
 typedef struct {
     uint32_t magic;
@@ -161,6 +174,9 @@ typedef struct {
     uint32_t accel_changes;/* ... whose six bytes differed from the previous read */
     uint32_t accel_max_mg; /* biggest motion-above-gravity seen */
     uint32_t screen_wakes; /* set_asleep(false) calls that actually changed the state */
+    uint32_t fifo_reads;   /* FIFO bursts the poll performed */
+    uint32_t fifo_samples; /* samples those bursts carried */
+    uint32_t fifo_max_mg;  /* biggest motion-above-gravity the FIFO carried */
     int32_t  last_tap_status;
     int32_t  last_int1;
     uint32_t n;            /* events recorded, ever */
@@ -183,6 +199,15 @@ RTC_NOINIT_ATTR static tap_diary_t s_diary;
 static bool s_diary_booted;
 static uint8_t s_acc_last[6];
 static bool s_acc_valid;
+
+/* FIFO state (the reader is further down; the diary printer above needs the
+ * counters, so they live here). Three failed reads in a row mean every poll is
+ * paying a 100 ms I2C timeout inside the input task - the console goes quiet
+ * with it - so the FIFO is abandoned instead. */
+#define FIFO_FAIL_MAX 3
+static uint8_t s_exp_fifo_ctrl;
+static bool s_fifo_on;
+static int s_fifo_fails;
 
 static void diary_note(uint32_t tag, int32_t a, int32_t b)
 {
@@ -231,7 +256,8 @@ static void diary_dump(const char *why)
     }
     ESP_LOGW(TAG, "tap diary (%s): boots=%u wakes=%u gpio=%u timer=%u other=%u line_high=%u "
              "taps=%u taps_awake=%u knocks=%u not_ready=%u repairs=%u rearm_fail=%u drifts=%u "
-             "accel=%u/%u maxmg=%u screen_wakes=%u starts=%u",
+             "accel=%u/%u maxmg=%u screen_wakes=%u fifo=%u/%u fifomax=%u fifofail=%d "
+             "fifoon=%d starts=%u",
              why, (unsigned)s_diary.boots, (unsigned)s_diary.wakes, (unsigned)s_diary.wake_gpio,
              (unsigned)s_diary.wake_timer, (unsigned)s_diary.wake_other,
              (unsigned)s_diary.line_high, (unsigned)s_diary.taps,
@@ -240,6 +266,8 @@ static void diary_dump(const char *why)
              (unsigned)s_diary.rearm_fail, (unsigned)s_diary.drifts,
              (unsigned)s_diary.accel_changes, (unsigned)s_diary.accel_reads,
              (unsigned)s_diary.accel_max_mg, (unsigned)s_diary.screen_wakes,
+             (unsigned)s_diary.fifo_reads, (unsigned)s_diary.fifo_samples,
+             (unsigned)s_diary.fifo_max_mg, s_fifo_fails, (int)s_fifo_on,
              (unsigned)s_diary.starts);
     uint32_t n = s_diary.n < DIARY_EVENTS ? s_diary.n : DIARY_EVENTS;
     uint32_t first = s_diary.n - n;
@@ -371,6 +399,8 @@ static void remember_params(const uint8_t set2[8])
  * failure matters: s_ready false makes muse_imu_tap_tapped() return false
  * unconditionally, so one failed re-arm (a glitch on a bus this congested)
  * would silently kill tap-to-wake until the next reboot. */
+static esp_err_t fifo_configure(void);   /* defined with the FIFO reader below */
+
 static esp_err_t engine_start(bool quiet)
 {
     const bool was_ready = s_ready;
@@ -460,6 +490,8 @@ static esp_err_t engine_start(bool quiet)
      * without it, and nothing else about the chip looks wrong when it drifts. */
     s_exp_ctrl1 = CTRL1_AUTO_INC | CTRL1_INT1_EN;
     s_exp_ctrl2 = CTRL2_ODR_500HZ_2G;
+    /* The soft reset above cleared the FIFO as well; put it back. */
+    (void)fifo_configure();
     s_ready = true;
     diary_note(DIARY_ENGINE_OK, (int32_t)s_exp_ctrl7, (int32_t)s_exp_ctrl8);
     if (quiet) {
@@ -649,6 +681,115 @@ static bool recover(const char *why)
     return true;
 }
 
+/* ------------------------------------------------------------- the FIFO
+ *
+ * The tap engine stopped reporting on battery altogether, while the
+ * accelerometer kept sampling (the data registers moved on every read). Reading
+ * that register from the task only ever shows the newest sample, which is why
+ * a knock - a 10-30 ms impulse - was missed: at the poll rates used, the
+ * biggest motion ever seen in a whole battery session was 66 mg. The chip's own
+ * FIFO is the way out: it buffers the 500 Hz stream, stream mode keeps the
+ * newest 128 samples (256 ms), and a poll every 200 ms therefore sees every
+ * sample the tap could be in - without the engine and without INT1.
+ */
+
+
+static esp_err_t fifo_configure(void)
+{
+    uint8_t ctrl = (uint8_t)(FIFO_CTRL_SIZE_128 | FIFO_CTRL_MODE_STREAM);
+    esp_err_t err = write_reg(REG_FIFO_WTM_TH, 8);
+    if (err == ESP_OK) {
+        err = write_reg(REG_FIFO_CTRL, ctrl);
+    }
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "FIFO not configured: %s", esp_err_to_name(err));
+        s_fifo_on = false;
+        return err;
+    }
+    s_exp_fifo_ctrl = ctrl;
+    s_fifo_on = true;
+    /* Start from a known state: leftovers from before the poll would read as
+     * motion that never happened. */
+    (void)run_command(CTRL_CMD_RST_FIFO);
+    return ESP_OK;
+}
+
+/* Biggest motion-above-gravity among the samples the FIFO holds, in mG; -1
+ * when the bus or the command fails. Reading the FIFO puts it in read mode,
+ * which has to be cleared again or filling never resumes. */
+int muse_imu_tap_fifo_peak_mg(void)
+{
+    static uint8_t buf[FIFO_SAMPLES_MAX * FIFO_WORDS_PER_SAMPLE * 2];
+    if (!s_dev || !s_fifo_on) {
+        return -1;
+    }
+    if (s_fifo_fails >= FIFO_FAIL_MAX) {
+        return -1;
+    }
+    if (run_command(CTRL_CMD_REQ_FIFO) != ESP_OK) {
+        s_diary.fifo_reads++;
+        s_fifo_fails++;
+        return -1;
+    }
+    uint8_t cnt = 0, st = 0;
+    bus_lock();
+    esp_err_t err = bus_read(REG_FIFO_SMPL_CNT, &cnt, 1);
+    if (err == ESP_OK) {
+        err = bus_read(REG_FIFO_STATUS, &st, 1);
+    }
+    bus_unlock();
+    s_diary.fifo_reads++;
+    if (err != ESP_OK) {
+        s_fifo_fails++;
+        return -1;
+    }
+    int words = (((int)(st & 0x03) << 8) | (int)cnt);
+    int samples = words / FIFO_WORDS_PER_SAMPLE;
+    if (samples <= 0) {
+        return 0;
+    }
+    if (samples > FIFO_SAMPLES_MAX) {
+        samples = FIFO_SAMPLES_MAX;
+    }
+    int bytes = samples * FIFO_WORDS_PER_SAMPLE * 2;
+    bus_lock();
+    err = bus_read(REG_FIFO_DATA, buf, (size_t)bytes);
+    bus_unlock();
+    /* Clear read mode so the FIFO fills again whether the read worked or not. */
+    if (s_exp_fifo_ctrl) {
+        bus_lock();
+        (void)write_reg(REG_FIFO_CTRL, s_exp_fifo_ctrl);
+        bus_unlock();
+    }
+    if (err != ESP_OK) {
+        s_fifo_fails++;
+        return -1;
+    }
+    s_fifo_fails = 0;
+    s_diary.fifo_samples += (uint32_t)samples;
+    int peak = 0;
+    for (int i = 0; i < samples; i++) {
+        const uint8_t *p = &buf[i * FIFO_WORDS_PER_SAMPLE * 2];
+        int16_t ax = (int16_t)(p[0] | (p[1] << 8));
+        int16_t ay = (int16_t)(p[2] | (p[3] << 8));
+        int16_t az = (int16_t)(p[4] | (p[5] << 8));
+        int32_t sq = (int32_t)ax * ax + (int32_t)ay * ay + (int32_t)az * az;
+        int32_t rest = (int32_t)ACC_LSB_PER_G * ACC_LSB_PER_G;
+        if (sq <= rest) {
+            continue;
+        }
+        int32_t over = sq - rest;
+        int mg = (int)(over / (2 * ACC_LSB_PER_G) * 1000 / ACC_LSB_PER_G);
+        if (mg > peak) {
+            peak = mg;
+        }
+    }
+    if ((uint32_t)peak > s_diary.fifo_max_mg) {
+        s_diary.fifo_max_mg = (uint32_t)peak;
+    }
+    return peak;
+}
+
 bool muse_imu_tap_check(bool full)
 {
     if (!s_ready) {
@@ -663,6 +804,12 @@ bool muse_imu_tap_check(bool full)
     if (read_reg(REG_CTRL1, &c1) != ESP_OK || read_reg(REG_CTRL2, &c2) != ESP_OK ||
         read_reg(REG_CTRL7, &c7) != ESP_OK || read_reg(REG_CTRL8, &c8) != ESP_OK) {
         return false;   /* bus trouble: leave it to the next poll */
+    }
+    uint8_t fc = 0;
+    if (s_fifo_on && read_reg(REG_FIFO_CTRL, &fc) == ESP_OK && fc != s_exp_fifo_ctrl) {
+        s_diary.drifts++;
+        diary_note(DIARY_DRIFT, (int32_t)fc, (int32_t)s_exp_fifo_ctrl);
+        return recover("fifo drift");
     }
     if (c1 != s_exp_ctrl1 || c2 != s_exp_ctrl2 || c7 != s_exp_ctrl7 || c8 != s_exp_ctrl8) {
         s_diary.drifts++;
