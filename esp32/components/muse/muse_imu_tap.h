@@ -44,7 +44,7 @@ bool muse_imu_tap_check(bool full);
 
 /* Restarts the tap engine without touching its parameters. For an engine that
  * stopped detecting with its configuration intact, where check() sees nothing
- * wrong. Call it every ten minutes of sleep, not in the poll loop. */
+ * wrong. Call it every ten seconds of sleep, not in the poll loop. */
 void muse_imu_tap_rearm(void);
 
 typedef struct {
@@ -70,3 +70,7 @@ void muse_imu_tap_note_wake(int int1);
 /* The RTC-resident record of what taps and repairs happened - the only
  * evidence that survives a battery session, where no cable is attached. */
 void muse_imu_tap_diary_log(const char *why);
+
+/* One accel-threshold wake: counted in the same RTC record, so the knock path
+ * is visible on battery too. */
+void muse_imu_tap_note_knock(int mg);
