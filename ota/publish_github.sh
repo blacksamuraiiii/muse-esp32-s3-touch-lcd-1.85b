@@ -72,7 +72,9 @@ cat "$out"
 # makes GitHub tag whatever main is at that moment, which is exactly how v1.1
 # ended up on an older commit; and a rebuilt tag would silently keep the old
 # commit. Point it here, before anything is published.
-if [ -n "$(git -C "$root" status --porcelain)" ]; then
+# ota/latest.json is written by this script a few lines up, so it always looks
+# dirty; only a real source change means the image may not match the tag.
+if [ -n "$(git -C "$root" status --porcelain -- . ':!ota/latest.json')" ]; then
     echo "warning: working tree is dirty - the tag points at HEAD, the image may not match it" >&2
 fi
 git -C "$root" tag -f "$tag" HEAD
