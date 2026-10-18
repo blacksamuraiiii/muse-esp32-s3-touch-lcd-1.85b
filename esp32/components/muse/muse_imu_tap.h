@@ -31,6 +31,11 @@ bool muse_imu_tap_ready(void);
  * screen is on too, or the latch keeps the engine from reporting the next tap. */
 bool muse_imu_tap_tapped(void);
 
+/* Motion above gravity in mG (milli-g) from one accelerometer read, -1 on a bus
+ * error. The input task logs it beside STATUS1 on every knock, which is what
+ * tells "the engine never saw this" from "it saw it and nobody read it". */
+int muse_imu_tap_bump_mg(void);
+
 /* Compares the chip against what init() wrote and re-runs init() when it
  * drifted. `full` also verifies the tap parameters (CAL1..CAL4), which costs
  * an extra burst read: do that once a minute, not on every poll. Returns true

@@ -55,8 +55,12 @@ static const char *TAG = "muse.imu";
 #define REG_CAL1_L      0x0B    /* tap parameters, see Table 36 */
 #define REG_STATUSINT   0x2D    /* bit7: CTRL9 command done, bit1: tap flag */
 #define REG_STATUS1     0x2F    /* bit1: tap detected (sticky until read) */
+#define REG_ACC_X_L     0x35    /* 6 bytes: X, Y, Z, little endian */
 #define REG_TAP_STATUS  0x59    /* which axis / single or double, informational */
 #define REG_WHO_AM_I    0x00
+
+/* 2 g full scale: 16384 LSB per g. */
+#define ACC_LSB_PER_G   16384
 
 #define CTRL1_AUTO_INC  (1 << 6)
 #define CTRL1_INT1_EN   (1 << 3)
@@ -71,15 +75,21 @@ static const char *TAG = "muse.imu";
 
 /* Tap parameters. The reference values in the datasheet (Table 35) are quoted
  * at 500 Hz, which is the ODR this sets; at 500 Hz one sample is 2 ms.
- * Adjust here when a tap on the case is missed or the case is too sensitive. */
+ * Adjust here when a tap on the case is missed or the case is too sensitive.
+ *
+ * The datasheet's PeakMagThr reference of 800 (0.8 g^2) turned out to be too
+ * high for a finger knock on a plastic case resting on a desk: on the bench it
+ * woke only sometimes, and the bump log showed the motion was there while
+ * STATUS1 stayed clear. 400 (0.4 g^2) with a matching UDMThr is what made a
+ * light knock reliable; raise it if the case starts waking from desk noise. */
 #define TAP_PEAK_WINDOW_SAMPLES  20    /* 40 ms to reach the peak */
 #define TAP_PRIORITY             0     /* only [2:0]; the tap axis, unused here */
 #define TAP_WINDOW_SAMPLES       50    /* 100 ms of quiet before a second tap */
 #define TAP_DTAP_WINDOW_SAMPLES  250   /* 500 ms to complete a double tap */
 #define TAP_ALPHA                8     /* 0.0625: 7-bit fraction of 0.0078 */
 #define TAP_GAMMA                32    /* 0.25 */
-#define TAP_PEAK_MAG_THR         800   /* 0.8 g^2, units of 0.001 g^2 */
-#define TAP_UDM_THR              400   /* 0.4 g, units of 0.001 g */
+#define TAP_PEAK_MAG_THR         400   /* 0.4 g^2, units of 0.001 g^2 */
+#define TAP_UDM_THR              160   /* 0.16 g, units of 0.001 g */
 #define CTRL2_ODR_500HZ_2G       0x04  /* aODR = 4 (500 Hz accel-only), aFS = 0 */
 
 /* Two re-inits closer together than this would be a loop, not a repair: the
@@ -218,71 +228,81 @@ static void remember_params(const uint8_t set2[8])
 /* The body of init, also used to re-arm the engine: the parameters have to go
  * back in with the sensors stopped (datasheet 10.3), so there is no cheaper
  * restart that is still correct. `quiet` keeps the periodic re-arm out of the
- * log at the default level. */
+ * log at the default level.
+ *
+ * A failed attempt leaves s_ready as it was. It is cleared on entry because a
+ * half-written configuration is not something to trust - but restoring it on
+ * failure matters: s_ready false makes muse_imu_tap_tapped() return false
+ * unconditionally, so one failed re-arm (a glitch on a bus this congested)
+ * would silently kill tap-to-wake until the next reboot. */
 static esp_err_t engine_start(bool quiet)
 {
+    const bool was_ready = s_ready;
+    esp_err_t err;
     s_ready = false;
     uint8_t who = 0;
-    esp_err_t err = read_reg(REG_WHO_AM_I, &who);
+    err = read_reg(REG_WHO_AM_I, &who);
+    if (err == ESP_OK && who != 0x05) {
+        ESP_LOGW(TAG, "IMU WHO_AM_I 0x%02x, expected 0x05", who);
+        err = ESP_ERR_NOT_FOUND;
+    }
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "no IMU on the bus: %s", esp_err_to_name(err));
-        return err;
-    }
-    if (who != 0x05) {
-        ESP_LOGW(TAG, "IMU WHO_AM_I 0x%02x, expected 0x05", who);
-        return ESP_ERR_NOT_FOUND;
+        goto out;
     }
 
     /* Auto-increment for burst writes, little-endian, INT1 push-pull enabled,
      * and the CTRL9 handshake kept on STATUSINT so configuring never pulls INT1. */
     err = write_reg(REG_CTRL1, CTRL1_AUTO_INC | CTRL1_INT1_EN);
     if (err != ESP_OK) {
-        return err;
+        goto out;
     }
     err = write_reg(REG_CTRL8, CTRL8_HANDSHAKE_STATUSINT);
     if (err != ESP_OK) {
-        return err;
+        goto out;
     }
     /* Parameters go in with the sensors stopped (datasheet 10.3). */
     err = write_reg(REG_CTRL7, 0x00);
     if (err != ESP_OK) {
-        return err;
+        goto out;
     }
 
-    const uint8_t set1[8] = {
-        TAP_PEAK_WINDOW_SAMPLES & 0xff, TAP_PRIORITY,
-        TAP_WINDOW_SAMPLES & 0xff, (TAP_WINDOW_SAMPLES >> 8) & 0xff,
-        TAP_DTAP_WINDOW_SAMPLES & 0xff, (TAP_DTAP_WINDOW_SAMPLES >> 8) & 0xff,
-        0x00, 0x00,
-    };
-    const uint8_t set2[8] = {
-        TAP_ALPHA, TAP_GAMMA,
-        TAP_PEAK_MAG_THR & 0xff, (TAP_PEAK_MAG_THR >> 8) & 0xff,
-        TAP_UDM_THR & 0xff, (TAP_UDM_THR >> 8) & 0xff,
-        0x00, 0x00,
-    };
-    if ((err = write_tap_params(set1, 1)) != ESP_OK ||
-        (err = write_tap_params(set2, 2)) != ESP_OK) {
-        ESP_LOGW(TAG, "tap parameters rejected: %s", esp_err_to_name(err));
-        return err;
+    {
+        const uint8_t set1[8] = {
+            TAP_PEAK_WINDOW_SAMPLES & 0xff, TAP_PRIORITY,
+            TAP_WINDOW_SAMPLES & 0xff, (TAP_WINDOW_SAMPLES >> 8) & 0xff,
+            TAP_DTAP_WINDOW_SAMPLES & 0xff, (TAP_DTAP_WINDOW_SAMPLES >> 8) & 0xff,
+            0x00, 0x00,
+        };
+        const uint8_t set2[8] = {
+            TAP_ALPHA, TAP_GAMMA,
+            TAP_PEAK_MAG_THR & 0xff, (TAP_PEAK_MAG_THR >> 8) & 0xff,
+            TAP_UDM_THR & 0xff, (TAP_UDM_THR >> 8) & 0xff,
+            0x00, 0x00,
+        };
+        if ((err = write_tap_params(set1, 1)) != ESP_OK ||
+            (err = write_tap_params(set2, 2)) != ESP_OK) {
+            ESP_LOGW(TAG, "tap parameters rejected: %s", esp_err_to_name(err));
+            goto out;
+        }
+        remember_params(set2);
     }
-    remember_params(set2);
 
     /* Route the tap event to INT1, enable the engine, then start the
      * accelerometer at 500 Hz (the engine needs the samples). */
     err = write_reg(REG_CTRL8, CTRL8_HANDSHAKE_STATUSINT | CTRL8_TAP_TO_INT1 | CTRL8_TAP_EN);
     if (err != ESP_OK) {
-        return err;
+        goto out;
     }
     err = write_reg(REG_CTRL2, CTRL2_ODR_500HZ_2G);
     if (err != ESP_OK) {
-        return err;
+        goto out;
     }
     /* DRDY stays off INT2 (it is not wired), which suits the Non-SyncSample
      * mode the tap engine needs. */
     err = write_reg(REG_CTRL7, CTRL7_AEN | CTRL7_DRDY_DIS);
     if (err != ESP_OK) {
-        return err;
+        goto out;
     }
 
     s_exp_ctrl8 = CTRL8_HANDSHAKE_STATUSINT | CTRL8_TAP_TO_INT1 | CTRL8_TAP_EN;
@@ -295,6 +315,10 @@ static esp_err_t engine_start(bool quiet)
                  MUSE_IMU_TAP_GPIO, s_exp_ctrl7, s_exp_ctrl8);
     }
     return ESP_OK;
+
+out:
+    s_ready = was_ready;
+    return err;
 }
 
 esp_err_t muse_imu_tap_init(i2c_master_dev_handle_t dev)
@@ -330,6 +354,38 @@ bool muse_imu_tap_tapped(void)
     }
     /* Reading STATUS1 also clears the sticky bit and drops the INT line. */
     return (st & 0x02) != 0;
+}
+
+/* Motion above gravity, in mG (milli-g), from one accelerometer read. Used by
+ * the input task to leave a trace of every knock: printed next to STATUS1, it
+ * separates "the engine never saw this knock" from "it saw it and nobody read
+ * it". -1 when the bus refuses. */
+int muse_imu_tap_bump_mg(void)
+{
+    if (!s_dev) {
+        return -1;
+    }
+    uint8_t raw[6] = { 0 };
+    bus_lock();
+    esp_err_t err = bus_read(REG_ACC_X_L, raw, sizeof(raw));
+    bus_unlock();
+    if (err != ESP_OK) {
+        return -1;
+    }
+    int16_t ax = (int16_t)(raw[0] | (raw[1] << 8));
+    int16_t ay = (int16_t)(raw[2] | (raw[3] << 8));
+    int16_t az = (int16_t)(raw[4] | (raw[5] << 8));
+    /* Resting on the desk the magnitude is 1 g; anything above that is motion.
+     * Squaring avoids the sqrt for the comparison, so squint-free on a CPU
+     * that has no hardware divider for doubles. */
+    int32_t sq = (int32_t)ax * ax + (int32_t)ay * ay + (int32_t)az * az;
+    int32_t rest = (int32_t)ACC_LSB_PER_G * ACC_LSB_PER_G;
+    if (sq <= rest) {
+        return 0;
+    }
+    /* Linear around 1 g: the excess in mG, close enough for a log line. */
+    int32_t over = sq - rest;
+    return (int)(over / (2 * ACC_LSB_PER_G) * 1000 / ACC_LSB_PER_G);
 }
 
 /* ------------------------------------------------------- health and recovery */
@@ -374,11 +430,12 @@ void muse_imu_tap_log_diag(const char *why)
         return;
     }
     ESP_LOGW(TAG,
-             "%s: CTRL1=0x%02x CTRL2=0x%02x CTRL7=0x%02x(want 0x%02x) "
+             "%s: ready=%d int1=%d CTRL1=0x%02x CTRL2=0x%02x CTRL7=0x%02x(want 0x%02x) "
              "CTRL8=0x%02x(want 0x%02x) CTRL9=0x%02x STATUSINT=0x%02x STATUS1=0x%02x "
              "TAP=0x%02x cal=%02x %02x %02x %02x %02x %02x %02x %02x "
              "recoveries=%u rearms=%u",
-             why, d.ctrl1, d.ctrl2, d.ctrl7, s_exp_ctrl7, d.ctrl8, s_exp_ctrl8, d.ctrl9,
+             why, (int)s_ready, gpio_get_level(MUSE_IMU_TAP_GPIO),
+             d.ctrl1, d.ctrl2, d.ctrl7, s_exp_ctrl7, d.ctrl8, s_exp_ctrl8, d.ctrl9,
              d.statusint, d.status1, d.tap_status,
              d.cal[0], d.cal[1], d.cal[2], d.cal[3], d.cal[4], d.cal[5], d.cal[6], d.cal[7],
              d.recoveries, d.rearms);
