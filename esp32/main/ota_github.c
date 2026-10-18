@@ -262,14 +262,17 @@ bool ota_github_check(void)
         return false;
     }
     set_state(GH_CHECKING, "Checking GitHub");
-    /* 12 KB of stack: TLS against github.com, then esp_https_ota reuses the
-     * heap for the install. Internal RAM first (mbedtls is happiest there),
-     * PSRAM as the fallback when the chat session is holding the heap. */
-    if (xTaskCreate(check_task, "ota_gh", OTA_GH_TASK_STACK, NULL, OTA_GH_TASK_PRIO, NULL) == pdPASS) {
+    /* PSRAM first, internal as the fallback: this task holds its stack while it
+     * calls ota_start(), and ota_start() needs a contiguous internal block for
+     * the download task's stack. Holding 12 KB of internal RAM here is what
+     * used to make that fail ("largest 7680" against an 8 KB request). TLS to
+     * github.com only reads flash, so a PSRAM stack is fine; muse_tts.c's
+     * fetch worker is the precedent. */
+    if (xTaskCreateWithCaps(check_task, "ota_gh", OTA_GH_TASK_STACK, NULL,
+                            OTA_GH_TASK_PRIO, NULL, MALLOC_CAP_SPIRAM) == pdPASS) {
         return true;
     }
-    if (xTaskCreateWithCaps(check_task, "ota_gh", OTA_GH_TASK_STACK, NULL, OTA_GH_TASK_PRIO, NULL,
-                            MALLOC_CAP_SPIRAM) == pdPASS) {
+    if (xTaskCreate(check_task, "ota_gh", OTA_GH_TASK_STACK, NULL, OTA_GH_TASK_PRIO, NULL) == pdPASS) {
         return true;
     }
     ESP_LOGE(TAG, "no task for the manifest check");
