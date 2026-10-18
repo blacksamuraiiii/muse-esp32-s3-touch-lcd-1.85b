@@ -168,6 +168,10 @@ void muse_gpio_buttons_wait(muse_gpio_button_t *const *b, int n, int timeout_ms)
  * around muse_gpio_buttons_wait(), and the wait returns when it fires. */
 esp_err_t muse_gpio_wake_line_add(gpio_num_t gpio, bool wake_high);
 
+/* Same, for a line another driver already interrupts on: the pin is armed as a
+ * light-sleep wake source, and its interrupt is left alone (see muse_board.c). */
+esp_err_t muse_gpio_wake_line_add_wake_only(gpio_num_t gpio, bool wake_high);
+
 #ifdef __cplusplus
 }
 #endif

@@ -75,6 +75,11 @@ void muse_imu_tap_diary_log(const char *why);
  * is visible on battery too. */
 void muse_imu_tap_note_knock(int mg);
 
+/* Biggest motion-above-gravity in the samples the chip's FIFO holds (mG), read
+ * on demand: 500 Hz history, so a 10-30 ms knock cannot slip between polls the
+ * way reading the data register alone let it. -1 on bus failure. */
+int muse_imu_tap_fifo_peak_mg(void);
+
 /* A wake that actually changed the state (set_asleep(false, ...) that stuck).
  * On battery this is the line between "nothing detected" and "detected but the
  * screen stayed dark". */

@@ -33,6 +33,7 @@ static TaskHandle_t s_waiter;
 static struct {
     gpio_num_t gpio;
     bool wake_high;
+    bool own_intr;   /* we installed the handler and drive the interrupt enable */
 } s_wake_lines[WAKE_LINES_MAX];
 static int s_wake_line_n;
 
@@ -82,27 +83,56 @@ static esp_err_t button_init(muse_gpio_button_t *b, gpio_num_t gpio, bool active
     return gpio_intr_disable(gpio);
 }
 
-esp_err_t muse_gpio_wake_line_add(gpio_num_t gpio, bool wake_high)
+static esp_err_t wake_line_add(gpio_num_t gpio, bool wake_high, bool own_intr)
 {
     if (s_wake_line_n == WAKE_LINES_MAX) {
         return ESP_ERR_NO_MEM;
     }
     /* The line is driven push-pull by whichever part owns it; the pull-down
-     * keeps the pin defined while that part is still in high-Z. */
-    const gpio_config_t io = {
-        .pin_bit_mask = 1ULL << gpio,
-        .mode = GPIO_MODE_INPUT,
-        .pull_up_en = GPIO_PULLUP_DISABLE,
-        .pull_down_en = GPIO_PULLDOWN_ENABLE,
-    };
-    ESP_RETURN_ON_ERROR(gpio_config(&io), TAG, "wake gpio %d", gpio);
-    ESP_RETURN_ON_ERROR(ensure_isr_service(), TAG, "gpio isr");
-    ESP_RETURN_ON_ERROR(gpio_isr_handler_add(gpio, on_button_line, (void *)(intptr_t)gpio), TAG, "gpio %d isr", gpio);
-    ESP_RETURN_ON_ERROR(gpio_intr_disable(gpio), TAG, "gpio %d intr", gpio);
+     * keeps the pin defined while that part is still in high-Z. A line someone
+     * else already interrupts on is not put through gpio_config: that would
+     * reset its interrupt type to none and take the owner's driver with it. */
+    if (own_intr) {
+        const gpio_config_t io = {
+            .pin_bit_mask = 1ULL << gpio,
+            .mode = GPIO_MODE_INPUT,
+            .pull_up_en = GPIO_PULLUP_DISABLE,
+            .pull_down_en = GPIO_PULLDOWN_ENABLE,
+        };
+        ESP_RETURN_ON_ERROR(gpio_config(&io), TAG, "wake gpio %d", gpio);
+    } else {
+        ESP_RETURN_ON_ERROR(gpio_set_direction(gpio, GPIO_MODE_INPUT), TAG, "wake dir %d", gpio);
+        ESP_RETURN_ON_ERROR(gpio_set_pull_mode(gpio, GPIO_PULLDOWN_ONLY), TAG, "wake pull %d", gpio);
+    }
+    if (own_intr) {
+        /* Ours to drive: the line belongs to a part that does not interrupt on
+         * its own (the IMU), so the handler here is what tells the input task
+         * the sleep is over. */
+        ESP_RETURN_ON_ERROR(ensure_isr_service(), TAG, "gpio isr");
+        ESP_RETURN_ON_ERROR(gpio_isr_handler_add(gpio, on_button_line,
+                                                 (void *)(intptr_t)gpio),
+                            TAG, "gpio %d isr", gpio);
+        ESP_RETURN_ON_ERROR(gpio_intr_disable(gpio), TAG, "gpio %d intr", gpio);
+    }
     s_wake_lines[s_wake_line_n].gpio = gpio;
     s_wake_lines[s_wake_line_n].wake_high = wake_high;
+    s_wake_lines[s_wake_line_n].own_intr = own_intr;
     s_wake_line_n++;
     return ESP_OK;
+}
+
+esp_err_t muse_gpio_wake_line_add(gpio_num_t gpio, bool wake_high)
+{
+    return wake_line_add(gpio, wake_high, true);
+}
+
+/* For a part whose own driver owns the pin and its interrupt - the touch
+ * controller: the LVGL adapter registers its ISR there. Only the sleep wake
+ * source is armed, so a tap on the glass ends light sleep; the driver's own
+ * handler then does the notifying. */
+esp_err_t muse_gpio_wake_line_add_wake_only(gpio_num_t gpio, bool wake_high)
+{
+    return wake_line_add(gpio, wake_high, false);
 }
 
 esp_err_t muse_gpio_button_init(muse_gpio_button_t *b, gpio_num_t gpio)
@@ -156,10 +186,12 @@ void muse_gpio_buttons_wait(muse_gpio_button_t *const *b, int n, int timeout_ms)
         gpio_intr_enable(b[i]->gpio);
     }
     for (int i = 0; i < s_wake_line_n; i++) {
-        /* A board line: the IMU's tap interrupt, for one. */
+        /* A board line: the IMU's tap interrupt, or the touch controller's. */
         gpio_wakeup_enable(s_wake_lines[i].gpio,
                            s_wake_lines[i].wake_high ? GPIO_INTR_HIGH_LEVEL : GPIO_INTR_LOW_LEVEL);
-        gpio_intr_enable(s_wake_lines[i].gpio);
+        if (s_wake_lines[i].own_intr) {
+            gpio_intr_enable(s_wake_lines[i].gpio);
+        }
     }
     ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(timeout_ms));
     for (int i = 0; i < n; i++) {
@@ -167,7 +199,9 @@ void muse_gpio_buttons_wait(muse_gpio_button_t *const *b, int n, int timeout_ms)
         gpio_wakeup_disable(b[i]->gpio);
     }
     for (int i = 0; i < s_wake_line_n; i++) {
-        gpio_intr_disable(s_wake_lines[i].gpio);
+        if (s_wake_lines[i].own_intr) {
+            gpio_intr_disable(s_wake_lines[i].gpio);
+        }
         gpio_wakeup_disable(s_wake_lines[i].gpio);
     }
 }
