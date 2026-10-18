@@ -26,6 +26,7 @@
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_netif.h"
+#include "esp_timer.h"
 #include "freertos/task.h"
 #include "sdkconfig.h"
 #if CONFIG_PM_ENABLE
@@ -95,7 +96,9 @@ static const char *TAG = "muse_input";
  * when tap-to-wake works only sometimes. */
 #define IMU_BUMP_LOG_MG 150
 #define IMU_BUMP_LOG_QUIET_MS 700
-
+/* A deliberate knock on the case, judged by the poll's own accelerometer read:
+ * 400 mg is well above ordinary handling and below a real tap. */
+#define IMU_KNOCK_WAKE_MG 400
 #define SERIAL_RX 1024         /* the driver drops what doesn't fit, so a console line must */
 #define SERIAL_LINE 1024
 #define CHAT_MAX (192 * 1024)  /* a typed message, assembled from "chat+=" lines */
@@ -113,11 +116,29 @@ static bool s_awake_held;
 #endif
 static volatile bool s_nap_now;   /* ">nap": asleep, as if on battery, nap without waiting WIFI_NAP_MS */
 static bool s_force_low;          /* ">pmlow=1": light-sleep even with a USB host attached */
-static TickType_t s_tap_checked;  /* last tap-status poll */
-static TickType_t s_tap_verified; /* last CTRL7/CTRL8 comparison */
-static TickType_t s_tap_full;     /* last tap-parameter comparison */
-static TickType_t s_tap_rearmed;  /* last engine restart, counted from the last wake */
-static TickType_t s_bump_logged;  /* last knock that made it into the log */
+/* The five tap-window timers below are wall-clock, not ticks. On battery the
+ * CPU light-sleeps between polls, and a tick-based window can be skipped for
+ * the whole sleep: the poll then runs late (or, if the tick did not move at
+ * all, is skipped entirely), STATUS1 is left unread and the IMU keeps INT1
+ * high - which the next sleep already satisfies, so the tap never wakes it
+ * again. esp_timer_get_time() counts through light sleep, so the windows mean
+ * what they say. */
+static int64_t s_tap_checked_ms;  /* last tap-status poll, ms of wall clock */
+static int64_t s_tap_verified_ms; /* last CTRL7/CTRL8 comparison */
+static int64_t s_tap_full_ms;     /* last tap-parameter comparison */
+static int64_t s_tap_rearmed_ms;  /* last engine restart, counted from the last wake */
+static int64_t s_bump_logged_ms;  /* last knock that made it into the log */
+
+/* Tap-wake forensics, printed by "imu": they separate "the line never rose"
+ * from "the line rose and nobody read STATUS1" when a tap fails on battery. */
+static uint32_t s_stat_sleeps;      /* wait_buttons() returns */
+static uint32_t s_stat_line_high;   /* ... of which the IMU line was up */
+static uint32_t s_stat_taps;        /* taps the poll saw while asleep */
+static uint32_t s_stat_knocks;      /* wakes that came from the knock threshold */
+static uint32_t s_stat_taps_awake;  /* taps the poll saw with the screen already on */
+static int64_t s_stat_slept_ms;     /* last wait_buttons() duration */
+static int64_t s_stat_tick_ms;      /* ... and what the FreeRTOS tick made of it */
+static int s_stat_int1;             /* IMU line level when that wait returned */
 
 static void post(muse_ptt_t type, bool wake)
 {
@@ -593,14 +614,16 @@ static void input_task(void *arg)
         }
 
         TickType_t now = xTaskGetTickCount();
+        int64_t now_ms = esp_timer_get_time() / 1000;   /* counts through light sleep */
         /* A tap on the case wakes the screen. Read STATUS1 in both states: it
          * latches until it is read, and a tap taken while the screen was
          * already on used to leave the bit set, after which the engine stopped
          * reporting anything. The value only acts while asleep. */
-        if (now - s_tap_checked >= pdMS_TO_TICKS(IMU_TAP_POLL_MS)) {
-            s_tap_checked = now;
+        if (now_ms - s_tap_checked_ms >= IMU_TAP_POLL_MS) {
+            s_tap_checked_ms = now_ms;
             bool tapped = muse_imu_tap_tapped();
             if (tapped && muse_state_asleep()) {
+                s_stat_taps++;
                 set_asleep(false, "tap");
             }
             /* Trace every knock the IMU can see. bump is the motion beyond
@@ -608,27 +631,48 @@ static void input_task(void *arg)
              * engine is the one missing it, not the reader. */
             int bump = muse_imu_tap_bump_mg();
             if (bump > IMU_BUMP_LOG_MG
-                && now - s_bump_logged >= pdMS_TO_TICKS(IMU_BUMP_LOG_QUIET_MS)) {
-                s_bump_logged = now;
+                && now_ms - s_bump_logged_ms >= IMU_BUMP_LOG_QUIET_MS) {
+                s_bump_logged_ms = now_ms;
                 ESP_LOGW(TAG, "imu bump %d mg: status1 tap=%d, %s",
                          bump, (int)tapped, muse_state_asleep() ? "asleep" : "awake");
             }
-            if (muse_imu_tap_ready()
-                && now - s_tap_verified >= pdMS_TO_TICKS(IMU_TAP_VERIFY_MS)) {
-                s_tap_verified = now;
-                bool full = now - s_tap_full >= pdMS_TO_TICKS(IMU_TAP_FULL_VERIFY_MS);
+            /* The engine is not the only reader of the case. This poll has
+             * already paid for the accelerometer read, and on battery the
+             * engine's own report is exactly what has gone missing - so a knock
+             * big enough to be a deliberate tap wakes the screen on its own,
+             * with or without STATUS1. Sampling at the poll rate misses short
+             * impulses the 500 Hz engine would catch, hence the high threshold:
+             * a real knock is far above it and ordinary handling is below. */
+            if (bump >= IMU_KNOCK_WAKE_MG && muse_state_asleep()) {
+                ESP_LOGW(TAG, "imu knock %d mg: waking (tap)", bump);
+                s_stat_knocks++;
+                set_asleep(false, "tap");
+            }
+            if (tapped && !muse_state_asleep()) {
+                /* Not an error in itself: the poll reads STATUS1 whether the
+                 * screen is on or off, and that read is what drops INT1. Worth
+                 * a counter all the same - on battery it is the difference
+                 * between "the engine saw the tap" and "the wake path lost it". */
+                s_stat_taps_awake++;
+            }
+            /* The watchdog runs whether or not the engine is known to be
+             * configured: a session whose init failed used to skip this for
+             * good, and that is the one state it exists to repair. */
+            if (now_ms - s_tap_verified_ms >= IMU_TAP_VERIFY_MS) {
+                s_tap_verified_ms = now_ms;
+                bool full = now_ms - s_tap_full_ms >= IMU_TAP_FULL_VERIFY_MS;
                 if (full) {
-                    s_tap_full = now;
+                    s_tap_full_ms = now_ms;
                 }
                 muse_imu_tap_check(full);   /* re-inits the chip when it drifted */
             }
             if (muse_state_asleep()) {
-                if (now - s_tap_rearmed >= pdMS_TO_TICKS(IMU_TAP_REARM_MS)) {
-                    s_tap_rearmed = now;
+                if (now_ms - s_tap_rearmed_ms >= IMU_TAP_REARM_MS) {
+                    s_tap_rearmed_ms = now_ms;
                     muse_imu_tap_rearm();
                 }
             } else {
-                s_tap_rearmed = now;   /* the window counts from the last wake */
+                s_tap_rearmed_ms = now_ms;   /* the window counts from the last wake */
             }
         }
         if (now - checked >= pdMS_TO_TICKS(SLEEP_CHECK_MS)) {
@@ -652,7 +696,33 @@ static void input_task(void *arg)
          * noticed within REST_WAIT_MS. Napping, nothing comes over the
          * network; USB power arriving is noticed within NAP_WAIT_MS. */
         if (paused && muse_board->wait_buttons) {
+            int64_t before_ms = esp_timer_get_time() / 1000;
+            TickType_t before_tick = xTaskGetTickCount();
             muse_board->wait_buttons(napping ? NAP_WAIT_MS : REST_WAIT_MS);
+            /* Woken by the case: STATUS1 latches until it is read, and the IMU
+             * holds INT1 high until then - which means the line the next sleep
+             * arms on is already satisfied, so a missed read costs every later
+             * tap. Poll before going back to sleep instead of waiting for the
+             * 200 ms window to come round. */
+            s_tap_checked_ms = 0;
+            s_stat_sleeps++;
+            s_stat_slept_ms = esp_timer_get_time() / 1000 - before_ms;
+            s_stat_tick_ms = (int64_t)(xTaskGetTickCount() - before_tick) * portTICK_PERIOD_MS;
+            s_stat_int1 = gpio_get_level(MUSE_IMU_TAP_GPIO);
+            muse_imu_tap_note_wake(s_stat_int1);
+            if (s_stat_slept_ms >= 100) {
+                /* Only when the sleep was a real one: on battery this is a
+                 * handful of lines a minute, not the 1.5 wakes/s the power
+                 * counters report for shorter waits. */
+                if (s_stat_int1) {
+                    s_stat_line_high++;
+                    ESP_LOGW(TAG, "imu line woke the cpu after %lld ms (tick %lld ms)",
+                             (long long)s_stat_slept_ms, (long long)s_stat_tick_ms);
+                } else if (s_stat_slept_ms >= 5000) {
+                    ESP_LOGI(TAG, "slept %lld ms (tick %lld ms), line low",
+                             (long long)s_stat_slept_ms, (long long)s_stat_tick_ms);
+                }
+            }
         } else {
             vTaskDelay(pdMS_TO_TICKS(paused ? REST_POLL_MS : POLL_MS));
         }
@@ -819,6 +889,18 @@ static bool console_command(char *line, bool whole)
     }
     if (!strcmp(line, "imu")) {
         muse_imu_tap_log_diag("console");
+        /* Why a tap did or did not wake the screen on battery, where the USB
+         * cable that hides the state cannot be attached: sleeps is how often
+         * the task slept, line_high how often the IMU's line was up when it
+         * came back, taps how many of those the poll turned into a wake. */
+        printf("@imu.wakes sleeps=%lu line_high=%lu taps=%lu taps_awake=%lu knocks=%lu "
+               "last_slept_ms=%lld last_tick_ms=%lld int1=%d\n",
+               (unsigned long)s_stat_sleeps, (unsigned long)s_stat_line_high,
+               (unsigned long)s_stat_taps, (unsigned long)s_stat_taps_awake,
+               (unsigned long)s_stat_knocks, (long long)s_stat_slept_ms,
+               (long long)s_stat_tick_ms, s_stat_int1);
+        fflush(stdout);
+        muse_imu_tap_diary_log("console");
         return true;
     }
     if (!strcmp(line, "imu.check")) {
