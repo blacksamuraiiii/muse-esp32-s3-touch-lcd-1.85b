@@ -30,3 +30,7 @@ muse-simulator.ppm
 
 # Local service secrets (Azure Speech key and region for tts-server).
 tts-server/.env
+
+# Local avatar iteration artefacts: renders, reference sheets, work files.
+virtual-avatar/preview/
+virtual-avatar/maomao/
