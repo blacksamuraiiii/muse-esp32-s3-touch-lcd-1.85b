@@ -80,6 +80,15 @@ static const char *TAG = "muse_input";
  * armed with the buttons in wait_buttons(), so this poll only has to cover an
  * edge the sleep missed. */
 #define IMU_TAP_POLL_MS 200
+/* Asleep, the engine on this board stops reporting altogether on battery, so
+ * the poll stops relying on it: it reads the accelerometer itself, and often
+ * enough to catch a knock (the impulse lasts a few tens of ms). 60 ms is the
+ * compromise - 16 reads a second instead of 1 - and even that misses part of
+ * the impulses, hence the high knock threshold. */
+#define IMU_TAP_POLL_SLEEP_MS 60
+/* ... which means the sleeps between polls have to be short too. ">knock=0"
+ * puts the long waits back, for measuring what this costs. */
+#define ASLEEP_WAIT_MS 55
 /* CTRL1/CTRL2/CTRL7/CTRL8 - the accelerometer's ODR among them - are compared
  * against what init wrote this often, and the tap parameters (CAL1..CAL4) this
  * often again. A drifting chip is re-initialised by muse_imu_tap_check(). The
@@ -118,6 +127,7 @@ static esp_pm_lock_handle_t s_awake;   /* with s_cpu_pd: held whenever !s_cpu_lo
 static bool s_awake_held;
 #endif
 static volatile bool s_nap_now;   /* ">nap": asleep, as if on battery, nap without waiting WIFI_NAP_MS */
+static bool s_knock_on = true;    /* ">knock=0": stop sampling the accelerometer while asleep */
 static bool s_force_low;          /* ">pmlow=1": light-sleep even with a USB host attached */
 /* The five tap-window timers below are wall-clock, not ticks. On battery the
  * CPU light-sleeps between polls, and a tick-based window can be skipped for
@@ -182,6 +192,9 @@ static void set_asleep(bool asleep, const char *why)
 {
     if (asleep != muse_state_asleep()) {
         ESP_LOGI(TAG, "%s (%s)", asleep ? "sleeping" : "waking", why);
+        if (!asleep) {
+            muse_imu_tap_note_screen_wake();
+        }
         muse_state_set_asleep(asleep);
         if (s_input) {
             xTaskNotifyGive(s_input);   /* out of wait_buttons() */
@@ -622,7 +635,8 @@ static void input_task(void *arg)
          * latches until it is read, and a tap taken while the screen was
          * already on used to leave the bit set, after which the engine stopped
          * reporting anything. The value only acts while asleep. */
-        if (now_ms - s_tap_checked_ms >= IMU_TAP_POLL_MS) {
+        const bool knock_polling = muse_state_asleep() && s_knock_on;
+        if (now_ms - s_tap_checked_ms >= (knock_polling ? IMU_TAP_POLL_SLEEP_MS : IMU_TAP_POLL_MS)) {
             s_tap_checked_ms = now_ms;
             bool tapped = muse_imu_tap_tapped();
             if (tapped && muse_state_asleep()) {
@@ -702,7 +716,8 @@ static void input_task(void *arg)
         if (paused && muse_board->wait_buttons) {
             int64_t before_ms = esp_timer_get_time() / 1000;
             TickType_t before_tick = xTaskGetTickCount();
-            muse_board->wait_buttons(napping ? NAP_WAIT_MS : REST_WAIT_MS);
+            muse_board->wait_buttons(knock_polling ? ASLEEP_WAIT_MS
+                                                   : (napping ? NAP_WAIT_MS : REST_WAIT_MS));
             /* Woken by the case: STATUS1 latches until it is read, and the IMU
              * holds INT1 high until then - which means the line the next sleep
              * arms on is already satisfied, so a missed read costs every later
@@ -902,10 +917,10 @@ static bool console_command(char *line, bool whole)
          * the task slept, line_high how often the IMU's line was up when it
          * came back, taps how many of those the poll turned into a wake. */
         printf("@imu.wakes sleeps=%lu line_high=%lu taps=%lu taps_awake=%lu knocks=%lu "
-               "last_slept_ms=%lld last_tick_ms=%lld int1=%d\n",
+               "sampling=%d last_slept_ms=%lld last_tick_ms=%lld int1=%d\n",
                (unsigned long)s_stat_sleeps, (unsigned long)s_stat_line_high,
                (unsigned long)s_stat_taps, (unsigned long)s_stat_taps_awake,
-               (unsigned long)s_stat_knocks, (long long)s_stat_slept_ms,
+               (unsigned long)s_stat_knocks, (int)s_knock_on, (long long)s_stat_slept_ms,
                (long long)s_stat_tick_ms, s_stat_int1);
         fflush(stdout);
         muse_imu_tap_diary_log("console");
@@ -932,6 +947,16 @@ static bool console_command(char *line, bool whole)
         muse_state_set_as_if_battery(s_force_low);
         printf("@pmlow forced=%d (battery pretence %s)\n", (int)s_force_low,
                s_force_low ? "on" : "off");
+        fflush(stdout);
+        return true;
+    }
+    if (!strncmp(line, "knock=", 6)) {
+        /* Software knock detection costs sleep time: with it off the waits go
+         * back to 1 s / 10 s and only the IMU's own engine can wake the screen. */
+        s_knock_on = line[6] == '1';
+        printf("@knock sampling=%d (asleep wait %s), poll %d ms\n", (int)s_knock_on,
+               s_knock_on ? "55 ms" : "1 s / 10 s",
+               s_knock_on ? IMU_TAP_POLL_SLEEP_MS : IMU_TAP_POLL_MS);
         fflush(stdout);
         return true;
     }
