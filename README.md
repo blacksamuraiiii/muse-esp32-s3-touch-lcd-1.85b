@@ -32,7 +32,8 @@
 9. [恢复微雪原厂固件](#9-恢复微雪原厂固件)
 10. [进阶：改固件、换头像、加指令](#10-进阶改固件换头像加指令)
 11. [本次移植踩过的坑（屏幕 / 构建环境）](#11-本次移植踩过的坑屏幕--构建环境)
-12. [许可证](#12-许可证)
+12. [TTS 服务端：Azure Speech 注册 + Docker 搭建](#12-tts-服务端azure-speech-注册--docker-搭建)
+13. [许可证](#13-许可证)
 
 ---
 
@@ -60,10 +61,9 @@
   设备端加 MP3 载荷闸门（只放行 `0xFF` 或 `ID3` 开头），请求补 `User-Agent`。
 - 改进 **OTA 健壮性**：下载任务栈从内部 RAM 逐级降档申请，manifest 检查任务改用 PSRAM 栈；
   新镜像不再因云端控制 WS 未连上被回滚；宽限路径只在镜像确为 OTA 安装时才标记有效。
-- 头像换成自绘的 **毛毛 V7**（64×64 程序化像素稿：公主切刘海、两侧上翘发束、头发描边）。
+- 头像换成自绘的 **毛毛**（64×64 程序化像素稿：公主切刘海、两侧上翘发束；V8 起头发改为从参考照片抠出的 64×64 点阵，无描边、无眉、无睫毛线）。
 - 新增调试命令：`>imu` / `>imu.check` / `>imu.rearm`（tap 寄存器与自愈计数）、
   `>pmlow=0|1`（带 USB 也强制进 light sleep，用来复现电池态）。
-- 版本提示：门禁是**数值比较**。板上若装过内部构建的 1.3–1.5，回退到 1.2 必须用 USB 强刷一次。
 
 服务端（不在固件里）：
 
@@ -78,7 +78,7 @@
 - 新增 **敲击唤醒**：QMI8658A tap 引擎（加速度 500 Hz，INT1 → GPIO8，经 R51 0R）；睡着时靠
   GPIO 电平唤醒，另每 200 ms 读 STATUS1 兜底。
   ⚠️ **已知问题**：长时间睡眠（约 2 分钟以上）后敲击失效；按键点亮→30 秒自动息屏后再敲则正常。
-  留待下次修（现场数据见 `docs/20261017-进展记录.md`）。
+  留待下次修（现场数据见 `docs/20261017进展记录.md`）。
 - 改进 **音量按钮位置**：`y = -ring_in/3`（原 `-5/8·ring_in`）。距 Muse 净空 15 px → 33 px，
   与圆环内缘仍留 5 px；回复页字格数不变（17×3 / 14×7）。
 - 改进 **TTS 载荷校验**：前 8 字节须是 `0xFF`（MPEG 同步字）或 `ID3`，否则整段丢弃、只留字幕；
@@ -754,7 +754,76 @@ CMake configure 日志里的 `Configuring done (82001.7s)` 是**墙钟时间**�
 
 ---
 
-## 12. 许可证
+## 12. TTS 服务端：Azure Speech 注册 + Docker 搭建
+
+### 12.1 注册 Azure Speech（拿 key 与 region）
+
+1. 打开 <https://portal.azure.com> 注册并登录（个人免费账号可用；F0 层不产生费用）。
+2. 搜索 **Speech services（语音服务）** → **创建**：
+   - **区域**选 **East Asia（`eastasia`）**——与本固件已验通的调用一致；
+   - **定价层**选 **Free F0**：语音合成每月 50 万字符（以[定价页](https://azure.microsoft.com/zh-cn/pricing/details/speech/)为准），
+     单板日常够用；超额会返回 429，届时在定价页升级到 S0。
+3. 资源创建完成后进入该资源 → **密钥和终结点（Keys and Endpoint）**：
+   - 复制 **KEY 1** → 这就是 `AZURE_SPEECH_KEY`；
+   - 记下 **位置/区域**（如 `eastasia`）→ 这就是 `AZURE_SPEECH_REGION`。
+4. 选音色（可选）：音色列表见
+   <https://learn.microsoft.com/azure/ai-services/speech-service/language-support>。
+   服务端默认 `zh-CN-XiaoxiaoNeural`，也可用 `zh-CN-XiaoyiNeural` 等；
+   改音色**不必重编固件**（服务端 `TTS_FORCE_VOICE` 覆盖板子 URL 里的 `voice=`）。
+5. 看用量：资源页的「指标（Metrics）」里可查当月合成字符数。
+
+> 服务端封装的请求形态：`POST https://<region>.tts.speech.microsoft.com/cognitiveservices/v1`，
+> 头带 `Ocp-Apim-Subscription-Key` 与 `X-Microsoft-OutputFormat: audio-24khz-48kbitrate-mono-mp3`
+> （与固件验通的 `reply audio: 24000 Hz, 1 ch, 48 kbps` 一致），正文是 SSML。
+
+### 12.2 用 Docker 跑 tts-server
+
+```sh
+cd tts-server
+cat > .env <<'EOF'
+AZURE_SPEECH_KEY=<KEY 1>
+AZURE_SPEECH_REGION=eastasia
+TTS_VOICE=zh-CN-XiaoyiNeural
+EOF
+docker build -t muse-tts:1.5 .
+docker run -d --name muse-tts --restart unless-stopped -p 5050:5050 --env-file .env muse-tts:1.5
+curl -s http://127.0.0.1:5050/health
+curl -s -o /tmp/t.mp3 "http://127.0.0.1:5050/tts?text=你好&voice=zh-CN-XiaoyiNeural"
+head -c 4 /tmp/t.mp3 | od -An -tx1     # ff f3 或 49 44 33 = MP3
+```
+
+- 一键部署到局域网主机（上传 → 写 `.env` → 建镜像 → 重启容器 → 主机自测）：
+  `~/.venv/bin/python3 deploy.py <host>`。默认用 SSH key `~/.ssh/muse-16827_rsa`，
+  没有 key 时才回退到环境变量 `MUSE_HOST_PASSWORD`（口令走环境变量，不进 `argv`）。
+- 密钥只放宿主机 `/opt/muse-tts/.env`（权限 600）：**不进镜像、不进 `docker run -e`**，用 `--env-file` 传。
+- 关键环境变量：
+
+| 变量 | 默认 | 作用 |
+|---|---|---|
+| `AZURE_SPEECH_KEY` / `AZURE_SPEECH_REGION` | 空 / `eastasia` | Azure 凭据 |
+| `TTS_BACKEND` | `azure` | 后端选择（`edge` 是回退路线，实测已 403，别指望） |
+| `TTS_VOICE` / `TTS_FORCE_VOICE` | `zh-CN-XiaoxiaoNeural` / 空 | 默认音色 / 强制压掉板子 URL 里的音色 |
+| `TTS_RATE` / `TTS_PITCH` | `+8%` / `+4%` | 语速、音高（Azure 用百分比；edge-tts 只认 `Hz`） |
+| `TTS_AZURE_POOL` | `6` | Azure 连接池大小，复用 TLS 是首音 1.2–1.8 s → 0.47–0.58 s 的关键 |
+| `TTS_SERVER` | `waitress` | **必须 waitress**：Flask 开发服务器会把给板子的长响应截断在约 1440 字节（只出字幕不出声） |
+| `TTS_PORT` | `5050` | 监听端口 |
+| `TTS_STREAM_HEAD` / `TTS_SEND_BYTES` | `512` / `512` | 首包阈值与分片字节数 |
+| `TTS_MAX_CHARS` | `180` | 单次请求最大字符数（固件按标点分块） |
+| `TTS_TEST_HOOKS` / `TTS_FORCE_BAD` | 关 | 坏包丢弃的测试钩子，验完关掉 |
+
+- 板子侧只改一行 URL（写进构建目录的 `sdkconfig`，不入库）：
+
+```
+CONFIG_MUSE_TTS_URL="http://<tts-host>:5050/tts?voice=zh-CN-XiaoyiNeural&text={text}"
+```
+
+- 验收：`/health` 里 `azure_pool_idle=1`、`stream_head=512`；板子串口出现
+  `muse_chat_session: reply audio: 24000 Hz, 1 ch, 48 kbps` 与 `muse.tts: TTS got N bytes`。
+  排查见 [`tts-server/README.md`](tts-server/README.md) 与本文第 11 节。
+
+---
+
+## 13. 许可证
 
 本项目采用 **Apache License 2.0**（见 [`LICENSE`](LICENSE)），但以下第三方文件保留其上游许可证：
 
