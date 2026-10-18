@@ -21,10 +21,13 @@
  *     asleep or not, and acts on the value only while asleep.
  *
  * On top of that the engine is verified and repaired: muse_imu_tap_check()
- * compares CTRL7/CTRL8 (and, once a minute, CAL1..CAL4) against what init()
- * left there and re-runs init() when they drifted, and the input task
- * re-arms the engine every ten minutes of sleep in case it wedged with its
- * configuration intact (that failure mode leaves no readable trace).
+ * compares CTRL1/CTRL2/CTRL7/CTRL8 (and, once a minute, CAL1..CAL4) against
+ * what init() left there and re-runs init() when they drifted, and the input
+ * task re-arms the engine every ten seconds of sleep in case it wedged with
+ * its configuration intact (that failure mode leaves no readable trace).
+ * CTRL2 is in that list because it carries the accelerometer's ODR: with the
+ * ODR wrong the engine is enabled, its parameters are right, and it receives
+ * no samples - the shape of the failures seen on battery.
  *
  * Register names and the parameter tables follow the QMI8658A datasheet
  * (QST, Rev A): CTRL1 0x02, CTRL2 0x03, CTRL7 0x08, CTRL8 0x09, CTRL9 0x0A,
@@ -38,6 +41,7 @@
 #include <string.h>
 
 #include "esp_attr.h"
+#include "muse_state.h"
 #include "esp_log.h"
 #include "esp_sleep.h"
 #include "esp_timer.h"
@@ -112,6 +116,8 @@ static esp_pm_lock_handle_t s_pm;  /* no light sleep while a transfer is in flig
 
 /* What init() left in the chip. Drift here means the tap engine is not
  * listening any more, even while the accelerometer keeps running. */
+static uint8_t s_exp_ctrl1;
+static uint8_t s_exp_ctrl2;
 static uint8_t s_exp_ctrl7;
 static uint8_t s_exp_ctrl8;
 static uint8_t s_exp_cal[8];
@@ -133,7 +139,7 @@ static unsigned s_rearms;
  * configured.
  */
 #define DIARY_EVENTS 16
-#define DIARY_MAGIC  0x54415044u   /* "TAPD" */
+#define DIARY_MAGIC  0x54415045u   /* "TAPE": 字段一改就换，旧的 RTC 内容作废 */
 
 typedef struct {
     uint32_t magic;
@@ -149,6 +155,8 @@ typedef struct {
     uint32_t repairs;      /* re-inits the watchdog did */
     uint32_t rearm_fail;   /* re-arms that failed */
     uint32_t starts;       /* engine_start() calls */
+    uint32_t knocks;       /* accel-threshold wakes (the engine-independent path) */
+    uint32_t drifts;       /* CTRL1/CTRL2/CTRL7/CTRL8 comparisons that did not match */
     int32_t  last_tap_status;
     int32_t  last_int1;
     uint32_t n;            /* events recorded, ever */
@@ -164,6 +172,8 @@ typedef struct {
 #define DIARY_TAP         7
 #define DIARY_TAP_AWAKE   8
 #define DIARY_NOT_READY   9
+#define DIARY_KNOCK      10
+#define DIARY_DRIFT      11
 
 RTC_NOINIT_ATTR static tap_diary_t s_diary;
 static bool s_diary_booted;
@@ -189,6 +199,8 @@ static const char *diary_tag_name(uint32_t tag)
     case DIARY_TAP:        return "tap";
     case DIARY_TAP_AWAKE:  return "tap-awake";
     case DIARY_NOT_READY:  return "not-ready";
+    case DIARY_KNOCK:      return "knock";
+    case DIARY_DRIFT:      return "drift";
     default:               return "?";
     }
 }
@@ -212,12 +224,13 @@ static void diary_dump(const char *why)
         return;
     }
     ESP_LOGW(TAG, "tap diary (%s): boots=%u wakes=%u gpio=%u timer=%u other=%u line_high=%u "
-             "taps=%u taps_awake=%u not_ready=%u repairs=%u rearm_fail=%u starts=%u",
+             "taps=%u taps_awake=%u knocks=%u not_ready=%u repairs=%u rearm_fail=%u drifts=%u starts=%u",
              why, (unsigned)s_diary.boots, (unsigned)s_diary.wakes, (unsigned)s_diary.wake_gpio,
              (unsigned)s_diary.wake_timer, (unsigned)s_diary.wake_other,
              (unsigned)s_diary.line_high, (unsigned)s_diary.taps,
-             (unsigned)s_diary.taps_awake, (unsigned)s_diary.not_ready,
-             (unsigned)s_diary.repairs, (unsigned)s_diary.rearm_fail,
+             (unsigned)s_diary.taps_awake, (unsigned)s_diary.knocks,
+             (unsigned)s_diary.not_ready, (unsigned)s_diary.repairs,
+             (unsigned)s_diary.rearm_fail, (unsigned)s_diary.drifts,
              (unsigned)s_diary.starts);
     uint32_t n = s_diary.n < DIARY_EVENTS ? s_diary.n : DIARY_EVENTS;
     uint32_t first = s_diary.n - n;
@@ -434,6 +447,10 @@ static esp_err_t engine_start(bool quiet)
 
     s_exp_ctrl8 = CTRL8_HANDSHAKE_STATUSINT | CTRL8_TAP_TO_INT1 | CTRL8_TAP_EN;
     s_exp_ctrl7 = CTRL7_AEN | CTRL7_DRDY_DIS;
+    /* CTRL2 carries the accelerometer's ODR: the tap engine gets no samples
+     * without it, and nothing else about the chip looks wrong when it drifts. */
+    s_exp_ctrl1 = CTRL1_AUTO_INC | CTRL1_INT1_EN;
+    s_exp_ctrl2 = CTRL2_ODR_500HZ_2G;
     s_ready = true;
     diary_note(DIARY_ENGINE_OK, (int32_t)s_exp_ctrl7, (int32_t)s_exp_ctrl8);
     if (quiet) {
@@ -492,7 +509,10 @@ bool muse_imu_tap_tapped(void)
     bool tapped = (st & 0x02) != 0;
     s_diary.last_tap_status = st;
     if (tapped) {
-        diary_note(DIARY_TAP, (int32_t)st, (int32_t)s_ready);
+        /* b: bit0 = the engine was configured, bit1 = the screen was dark.
+         * The second bit is what tells a lost wake from a lost tap. */
+        int32_t flags = (s_ready ? 1 : 0) | (muse_state_asleep() ? 2 : 0);
+        diary_note(DIARY_TAP, (int32_t)st, flags);
     }
     return tapped;
 }
@@ -615,11 +635,15 @@ bool muse_imu_tap_check(bool full)
         diary_note(DIARY_NOT_READY, 0, 0);
         return recover("engine not configured");
     }
-    uint8_t c7 = 0, c8 = 0;
-    if (read_reg(REG_CTRL7, &c7) != ESP_OK || read_reg(REG_CTRL8, &c8) != ESP_OK) {
+    uint8_t c1 = 0, c2 = 0, c7 = 0, c8 = 0;
+    if (read_reg(REG_CTRL1, &c1) != ESP_OK || read_reg(REG_CTRL2, &c2) != ESP_OK ||
+        read_reg(REG_CTRL7, &c7) != ESP_OK || read_reg(REG_CTRL8, &c8) != ESP_OK) {
         return false;   /* bus trouble: leave it to the next poll */
     }
-    if (c7 != s_exp_ctrl7 || c8 != s_exp_ctrl8) {
+    if (c1 != s_exp_ctrl1 || c2 != s_exp_ctrl2 || c7 != s_exp_ctrl7 || c8 != s_exp_ctrl8) {
+        s_diary.drifts++;
+        diary_note(DIARY_DRIFT, ((int32_t)c1 << 24) | ((int32_t)c2 << 16) | ((int32_t)c7 << 8)
+                   | (int32_t)c8, ((int32_t)s_exp_ctrl2 << 8) | (int32_t)s_exp_ctrl7);
         return recover("config drift");
     }
     if (full) {
@@ -675,6 +699,12 @@ void muse_imu_tap_note_wake(int int1)
         s_diary.line_high++;
     }
     diary_note(DIARY_WAKE, int1, (int32_t)cause);
+}
+
+void muse_imu_tap_note_knock(int mg)
+{
+    s_diary.knocks++;
+    diary_note(DIARY_KNOCK, mg, 0);
 }
 
 void muse_imu_tap_diary_log(const char *why)

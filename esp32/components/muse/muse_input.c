@@ -80,16 +80,19 @@ static const char *TAG = "muse_input";
  * armed with the buttons in wait_buttons(), so this poll only has to cover an
  * edge the sleep missed. */
 #define IMU_TAP_POLL_MS 200
-/* CTRL7/CTRL8 are compared against what init wrote this often, and the tap
- * parameters (CAL1..CAL4) this often again. A drifting chip is re-initialised
- * by muse_imu_tap_check(). */
+/* CTRL1/CTRL2/CTRL7/CTRL8 - the accelerometer's ODR among them - are compared
+ * against what init wrote this often, and the tap parameters (CAL1..CAL4) this
+ * often again. A drifting chip is re-initialised by muse_imu_tap_check(). The
+ * ODR matters most: with it wrong the engine still looks configured while it
+ * gets no samples, which is what the battery-side silence looked like. */
 #define IMU_TAP_VERIFY_MS 1000
 #define IMU_TAP_FULL_VERIFY_MS (60 * 1000)
 /* The engine is restarted from scratch this often while asleep. It covers the
  * one failure that leaves no readable trace: an engine that stops detecting
- * with its configuration intact. One minute, because the field failure showed
- * up two minutes into sleep, well before a ten-minute timer would fire. */
-#define IMU_TAP_REARM_MS (60 * 1000)
+ * with its configuration intact. Ten seconds, not a minute: a battery session
+ * re-arms in ~25 ms of I2C, so a wedge costs at most ten seconds of silence,
+ * and the field failure appeared within the first seconds of sleeping. */
+#define IMU_TAP_REARM_MS (10 * 1000)
 /* A knock above this (milli-g, beyond gravity) leaves a line in the log, next
  * to what STATUS1 said. That pair is what separates "the engine never saw the
  * knock" from "it saw it and nobody read it" - which is exactly the question
@@ -646,6 +649,7 @@ static void input_task(void *arg)
             if (bump >= IMU_KNOCK_WAKE_MG && muse_state_asleep()) {
                 ESP_LOGW(TAG, "imu knock %d mg: waking (tap)", bump);
                 s_stat_knocks++;
+                muse_imu_tap_note_knock(bump);
                 set_asleep(false, "tap");
             }
             if (tapped && !muse_state_asleep()) {
@@ -705,6 +709,10 @@ static void input_task(void *arg)
              * tap. Poll before going back to sleep instead of waiting for the
              * 200 ms window to come round. */
             s_tap_checked_ms = 0;
+            /* A light sleep is also the moment the IMU's own configuration can
+             * come back changed (a bus glitch while the chip is not listening),
+             * so verify it at once rather than at the next 1 s tick. */
+            s_tap_verified_ms = 0;
             s_stat_sleeps++;
             s_stat_slept_ms = esp_timer_get_time() / 1000 - before_ms;
             s_stat_tick_ms = (int64_t)(xTaskGetTickCount() - before_tick) * portTICK_PERIOD_MS;
