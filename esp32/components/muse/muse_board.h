@@ -66,8 +66,10 @@ typedef struct {
     const char *name;
     int width, height;
     bool round;             /* circular panel: keep content inside the circle */
+    bool no_ring;           /* square panel: progress as a bar along the bottom edge, no ring around Muse */
     bool touch;             /* no touch: no settings screen, set up over BLE */
     float diagonal_in;      /* screen size; under 2" typing uses a keypad with bigger keys */
+    bool touch_talk;        /* on-screen mic supplies talk edges; no physical talk button */
     bool keyboard;          /* dedicated menu navigation keys */
     const char *talk_button;    /* where the buttons are, for captions: "top" */
     const char *aux_button;     /* "bottom" */
@@ -128,7 +130,8 @@ typedef struct {
      * calibrating it against the cell that is actually fitted. NULL: the
      * board has no gauge worth dumping. */
     void (*power_debug)(void);
-    /* Turns the board off; returns only on failure. */
+    /* Turns the board off; returns only on failure. NULL: it can't from
+     * software (a physical switch does), and Settings has no Power off. */
     esp_err_t (*power_off)(void);
 } muse_board_t;
 
