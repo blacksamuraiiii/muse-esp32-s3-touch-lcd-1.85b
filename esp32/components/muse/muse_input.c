@@ -25,6 +25,7 @@
 #include "esp_attr.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
+#include "esp_netif.h"
 #include "freertos/task.h"
 #include "sdkconfig.h"
 #if CONFIG_PM_ENABLE
@@ -111,6 +112,7 @@ static esp_pm_lock_handle_t s_awake;   /* with s_cpu_pd: held whenever !s_cpu_lo
 static bool s_awake_held;
 #endif
 static volatile bool s_nap_now;   /* ">nap": asleep, as if on battery, nap without waiting WIFI_NAP_MS */
+static bool s_force_low;          /* ">pmlow=1": light-sleep even with a USB host attached */
 static TickType_t s_tap_checked;  /* last tap-status poll */
 static TickType_t s_tap_verified; /* last CTRL7/CTRL8 comparison */
 static TickType_t s_tap_full;     /* last tap-parameter comparison */
@@ -449,7 +451,7 @@ static bool update_power(void)
     static bool paused;
     bool pause = muse_board->display_pause && muse_state_on_battery() && muse_state_asleep()
                  && muse_ui_dark() && muse_voice_resting();
-    bool want_low = pause && !muse_console_host();
+    bool want_low = pause && (s_force_low || !muse_console_host());
     if (pause == paused && want_low == s_cpu_low) {
         return paused;
     }
@@ -827,6 +829,20 @@ static bool console_command(char *line, bool whole)
     if (!strcmp(line, "imu.rearm")) {
         muse_imu_tap_rearm();
         muse_imu_tap_log_diag("console rearm");
+        return true;
+    }
+    /* Network commands live in main (sdk_token_console.c): the address is NVS
+     * state, which this component cannot reach. */
+    if (!strncmp(line, "pmlow=", 6)) {
+        /* Bench aid: on battery the chip light-sleeps once the screen is dark,
+         * but a USB host keeps it out of light sleep - so the one state that
+         * misbehaves is the one a serial cable hides. This forces it back on,
+         * battery pretence included, since the pause itself needs it. */
+        s_force_low = line[6] == '1';
+        muse_state_set_as_if_battery(s_force_low);
+        printf("@pmlow forced=%d (battery pretence %s)\n", (int)s_force_low,
+               s_force_low ? "on" : "off");
+        fflush(stdout);
         return true;
     }
     if (!strcmp(line, "nap")) {

@@ -30,6 +30,8 @@
 #include "freertos/semphr.h"
 #include "freertos/timers.h"
 
+#include "config_store.h"
+
 static const char *TAG = "link.wifi";
 
 #define BIT_CONNECTED   BIT0
@@ -148,22 +150,79 @@ static bool drop_rssi_floor(uint8_t reason) {
 }
 #endif
 
-// Pin the station to a fixed address (CONFIG_HOMEHUB_STATIC_IP and friends).
+// Pin the station to a fixed address. The address comes from NVS first and
+// from the build config only when NVS has none: releases are built with the
+// CONFIG_HOMEHUB_STATIC_* strings empty, so a device that was given an address
+// keeps it across OTA instead of dropping back to DHCP (which is what an OTA
+// did to this board).
 // Called from the STA_START handler: the netif and its DHCP client are already
 // up by then, which is the state a static address needs - the client has to be
 // stopped before the address sticks, and the call fails on a netif that is
 // still down. Nothing else restarts DHCP afterwards, so the lease never lands.
+
+#define NETCFG_IP   "net_ip"
+#define NETCFG_MASK "net_mask"
+#define NETCFG_GW   "net_gw"
+#define NETCFG_DNS  "net_dns"
+
+static void copy_str(char *dst, size_t cap, const char *src) {
+    size_t n = src ? strlen(src) : 0;
+    if (n >= cap) n = cap - 1;
+    if (n) memcpy(dst, src, n);
+    dst[n] = '\0';
+}
+
+void wifi_mgr_netcfg(wifi_mgr_netcfg_t *out) {
+    memset(out, 0, sizeof(*out));
+    if (config_get_str(NETCFG_IP, out->ip, sizeof(out->ip))) {
+        config_get_str(NETCFG_MASK, out->mask, sizeof(out->mask));
+        config_get_str(NETCFG_GW, out->gw, sizeof(out->gw));
+        config_get_str(NETCFG_DNS, out->dns, sizeof(out->dns));
+        if (!out->mask[0]) copy_str(out->mask, sizeof(out->mask), "255.255.255.0");
+        out->from_nvs = true;
+        return;
+    }
+    copy_str(out->ip, sizeof(out->ip), CONFIG_HOMEHUB_STATIC_IP);
+    copy_str(out->mask, sizeof(out->mask), CONFIG_HOMEHUB_STATIC_NETMASK);
+    copy_str(out->gw, sizeof(out->gw), CONFIG_HOMEHUB_STATIC_GATEWAY);
+    copy_str(out->dns, sizeof(out->dns), CONFIG_HOMEHUB_STATIC_DNS);
+}
+
+static bool ip4_ok(const char *s) {
+    esp_ip4_addr_t a;
+    return s && s[0] && esp_netif_str_to_ip4(s, &a) == ESP_OK;
+}
+
+bool wifi_mgr_netcfg_save(const char *ip, const char *mask, const char *gw, const char *dns) {
+    if (!ip4_ok(ip) || !ip4_ok(mask) || !ip4_ok(gw)) return false;
+    if (dns && dns[0] && !ip4_ok(dns)) return false;
+    if (!config_set_str(NETCFG_IP, ip) || !config_set_str(NETCFG_MASK, mask)
+        || !config_set_str(NETCFG_GW, gw)) {
+        return false;
+    }
+    return dns && dns[0] ? config_set_str(NETCFG_DNS, dns) : config_erase_key(NETCFG_DNS);
+}
+
+bool wifi_mgr_netcfg_clear(void) {
+    config_erase_key(NETCFG_IP);
+    config_erase_key(NETCFG_MASK);
+    config_erase_key(NETCFG_GW);
+    config_erase_key(NETCFG_DNS);
+    return config_key_lookup(NETCFG_IP) == CONFIG_KEY_NOT_FOUND;
+}
+
 static void apply_static_ip(void) {
-    if (!CONFIG_HOMEHUB_STATIC_IP[0]) {
+    wifi_mgr_netcfg_t cfg;
+    wifi_mgr_netcfg(&cfg);
+    if (!cfg.ip[0]) {
         return;    // DHCP, the usual case
     }
     esp_netif_ip_info_t ip = { 0 };
-    if (esp_netif_str_to_ip4(CONFIG_HOMEHUB_STATIC_IP, &ip.ip) != ESP_OK
-        || esp_netif_str_to_ip4(CONFIG_HOMEHUB_STATIC_NETMASK, &ip.netmask) != ESP_OK
-        || esp_netif_str_to_ip4(CONFIG_HOMEHUB_STATIC_GATEWAY, &ip.gw) != ESP_OK) {
+    if (esp_netif_str_to_ip4(cfg.ip, &ip.ip) != ESP_OK
+        || esp_netif_str_to_ip4(cfg.mask, &ip.netmask) != ESP_OK
+        || esp_netif_str_to_ip4(cfg.gw, &ip.gw) != ESP_OK) {
         ESP_LOGE(TAG, "static IP %s/%s gw %s is not parseable; staying on DHCP",
-                 CONFIG_HOMEHUB_STATIC_IP, CONFIG_HOMEHUB_STATIC_NETMASK,
-                 CONFIG_HOMEHUB_STATIC_GATEWAY);
+                 cfg.ip, cfg.mask, cfg.gw);
         return;
     }
     esp_err_t err = esp_netif_dhcpc_stop(s_sta_netif);
@@ -177,20 +236,19 @@ static void apply_static_ip(void) {
         esp_netif_dhcpc_start(s_sta_netif);
         return;
     }
-    if (CONFIG_HOMEHUB_STATIC_DNS[0]) {
+    if (cfg.dns[0]) {
         esp_netif_dns_info_t dns = { 0 };
         dns.ip.type = ESP_IPADDR_TYPE_V4;
-        if (esp_netif_str_to_ip4(CONFIG_HOMEHUB_STATIC_DNS,
-                                 &dns.ip.u_addr.ip4) == ESP_OK) {
+        if (esp_netif_str_to_ip4(cfg.dns, &dns.ip.u_addr.ip4) == ESP_OK) {
             esp_netif_set_dns_info(s_sta_netif, ESP_NETIF_DNS_MAIN, &dns);
         } else {
-            ESP_LOGW(TAG, "static DNS %s is not parseable; left unset",
-                     CONFIG_HOMEHUB_STATIC_DNS);
+            ESP_LOGW(TAG, "static DNS %s is not parseable; left unset", cfg.dns);
         }
     }
-    ESP_LOGI(TAG, "static IP " IPSTR " mask " IPSTR " gw " IPSTR " dns %s",
+    ESP_LOGI(TAG, "static IP " IPSTR " mask " IPSTR " gw " IPSTR " dns %s (%s)",
              IP2STR(&ip.ip), IP2STR(&ip.netmask), IP2STR(&ip.gw),
-             CONFIG_HOMEHUB_STATIC_DNS[0] ? CONFIG_HOMEHUB_STATIC_DNS : "(unchanged)");
+             cfg.dns[0] ? cfg.dns : "(unchanged)",
+             cfg.from_nvs ? "NVS" : "build config");
 }
 
 static void event_handler(void *arg, esp_event_base_t base,
