@@ -30,6 +30,28 @@ typedef struct {
 
 void wifi_mgr_init(void);
 
+// Static station address. Read from NVS (keys net_ip/net_mask/net_gw/net_dns)
+// and, only when those are absent, from the build-time
+// CONFIG_HOMEHUB_STATIC_* values. Releases ship the config empty so that an
+// address given to a device survives OTA instead of being scrubbed with the
+// image; a factory-fresh board with neither falls back to DHCP.
+typedef struct {
+    char ip[16];
+    char mask[16];
+    char gw[16];
+    char dns[16];
+    bool from_nvs;   // the four keys came back from NVS
+} wifi_mgr_netcfg_t;
+
+// Never NULL-arg: fills *out, leaving ip empty when the station is on DHCP.
+void wifi_mgr_netcfg(wifi_mgr_netcfg_t *out);
+
+// Validates and stores the four keys. dns may be empty (keep DHCP's).
+bool wifi_mgr_netcfg_save(const char *ip, const char *mask, const char *gw, const char *dns);
+
+// Removes the four keys, so the next boot falls back to the build config.
+bool wifi_mgr_netcfg_clear(void);
+
 // Returns the STA esp_netif handle (NULL before wifi_mgr_init()). The pointer
 // is stable for the lifetime of the process.
 esp_netif_t *wifi_mgr_get_netif(void);

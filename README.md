@@ -13,7 +13,7 @@
 
 ## 目录
 
-- [更新记录（v1.0 → v1.1）](#更新记录)
+- [更新记录（v1.0 → v1.2）](#更新记录)
 
 1. [这是什么](#1-这是什么)
 2. [你的开发板](#2-你的开发板)
@@ -37,6 +37,37 @@
 ---
 
 ## 更新记录
+
+### v1.2（2026-10-18）
+
+固件：
+
+- 修复 **敲击唤醒在电池下失效**。根因三条：I2C 事务被 light sleep 截断、`STATUS1` 锁存没人清、
+  引擎配置完好但不检测。对策：每个 I2C 事务持 `ESP_PM_NO_LIGHT_SLEEP` 锁；亮屏也读 `STATUS1`；
+  每秒比对 `CTRL7/CTRL8`、每分钟比对 `CAL1..CAL4` 并自愈重配；睡着时每 60 s 重臂一次。
+  另在 `muse_imu_tap_init()` 里先软复位 QMI8658A（`0x60=0xB0`，等 20 ms），敲击阈值降到 0.4 g²，
+  并把每次敲击的加速度脉冲写进日志（`imu bump`）。
+- 修复 **静态 IP 在 OTA 后丢失**。地址改存 NVS（`net_ip` / `net_mask` / `net_gw` / `net_dns`），
+  发布件里 `CONFIG_HOMEHUB_STATIC_*` 保持为空，设备升级后仍用自己的地址；两者都没有才退回 DHCP。
+  新增控制台命令 `>net`（打印实际地址、DHCP 状态与来源）、`>net.set ip=… mask=… gw=… [dns=…]`、
+  `>net.clear`（交回 DHCP）。地址丢失时表现为「Wi-Fi 已连、只有连 Muse 失败」：Muse 的
+  `api.muse.ai` 在直连路线上不通，静态网关指向旁路由时正常。
+- 修复 **屏幕长亮约 20 分钟后冻住**：LVGL 等 band 发送完成用的是空转自旋，会把发送任务饿死；
+  改成二值信号量 + `lv_display_set_flush_wait_cb()`（上游同款修复）。
+- 修复 **电量恒显 100%**：读 BQ27220 `StateOfCharge` 的寄存器是 `0x2C`（此前误读 `0x1C`）；
+  另加电压折算兜底与 `>batt` 原始寄存器转储。
+- 改进 **TTS 首音时延**：服务端换 waitress + Azure 连接池与启动预热，首音 1.2–1.8 s → 0.47–0.58 s；
+  设备端加 MP3 载荷闸门（只放行 `0xFF` 或 `ID3` 开头），请求补 `User-Agent`。
+- 改进 **OTA 健壮性**：下载任务栈从内部 RAM 逐级降档申请，manifest 检查任务改用 PSRAM 栈；
+  新镜像不再因云端控制 WS 未连上被回滚；宽限路径只在镜像确为 OTA 安装时才标记有效。
+- 头像换成自绘的 **毛毛 V7**（64×64 程序化像素稿：公主切刘海、两侧上翘发束、头发描边）。
+- 新增调试命令：`>imu` / `>imu.check` / `>imu.rearm`（tap 寄存器与自愈计数）、
+  `>pmlow=0|1`（带 USB 也强制进 light sleep，用来复现电池态）。
+- 版本提示：门禁是**数值比较**。板上若装过内部构建的 1.3–1.5，回退到 1.2 必须用 USB 强刷一次。
+
+服务端（不在固件里）：
+
+- `tts-server/` 固定 waitress；Azure Speech（eastasia）加连接池与预热；`deploy.py` 一键部署。
 
 ### v1.1（2026-10-17）
 
@@ -502,6 +533,18 @@ CPU 会降频并在按键轮询之间进入 light sleep；插着 USB 时芯片�
 | 列出已接入的板子 | `python tools/muse/ports.py --list` |
 | 跑主机端单元测试 | `python -m unittest discover -s tests -p 'test_*.py'` |
 | 更换屏幕头像 | `python tools/muse/avatar.py` |
+
+板子自己的控制台命令（串口连上后输入，前面带 `>`）：
+
+| 命令 | 作用 |
+|---|---|
+| `>net` | 打印实际 IP/掩码/网关/DNS、DHCP 状态与地址来源（nvs / build / dhcp） |
+| `>net.set ip=10.0.0.5 mask=255.255.255.0 gw=10.0.0.1 dns=10.0.0.1` | 写入 NVS 并重启；发布件里不内置地址，靠它给板子定地址 |
+| `>net.clear` | 删除 NVS 地址，重启后回到 DHCP |
+| `>imu` / `>imu.check` / `>imu.rearm` | 打印 / 校验 / 重臂 QMI8658A tap 引擎 |
+| `>batt` | BQ27220 标准寄存器全量转储 |
+| `>pmlow=1` / `>pmlow=0` | 带 USB 也强制进 / 退出 light sleep（复现电池态用；进入后 USB 串口会断） |
+| `>status` | 一行 JSON：版本、电量、Wi-Fi、Muse 会话状态 |
 
 ---
 
