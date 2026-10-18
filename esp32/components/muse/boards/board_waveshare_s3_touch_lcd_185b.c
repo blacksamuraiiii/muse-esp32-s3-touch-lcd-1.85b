@@ -830,56 +830,88 @@ static int pct_from_mv(int mv)
     return 0;
 }
 
-/* BQ27220 fuel gauge: Voltage() 0x08 and StateOfCharge() 0x1C are stable
- * across the whole bq27xxx family. Charging state isn't decoded here. */
+/* BQ27220 fuel gauge. Addresses from the TRM's Table 2-1 (Standard Commands),
+ * cross-checked against esp-iot-solution's bq27220 driver:
+ *   Voltage 0x08 (mV), BatteryStatus 0x0A, Current 0x0C (mA, + = charging),
+ *   RemainingCapacity 0x10, FullChargeCapacity 0x12, AverageCurrent 0x14,
+ *   TimeToFull 0x18 (min), CycleCount 0x2A, StateOfCharge 0x2C (%),
+ *   StateOfHealth 0x2E (%), InternalTemperature 0x28 (0.1 K).
+ * 0x1C is StandbyTimeToEmpty, not the state of charge: reading it as a
+ * percentage is what pinned the gauge at 100% (1947 clamped to 100). */
 static esp_err_t read_power(muse_power_t *out)
 {
     if (i2c_master_probe(s_i2c, BQ27220_ADDR, 20) != ESP_OK) {
         ESP_LOGW(TAG, "BQ27220 not answering at 0x%02x", BQ27220_ADDR);
         return ESP_ERR_NOT_FOUND;
     }
-    uint16_t soc, mv;
-    ESP_RETURN_ON_ERROR(bq27220_read_word(0x1c, &soc), TAG, "state of charge");
+    uint16_t soc, mv, status;
+    ESP_RETURN_ON_ERROR(bq27220_read_word(0x2c, &soc), TAG, "state of charge");
     ESP_RETURN_ON_ERROR(bq27220_read_word(0x08, &mv), TAG, "voltage");
-    int gauge = soc <= 100 ? (int)soc : 100;
-    int volt = pct_from_mv((int)mv);
-    /* An unconfigured BQ27220 starts with RemainingCapacity == DesignCapacity,
-     * so StateOfCharge sits at 100% while the cell drains: TI's defaults, never
-     * rewritten for the cell that is actually fitted. Until the gauge has been
-     * through a full learning cycle, the voltage is the better number - but
-     * only while the gauge claims to be nearly full, because a cell under load
-     * sags and that must not read as "nearly empty". */
-    if (gauge >= 95 && volt <= 80) {
+    if (bq27220_read_word(0x0a, &status) != ESP_OK) {
+        status = 0;
+    }
+    int gauge = soc <= 100 ? (int)soc : -1;
+    if (gauge < 0) {
+        /* Out of range means the register is not what the TRM says it is on
+         * this part; the cell voltage is a crude but always-available stand-in. */
+        gauge = pct_from_mv((int)mv);
         static bool warned;
         if (!warned) {
             warned = true;
-            ESP_LOGW(TAG,
-                     "gauge says %d%% at %d mV (~%d%%): not calibrated for this cell, "
-                     "using the voltage estimate (see docs/踩坑记录.md, BQ27220)",
-                     gauge, (int)mv, volt);
+            ESP_LOGW(TAG, "StateOfCharge reads %u, not a percentage: using %d mV (~%d%%)",
+                     soc, (int)mv, gauge);
         }
-        gauge = volt;
     }
     out->battery_pct = gauge;
     out->battery_mv = (int)mv;
-    out->charging = false;
+    /* BatteryStatus bit0 is DSG: clear while the charger is pushing current in. */
+    out->charging = (status & 0x0001) == 0;
     out->usb = usb_serial_jtag_is_connected();
     return ESP_OK;
 }
 
-/* Every standard command that fits in one word, 0x08..0x2E. Printed raw on
- * purpose: the datasheet's numbering is the authority, and a value that looks
- * like a voltage or a current identifies its own register. */
+/* Every standard command that fits in one word, 0x08..0x2E, named from the
+ * TRM so the dump reads without a datasheet at hand. Printed raw as well: a
+ * value that does not fit its name is the fastest way to spot a wrong address. */
 static void dump_gauge(void)
 {
-    ESP_LOGI(TAG, "BQ27220 standard commands, word little-endian (0x08 mV, 0x1C %%):");
-    for (uint8_t reg = 0x08; reg <= 0x2e; reg += 2) {
+    static const struct {
+        uint8_t reg;
+        const char *name;
+        const char *unit;
+    } regs[] = {
+        { 0x08, "Voltage", "mV" },
+        { 0x0a, "BatteryStatus", "bits" },
+        { 0x0c, "Current", "mA +chg" },
+        { 0x10, "RemainingCapacity", "mAh" },
+        { 0x12, "FullChargeCapacity", "mAh" },
+        { 0x14, "AverageCurrent", "mA" },
+        { 0x16, "TimeToEmpty", "min" },
+        { 0x18, "TimeToFull", "min" },
+        { 0x1a, "StandbyCurrent", "mA" },
+        { 0x1c, "StandbyTimeToEmpty", "min" },
+        { 0x1e, "MaxLoadCurrent", "mA" },
+        { 0x20, "MaxLoadTimeToEmpty", "min" },
+        { 0x22, "RawCoulombCount", "count" },
+        { 0x24, "AveragePower", "mW" },
+        { 0x28, "InternalTemperature", "0.1 K" },
+        { 0x2a, "CycleCount", "cycles" },
+        { 0x2c, "StateOfCharge", "%" },
+        { 0x2e, "StateOfHealth", "%" },
+    };
+    ESP_LOGI(TAG, "BQ27220 standard commands (TRM Table 2-1):");
+    for (size_t i = 0; i < sizeof(regs) / sizeof(regs[0]); i++) {
         uint16_t v = 0;
-        if (bq27220_read_word(reg, &v) != ESP_OK) {
-            ESP_LOGW(TAG, "  0x%02x: no answer", reg);
+        if (bq27220_read_word(regs[i].reg, &v) != ESP_OK) {
+            ESP_LOGW(TAG, "  0x%02x %-20s no answer", regs[i].reg, regs[i].name);
             continue;
         }
-        ESP_LOGI(TAG, "  0x%02x = %5u (0x%04x)  int16 %6d", reg, v, v, (int16_t)v);
+        ESP_LOGI(TAG, "  0x%02x %-20s %6d (0x%04x) %s", regs[i].reg, regs[i].name,
+                 (int16_t)v, v, regs[i].unit);
+    }
+    uint16_t dcap = 0;
+    if (bq27220_read_word(0x3c, &dcap) == ESP_OK) {
+        ESP_LOGI(TAG, "  0x3c %-20s %6u        mAh", "DesignCapacity", dcap);
     }
 }
 
