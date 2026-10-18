@@ -303,14 +303,21 @@ void ota_start(const char *url, bool force, ota_status_cb cb, void *user) {
     }
     log_heap("ota start");
     size_t stack = 0;
-    for (size_t i = 0; i < sizeof(k_ota_stacks) / sizeof(k_ota_stacks[0]); i++) {
-        if (xTaskCreateWithCaps(ota_task, "ota", k_ota_stacks[i], ctx, 5, NULL,
-                                MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT) == pdPASS) {
-            stack = k_ota_stacks[i];
-            break;
+    for (int attempt = 0; attempt < 2 && !stack; attempt++) {
+        for (size_t i = 0; i < sizeof(k_ota_stacks) / sizeof(k_ota_stacks[0]); i++) {
+            if (xTaskCreateWithCaps(ota_task, "ota", k_ota_stacks[i], ctx, 5, NULL,
+                                    MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT) == pdPASS) {
+                stack = k_ota_stacks[i];
+                break;
+            }
+            ESP_LOGW(TAG, "no %u-byte internal stack for the ota task",
+                     (unsigned)k_ota_stacks[i]);
         }
-        ESP_LOGW(TAG, "no %u-byte internal stack for the ota task",
-                 (unsigned)k_ota_stacks[i]);
+        if (!stack && attempt == 0) {
+            /* Internal RAM on this board is tight enough that the block may
+             * coalesce a moment later; one short retry before giving up. */
+            vTaskDelay(pdMS_TO_TICKS(500));
+        }
     }
     if (stack) {
         ESP_LOGI(TAG, "ota task up (%u-byte internal stack)", (unsigned)stack);
