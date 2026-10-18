@@ -686,6 +686,14 @@ static lv_display_t *display_start(lv_indev_t **touch)
     }
     const esp_lv_adapter_touch_config_t lv_tp_cfg = ESP_LV_ADAPTER_TOUCH_DEFAULT_CONFIG(disp, tp);
     *touch = esp_lv_adapter_register_touch(&lv_tp_cfg);
+    /* A tap on the glass is how this board is woken by hand (the IMU's own
+     * engine stays silent on battery). The controller pulls its INT high on a
+     * touch whether or not the CPU is awake, so the same line the touch driver
+     * watches is also what light sleep waits on: without this the tap only
+     * works while a USB host keeps the CPU out of light sleep. */
+    if (muse_gpio_wake_line_add_wake_only(TP_INT, true) != ESP_OK) {
+        ESP_LOGW(TAG, "touch INT is not a wake line: taps will not wake the screen on battery");
+    }
     if (!*touch || esp_lv_adapter_start() != ESP_OK) {
         return NULL;
     }

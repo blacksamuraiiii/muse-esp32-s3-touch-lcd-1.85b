@@ -81,14 +81,13 @@ static const char *TAG = "muse_input";
  * edge the sleep missed. */
 #define IMU_TAP_POLL_MS 200
 /* Asleep, the engine on this board stops reporting altogether on battery, so
- * the poll stops relying on it: it reads the accelerometer itself, and often
- * enough to catch a knock (the impulse lasts a few tens of ms). 60 ms is the
- * compromise - 16 reads a second instead of 1 - and even that misses part of
- * the impulses, hence the high knock threshold. */
-#define IMU_TAP_POLL_SLEEP_MS 60
-/* ... which means the sleeps between polls have to be short too. ">knock=0"
- * puts the long waits back, for measuring what this costs. */
-#define ASLEEP_WAIT_MS 55
+ * the poll stops relying on it and reads the chip's FIFO instead: 500 Hz of
+ * buffered samples, the newest 128 of them (256 ms). Polling every 200 ms
+ * therefore sees every sample a knock could be in. The sleeps between polls
+ * have to be short enough for that rate. ">knock=0" puts the long waits back,
+ * for measuring what this costs. */
+#define IMU_TAP_POLL_SLEEP_MS 200
+#define ASLEEP_WAIT_MS 190
 /* CTRL1/CTRL2/CTRL7/CTRL8 - the accelerometer's ODR among them - are compared
  * against what init wrote this often, and the tap parameters (CAL1..CAL4) this
  * often again. A drifting chip is re-initialised by muse_imu_tap_check(). The
@@ -98,10 +97,11 @@ static const char *TAG = "muse_input";
 #define IMU_TAP_FULL_VERIFY_MS (60 * 1000)
 /* The engine is restarted from scratch this often while asleep. It covers the
  * one failure that leaves no readable trace: an engine that stops detecting
- * with its configuration intact. Ten seconds, not a minute: a battery session
- * re-arms in ~25 ms of I2C, so a wedge costs at most ten seconds of silence,
- * and the field failure appeared within the first seconds of sleeping. */
-#define IMU_TAP_REARM_MS (10 * 1000)
+ * with its configuration intact. A minute, as before: the restart resets the
+ * chip (Soft-Reset + full reconfiguration), and doing that every ten seconds
+ * threw away whatever the engine had learned - the diary showed eighteen
+ * restarts in a few minutes with the screen merely dark. */
+#define IMU_TAP_REARM_MS (60 * 1000)
 /* A knock above this (milli-g, beyond gravity) leaves a line in the log, next
  * to what STATUS1 said. That pair is what separates "the engine never saw the
  * knock" from "it saw it and nobody read it" - which is exactly the question
@@ -127,7 +127,9 @@ static esp_pm_lock_handle_t s_awake;   /* with s_cpu_pd: held whenever !s_cpu_lo
 static bool s_awake_held;
 #endif
 static volatile bool s_nap_now;   /* ">nap": asleep, as if on battery, nap without waiting WIFI_NAP_MS */
-static bool s_knock_on = true;    /* ">knock=0": stop sampling the accelerometer while asleep */
+static bool s_knock_on;           /* ">knock=1": sample the accelerometer/FIFO while asleep (off by
+                                   * default: the FIFO reader is still being brought up, and
+                                   * every failed read costs a 100 ms I2C timeout in this task) */
 static bool s_force_low;          /* ">pmlow=1": light-sleep even with a USB host attached */
 /* The five tap-window timers below are wall-clock, not ticks. On battery the
  * CPU light-sleeps between polls, and a tick-based window can be skipped for
@@ -636,6 +638,8 @@ static void input_task(void *arg)
          * already on used to leave the bit set, after which the engine stopped
          * reporting anything. The value only acts while asleep. */
         const bool knock_polling = muse_state_asleep() && s_knock_on;
+        /* Asleep with the sampler off: the waits go back to the long ones, and
+         * the touch line is what a hand finds. */
         if (now_ms - s_tap_checked_ms >= (knock_polling ? IMU_TAP_POLL_SLEEP_MS : IMU_TAP_POLL_MS)) {
             s_tap_checked_ms = now_ms;
             bool tapped = muse_imu_tap_tapped();
@@ -653,18 +657,23 @@ static void input_task(void *arg)
                 ESP_LOGW(TAG, "imu bump %d mg: status1 tap=%d, %s",
                          bump, (int)tapped, muse_state_asleep() ? "asleep" : "awake");
             }
-            /* The engine is not the only reader of the case. This poll has
-             * already paid for the accelerometer read, and on battery the
-             * engine's own report is exactly what has gone missing - so a knock
-             * big enough to be a deliberate tap wakes the screen on its own,
-             * with or without STATUS1. Sampling at the poll rate misses short
-             * impulses the 500 Hz engine would catch, hence the high threshold:
-             * a real knock is far above it and ordinary handling is below. */
-            if (bump >= IMU_KNOCK_WAKE_MG && muse_state_asleep()) {
-                ESP_LOGW(TAG, "imu knock %d mg: waking (tap)", bump);
-                s_stat_knocks++;
-                muse_imu_tap_note_knock(bump);
-                set_asleep(false, "tap");
+            /* The engine is not the only reader of the case - on battery it is
+             * not a reader at all. The FIFO carries the whole 500 Hz stream,
+             * so a knock is found there rather than hoped for in the newest
+             * sample: the threshold is the same, the odds of seeing the impulse
+             * are not. */
+            int knock = 0;
+            if (muse_state_asleep() && s_knock_on) {
+                int fifo_peak = muse_imu_tap_fifo_peak_mg();
+                if (fifo_peak > knock) {
+                    knock = fifo_peak;
+                }
+                if (knock >= IMU_KNOCK_WAKE_MG) {
+                    ESP_LOGW(TAG, "imu knock %d mg (fifo): waking (tap)", knock);
+                    s_stat_knocks++;
+                    muse_imu_tap_note_knock(knock);
+                    set_asleep(false, "tap");
+                }
             }
             if (tapped && !muse_state_asleep()) {
                 /* Not an error in itself: the poll reads STATUS1 whether the
@@ -948,6 +957,41 @@ static bool console_command(char *line, bool whole)
         printf("@pmlow forced=%d (battery pretence %s)\n", (int)s_force_low,
                s_force_low ? "on" : "off");
         fflush(stdout);
+        return true;
+    }
+    if (!strncmp(line, "fifowatch=", 10)) {
+        /* Live look at what the chip's FIFO carries while somebody taps the
+         * case: the fastest way to know whether this route sees a knock at all,
+         * without a battery run. */
+        int secs = atoi(line + 10);
+        if (secs <= 0 || secs > 60) {
+            secs = 15;
+        }
+        int best = 0;
+        printf("@fifowatch %ds, tap the case now\n", secs);
+        fflush(stdout);
+        int64_t until = esp_timer_get_time() / 1000 + (int64_t)secs * 1000;
+        while (esp_timer_get_time() / 1000 < until) {
+            int peak = muse_imu_tap_fifo_peak_mg();
+            if (peak > best) {
+                best = peak;
+            }
+            if (peak > 0) {
+                printf("@fifowatch peak=%d best=%d\n", peak, best);
+                fflush(stdout);
+            }
+            vTaskDelay(pdMS_TO_TICKS(100));
+        }
+        printf("@fifowatch done best=%d mg\n", best);
+        fflush(stdout);
+        return true;
+    }
+    if (!strcmp(line, "fifo")) {
+        /* One-shot read of the chip's buffered samples: what the knock poll
+         * sees, and how much of it there is. */
+        printf("@fifo peak=%d mg\n", muse_imu_tap_fifo_peak_mg());
+        fflush(stdout);
+        muse_imu_tap_diary_log("fifo");
         return true;
     }
     if (!strncmp(line, "knock=", 6)) {
