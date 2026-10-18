@@ -124,6 +124,9 @@ static const char *HEARTBEAT_TAG = "link.heartbeat";
 // The control WS is the recovery channel — if a new image can't reach it,
 // no future device.ota could repair the device, so rolling back is correct.
 #define OTA_VERIFY_TIMEOUT_US (300LL * 1000000LL)
+// How long a fresh image must simply stay up before it is accepted without the
+// control WebSocket: the bootloader still reverts one that crashes sooner.
+#define OTA_VERIFY_GRACE_US (30LL * 1000000LL)
 
 // Static IPs for the raw L3 tunnel. ESP side hosts .1; VM side .2.
 #define TUNNEL_IP_ESP   "10.42.0.1"
@@ -2552,13 +2555,16 @@ static void on_ws_control_status(const char *status) {
 // startup. Marking the running image valid (a) commits a PENDING_VERIFY image
 // so the bootloader stops trying to revert it, and (b) blesses a normal boot
 // so the running slot becomes a valid rollback target for the *next* OTA.
-// We gate validation on the control WS coming up: that's the channel a future
-// device.ota would arrive on, so if the new image can't reach it, reverting is
-// the only way to keep the device recoverable.
+//
+// The gate used to be the control WebSocket alone: that is the Home Link cloud
+// channel, and this build runs without it (local TTS, GitHub OTA), so on the
+// bench a healthy 1.3 was rolled back to 1.2 on the next reset. The image is
+// now accepted once it has stayed up for OTA_VERIFY_GRACE_US - an image that
+// crashes never gets there, and the bootloader reverts that one by itself.
 static void ota_verify_task(void *arg) {
     (void)arg;
-    int64_t deadline = esp_timer_get_time() + OTA_VERIFY_TIMEOUT_US;
-    while (esp_timer_get_time() < deadline) {
+    const int64_t start = esp_timer_get_time();
+    while (esp_timer_get_time() - start < OTA_VERIFY_TIMEOUT_US) {
         if (noise_ctrl_is_connected()) {
             if (esp_ota_mark_app_valid_cancel_rollback() == ESP_OK) {
                 ESP_LOGI(TAG, "OTA image validated (control WS up)");
@@ -2569,8 +2575,22 @@ static void ota_verify_task(void *arg) {
             vTaskDelete(NULL);
             return;
         }
+        if (esp_timer_get_time() - start >= OTA_VERIFY_GRACE_US) {
+            esp_err_t err = esp_ota_mark_app_valid_cancel_rollback();
+            if (err == ESP_OK) {
+                ESP_LOGI(TAG, "OTA image validated after %lld s without the control WS "
+                         "(this build runs without it)", OTA_VERIFY_GRACE_US / 1000000LL);
+            } else {
+                ESP_LOGE(TAG, "esp_ota_mark_app_valid_cancel_rollback failed: %s",
+                         esp_err_to_name(err));
+            }
+            stack_monitor_record(NULL);
+            vTaskDelete(NULL);
+            return;
+        }
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
+    // Only a build with the grace path removed gets here.
     if (s_ota_pending_verify) {
         ESP_LOGE(TAG, "OTA verify timed out; rolling back to previous firmware");
         stack_monitor_record(NULL);
