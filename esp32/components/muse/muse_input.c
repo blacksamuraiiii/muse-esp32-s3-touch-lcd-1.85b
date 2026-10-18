@@ -88,6 +88,12 @@ static const char *TAG = "muse_input";
  * with its configuration intact. One minute, because the field failure showed
  * up two minutes into sleep, well before a ten-minute timer would fire. */
 #define IMU_TAP_REARM_MS (60 * 1000)
+/* A knock above this (milli-g, beyond gravity) leaves a line in the log, next
+ * to what STATUS1 said. That pair is what separates "the engine never saw the
+ * knock" from "it saw it and nobody read it" - which is exactly the question
+ * when tap-to-wake works only sometimes. */
+#define IMU_BUMP_LOG_MG 150
+#define IMU_BUMP_LOG_QUIET_MS 700
 
 #define SERIAL_RX 1024         /* the driver drops what doesn't fit, so a console line must */
 #define SERIAL_LINE 1024
@@ -109,6 +115,7 @@ static TickType_t s_tap_checked;  /* last tap-status poll */
 static TickType_t s_tap_verified; /* last CTRL7/CTRL8 comparison */
 static TickType_t s_tap_full;     /* last tap-parameter comparison */
 static TickType_t s_tap_rearmed;  /* last engine restart, counted from the last wake */
+static TickType_t s_bump_logged;  /* last knock that made it into the log */
 
 static void post(muse_ptt_t type, bool wake)
 {
@@ -593,6 +600,16 @@ static void input_task(void *arg)
             bool tapped = muse_imu_tap_tapped();
             if (tapped && muse_state_asleep()) {
                 set_asleep(false, "tap");
+            }
+            /* Trace every knock the IMU can see. bump is the motion beyond
+             * gravity; when it is high and STATUS1 still says nothing, the
+             * engine is the one missing it, not the reader. */
+            int bump = muse_imu_tap_bump_mg();
+            if (bump > IMU_BUMP_LOG_MG
+                && now - s_bump_logged >= pdMS_TO_TICKS(IMU_BUMP_LOG_QUIET_MS)) {
+                s_bump_logged = now;
+                ESP_LOGW(TAG, "imu bump %d mg: status1 tap=%d, %s",
+                         bump, (int)tapped, muse_state_asleep() ? "asleep" : "awake");
             }
             if (muse_imu_tap_ready()
                 && now - s_tap_verified >= pdMS_TO_TICKS(IMU_TAP_VERIFY_MS)) {
