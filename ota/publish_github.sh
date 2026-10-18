@@ -68,6 +68,17 @@ JSON
 echo "--- $out"
 cat "$out"
 
+# The tag has to point at the commit that was built. Creating the release first
+# makes GitHub tag whatever main is at that moment, which is exactly how v1.1
+# ended up on an older commit; and a rebuilt tag would silently keep the old
+# commit. Point it here, before anything is published.
+if [ -n "$(git -C "$root" status --porcelain)" ]; then
+    echo "warning: working tree is dirty - the tag points at HEAD, the image may not match it" >&2
+fi
+git -C "$root" tag -f "$tag" HEAD
+git -C "$root" push -f origin "refs/tags/$tag"
+echo "--- $tag -> $(git -C "$root" rev-parse --short "$tag")"
+
 if command -v gh >/dev/null 2>&1; then
     if gh release view "$tag" -R "$repo" >/dev/null 2>&1; then
         gh release upload "$tag" "$bin" "$out" -R "$repo" --clobber
