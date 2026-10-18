@@ -2576,6 +2576,16 @@ static void ota_verify_task(void *arg) {
             return;
         }
         if (esp_timer_get_time() - start >= OTA_VERIFY_GRACE_US) {
+            // Only an image installed by OTA is pending: esp_ota_..._valid()
+            // returns ESP_FAIL on the factory slot ("Running firmware is
+            // factory"), so calling it on every normal boot would just log one
+            // error per boot.
+            if (!s_ota_pending_verify) {
+                ESP_LOGI(TAG, "image not OTA-installed: nothing to verify");
+                stack_monitor_record(NULL);
+                vTaskDelete(NULL);
+                return;
+            }
             esp_err_t err = esp_ota_mark_app_valid_cancel_rollback();
             if (err == ESP_OK) {
                 ESP_LOGI(TAG, "OTA image validated after %lld s without the control WS "
