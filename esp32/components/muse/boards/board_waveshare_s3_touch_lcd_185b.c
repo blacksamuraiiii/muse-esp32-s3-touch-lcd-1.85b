@@ -803,6 +803,33 @@ static esp_err_t bq27220_read_word(uint8_t reg, uint16_t *out)
     return ESP_OK;
 }
 
+/* Single-cell Li-ion, open-circuit volts to percent. A cell under load reads a
+ * few tens of mV low, so the bottom of the curve is deliberately a little
+ * generous: the estimate errs towards "not empty yet". */
+static int pct_from_mv(int mv)
+{
+    static const struct {
+        uint16_t mv;
+        uint8_t pct;
+    } curve[] = {
+        { 4200, 100 }, { 4150, 95 }, { 4100, 90 }, { 4050, 85 }, { 4000, 80 },
+        { 3950, 74 },  { 3900, 68 }, { 3850, 62 }, { 3800, 56 }, { 3750, 50 },
+        { 3700, 42 },  { 3650, 34 }, { 3600, 26 }, { 3550, 19 }, { 3500, 13 },
+        { 3450, 8 },   { 3400, 5 },  { 3350, 3 },  { 3300, 1 },  { 3200, 0 },
+    };
+    if (mv >= curve[0].mv) {
+        return 100;
+    }
+    for (size_t i = 1; i < sizeof(curve) / sizeof(curve[0]); i++) {
+        if (mv >= curve[i].mv) {
+            int span_mv = curve[i - 1].mv - curve[i].mv;
+            int span_pct = curve[i - 1].pct - curve[i].pct;
+            return curve[i].pct + (mv - curve[i].mv) * span_pct / span_mv;
+        }
+    }
+    return 0;
+}
+
 /* BQ27220 fuel gauge: Voltage() 0x08 and StateOfCharge() 0x1C are stable
  * across the whole bq27xxx family. Charging state isn't decoded here. */
 static esp_err_t read_power(muse_power_t *out)
@@ -814,12 +841,48 @@ static esp_err_t read_power(muse_power_t *out)
     uint16_t soc, mv;
     ESP_RETURN_ON_ERROR(bq27220_read_word(0x1c, &soc), TAG, "state of charge");
     ESP_RETURN_ON_ERROR(bq27220_read_word(0x08, &mv), TAG, "voltage");
-    out->battery_pct = soc <= 100 ? (int)soc : 100;
+    int gauge = soc <= 100 ? (int)soc : 100;
+    int volt = pct_from_mv((int)mv);
+    /* An unconfigured BQ27220 starts with RemainingCapacity == DesignCapacity,
+     * so StateOfCharge sits at 100% while the cell drains: TI's defaults, never
+     * rewritten for the cell that is actually fitted. Until the gauge has been
+     * through a full learning cycle, the voltage is the better number - but
+     * only while the gauge claims to be nearly full, because a cell under load
+     * sags and that must not read as "nearly empty". */
+    if (gauge >= 95 && volt <= 80) {
+        static bool warned;
+        if (!warned) {
+            warned = true;
+            ESP_LOGW(TAG,
+                     "gauge says %d%% at %d mV (~%d%%): not calibrated for this cell, "
+                     "using the voltage estimate (see docs/踩坑记录.md, BQ27220)",
+                     gauge, (int)mv, volt);
+        }
+        gauge = volt;
+    }
+    out->battery_pct = gauge;
     out->battery_mv = (int)mv;
     out->charging = false;
     out->usb = usb_serial_jtag_is_connected();
     return ESP_OK;
 }
+
+/* Every standard command that fits in one word, 0x08..0x2E. Printed raw on
+ * purpose: the datasheet's numbering is the authority, and a value that looks
+ * like a voltage or a current identifies its own register. */
+static void dump_gauge(void)
+{
+    ESP_LOGI(TAG, "BQ27220 standard commands, word little-endian (0x08 mV, 0x1C %%):");
+    for (uint8_t reg = 0x08; reg <= 0x2e; reg += 2) {
+        uint16_t v = 0;
+        if (bq27220_read_word(reg, &v) != ESP_OK) {
+            ESP_LOGW(TAG, "  0x%02x: no answer", reg);
+            continue;
+        }
+        ESP_LOGI(TAG, "  0x%02x = %5u (0x%04x)  int16 %6d", reg, v, v, (int16_t)v);
+    }
+}
+
 
 static void send_disp_off(void *arg)
 {
@@ -862,6 +925,8 @@ static const muse_board_t s_board = {
     .poll_buttons = poll_buttons,
     .wait_buttons = wait_buttons,
     .read_power = read_power,
+    .power_debug = dump_gauge,
+
     .power_off = power_off,
 };
 

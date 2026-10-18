@@ -22,7 +22,10 @@ ver=${2:?usage: publish_github.sh <bin> <version> "<notes>"}
 notes=${3:-"Muse 1.85B $ver"}
 
 py=${PYTHON:-$HOME/.venv/bin/python3}
-command -v "$py" >/dev/null 2>&1 || py=python3
+if ! command -v "$py" >/dev/null 2>&1; then
+    py=python3
+    command -v "$py" >/dev/null 2>&1 || py=python   # Windows/Git Bash
+fi
 [ -f "$bin" ] || { echo "no such image: $bin" >&2; exit 1; }
 
 root=$(cd "$(dirname "$0")/.." && pwd)
@@ -65,11 +68,18 @@ JSON
 echo "--- $out"
 cat "$out"
 
-if gh release view "$tag" -R "$repo" >/dev/null 2>&1; then
-    gh release upload "$tag" "$bin" "$out" -R "$repo" --clobber
-    gh release edit "$tag" -R "$repo" --title "Muse 1.85B $ver" --notes "$notes"
+if command -v gh >/dev/null 2>&1; then
+    if gh release view "$tag" -R "$repo" >/dev/null 2>&1; then
+        gh release upload "$tag" "$bin" "$out" -R "$repo" --clobber
+        gh release edit "$tag" -R "$repo" --title "Muse 1.85B $ver" --notes "$notes"
+    else
+        gh release create "$tag" "$bin" "$out" -R "$repo" --title "Muse 1.85B $ver" --notes "$notes"
+    fi
 else
-    gh release create "$tag" "$bin" "$out" -R "$repo" --title "Muse 1.85B $ver" --notes "$notes"
+    # No GitHub CLI on this machine: same thing over the REST API, with the
+    # token git already stores for this remote.
+    echo "--- gh not found, using the REST API"
+    "$py" "$root/ota/github_release.py" "$tag" "$notes" "$bin" "$out"
 fi
 
 echo "--- published $tag on $repo"

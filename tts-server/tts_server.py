@@ -32,6 +32,18 @@ then saw EOF, on both the chunked and the Content-Length path, while a raw-socke
 server on the same port, same container image and same payload delivered all of
 it. Serve with waitress; keep the dev server only for quick local pokes.
 
+Latency: the upstream connection is kept alive per worker thread. Measured from
+the dev machine, a cold TLS connection to the Speech endpoint takes 1.20-1.39 s
+to the first audio byte and a warm one 0.45-0.53 s, which is most of the delay
+the board sees. Two smaller knobs (TTS_STREAM_HEAD, TTS_SEND_BYTES) hold back
+less audio before the response starts. `style` costs ~0.14 s; set
+AZURE_SPEECH_STYLE= to drop it.
+
+Regression hooks (TTS_TEST_HOOKS=1, off by default): ?text=BADPACKET answers 200
+with an HTML body and ?text=BADSTATUS answers 500, the two shapes a broken
+upstream has, for the firmware's non-MP3 gate. TTS_FORCE_BAD=1 makes every reply
+that 200-with-HTML one, so the gate can be exercised from the device itself.
+
 Secrets come from the environment, or from a .env beside this file
 (AZURE_SPEECH_KEY / AZURE_SPEECH_REGION). .env is not in the repo.
 
@@ -40,15 +52,15 @@ Firmware side (in the board's build sdkconfig, then rebuild + flash):
 """
 
 import asyncio
+import http.client
 import json
 import logging
 import os
 import queue
 import re
+import ssl
 import threading
 import time
-import urllib.error
-import urllib.request
 from collections import OrderedDict
 from xml.sax.saxutils import escape
 
@@ -115,11 +127,24 @@ CACHE_MAX_BYTES = int(os.environ.get("TTS_CACHE_BYTES", str(8 * 1024 * 1024)))
 # Streaming sends audio as it is synthesised, so playback starts ~1 s in instead
 # of after the whole reply. stream=0 asks for the old buffered behaviour.
 STREAM_DEFAULT = os.environ.get("TTS_STREAM", "1") != "0"
-# Bytes to hold before answering 200: enough to prove it really is MP3.
-STREAM_HEAD_BYTES = 1024
+# Bytes to hold before answering 200: enough to prove it really is MP3. Keep it
+# small: the board only needs the first frame, and every byte held here is
+# playback delay.
+STREAM_HEAD_BYTES = int(os.environ.get("TTS_STREAM_HEAD", "512"))
 STREAM_FIRST_TIMEOUT = 20.0
 AZURE_TIMEOUT = 20.0
 EDGE_FAIL_HINT = "the Azure key may be out of quota or the region wrong"
+# The board's own gate needs 8 bytes; waitress's output buffer is the other
+# half of the delay, so both thresholds are lowered together (see __main__).
+SEND_BYTES = int(os.environ.get("TTS_SEND_BYTES", "512"))
+# Regression hook for the firmware's bad-payload gate: ?text=BADPACKET answers
+# 500 with an HTML body, exactly what a failing upstream looks like. Off unless
+# asked for, so a production deployment can never trip it by accident.
+TEST_HOOKS = os.environ.get("TTS_TEST_HOOKS", "") == "1"
+# With the hooks on, this makes every reply the bad payload, so the board's
+# gate can be exercised without controlling what the device says.
+FORCE_BAD = os.environ.get("TTS_FORCE_BAD", "") == "1"
+
 
 _cache = OrderedDict()   # (backend, voice, rate, pitch, text) -> mp3 bytes
 _cache_bytes = 0
@@ -180,32 +205,109 @@ def _ssml(text: str, voice: str, rate: str, pitch: str) -> str:
     )
 
 
+_SSL_CTX = ssl.create_default_context()
+# Kept-alive upstream connections. A pool, not a thread-local: the streaming
+# worker is a fresh thread per request, so per-thread state would never be
+# reused (that mistake measured 1.3 s per request instead of 0.5 s).
+_pool: "queue.LifoQueue" = queue.LifoQueue()
+_pool_open = 0                      # sockets created and not yet closed
+_pool_lock = threading.Lock()
+AZURE_POOL_MAX = int(os.environ.get("TTS_AZURE_POOL", "6"))
+
+
+def _azure_acquire():
+    """(connection, reused): a warm one from the pool, or a new one."""
+    global _pool_open
+    try:
+        return _pool.get_nowait(), True
+    except queue.Empty:
+        pass
+    with _pool_lock:
+        _pool_open += 1
+    host = "%s.tts.speech.microsoft.com" % AZURE_REGION
+    return http.client.HTTPSConnection(host, timeout=AZURE_TIMEOUT, context=_SSL_CTX), False
+
+
+def _azure_release(conn, reusable):
+    """Back to the pool when its body was read to the end, else closed."""
+    global _pool_open
+    if reusable:
+        if _pool.qsize() < AZURE_POOL_MAX:
+            _pool.put(conn)
+            return
+    try:
+        conn.close()
+    except Exception:  # noqa: BLE001 - closing a broken socket
+        pass
+    with _pool_lock:
+        _pool_open -= 1
+
+
+class _AzureResponse:
+    """The upstream response and the connection it came from.
+
+    Reading it to the end hands the connection back to the pool; leaving it
+    half-read drops the socket instead of poisoning the next request."""
+
+    def __init__(self, conn, resp):
+        self._conn = conn
+        self._resp = resp
+        self._done = False
+
+    def read(self, n=-1):
+        data = self._resp.read(n)
+        if not data or n < 0:
+            self._done = True
+        return data
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
+
+    def close(self):
+        conn, self._conn = self._conn, None
+        try:
+            self._resp.close()
+        except Exception:  # noqa: BLE001 - already closed
+            pass
+        if conn is not None:
+            _azure_release(conn, self._done)
+
+
 def _azure_request(text: str, voice: str, rate: str, pitch: str):
     """The open response object; raises on a non-200 so callers can fall back."""
     if not AZURE_KEY:
         raise RuntimeError("AZURE_SPEECH_KEY is not set")
-    url = "https://%s.tts.speech.microsoft.com/cognitiveservices/v1" % AZURE_REGION
-    req = urllib.request.Request(
-        url,
-        data=_ssml(text, voice, rate, pitch).encode("utf-8"),
-        method="POST",
-        headers={
-            "Ocp-Apim-Subscription-Key": AZURE_KEY,
-            "Content-Type": "application/ssml+xml",
-            "X-Microsoft-OutputFormat": AZURE_FORMAT,
-            "User-Agent": "muse-tts-proxy",
-        },
-    )
-    try:
-        resp = urllib.request.urlopen(req, timeout=AZURE_TIMEOUT)
-    except urllib.error.HTTPError as e:
-        detail = e.read()[:200].decode("utf-8", "replace")
-        raise RuntimeError("azure http %d: %s" % (e.code, detail)) from e
-    if resp.status != 200:
-        detail = resp.read()[:200].decode("utf-8", "replace")
-        resp.close()
-        raise RuntimeError("azure http %d: %s" % (resp.status, detail))
-    return resp
+    body = _ssml(text, voice, rate, pitch).encode("utf-8")
+    headers = {
+        "Ocp-Apim-Subscription-Key": AZURE_KEY,
+        "Content-Type": "application/ssml+xml",
+        "X-Microsoft-OutputFormat": AZURE_FORMAT,
+        "User-Agent": "muse-tts-proxy",
+    }
+    last = None
+    for attempt in (0, 1):
+        conn, reused = _azure_acquire()
+        try:
+            conn.request("POST", "/cognitiveservices/v1", body, headers)
+            resp = conn.getresponse()
+        except (http.client.HTTPException, OSError) as e:
+            # A pooled socket the service closed while it was idle looks
+            # exactly like this. Retry once on a new one; a fresh connection
+            # that fails is a real failure.
+            _azure_release(conn, False)
+            last = e
+            if not reused or attempt:
+                break
+            continue
+        if resp.status != 200:
+            detail = resp.read()[:200].decode("utf-8", "replace")
+            _azure_release(conn, False)   # the body is partial: never reuse
+            raise RuntimeError("azure http %d: %s" % (resp.status, detail))
+        return _AzureResponse(conn, resp)
+    raise RuntimeError("azure connection failed: %s" % last)
 
 
 def _synth_azure(text, voice, rate, pitch) -> bytes:
@@ -359,6 +461,14 @@ def tts():
     text = clean(text)
     if not text:
         return "empty after cleaning", 400
+    if TEST_HOOKS and (text.upper() in ("BADPACKET", "BADSTATUS") or FORCE_BAD):
+        # 200 with an HTML body is what a misbehaving proxy in front of the
+        # service looks like, and the only way to exercise the firmware's
+        # non-MP3 gate; 500 is what a failing upstream looks like.
+        status = 500 if text.upper() == "BADSTATUS" else 200
+        log.info("test hook: answering %d with HTML", status)
+        return Response("<html><body>500 fake error</body></html>", status=status,
+                        mimetype="text/html")
 
     key = (BACKEND, voice, rate, pitch, text)
     hit = cache_get(key)
@@ -451,6 +561,11 @@ def health():
                 "azure_key": "set" if AZURE_KEY else "missing",
                 "cache_items": len(_cache),
                 "cache_bytes": _cache_bytes,
+                "stream_head": STREAM_HEAD_BYTES,
+                "send_bytes": SEND_BYTES,
+                "test_hooks": TEST_HOOKS,
+                "azure_pool_idle": _pool.qsize(),
+                "azure_pool_open": _pool_open,
             },
             ensure_ascii=False,
         ),
@@ -458,10 +573,22 @@ def health():
     )
 
 
+def _prewarm():
+    """One tiny synthesis at start-up, so the first real reply does not pay the
+    TLS handshake: measured 1.8 s cold against 0.5 s warm."""
+    try:
+        _synth_azure("嗯", FORCE_VOICE or DEFAULT_VOICE, DEFAULT_RATE, DEFAULT_PITCH)
+        log.info("upstream connection warm")
+    except Exception as e:  # noqa: BLE001 - a cold first request is not fatal
+        log.warning("prewarm failed (first request will be slower): %s", e)
+
+
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
     if BACKEND == "azure" and not AZURE_KEY:
         log.warning("AZURE_SPEECH_KEY is empty: every request will fall back to %s", FALLBACK or "nothing")
+    elif BACKEND == "azure":
+        threading.Thread(target=_prewarm, daemon=True).start()
     if SERVER == "werkzeug":
         # 0.0.0.0 so the ESP32 on the LAN can reach it.
         app.run(host="0.0.0.0", port=PORT, threaded=True)
@@ -469,6 +596,7 @@ if __name__ == "__main__":
         from waitress import serve
         # send_bytes at the head size so the first audio leaves without waiting
         # for waitress's 1800-byte default to fill.
-        log.info("waitress on 0.0.0.0:%d (backend %s)", PORT, BACKEND)
+        log.info("waitress on 0.0.0.0:%d (backend %s, send_bytes %d)", PORT, BACKEND, SEND_BYTES)
         serve(app, host="0.0.0.0", port=PORT, threads=8,
-              connection_limit=32, channel_timeout=120, send_bytes=1024)
+              connection_limit=32, channel_timeout=120, send_bytes=SEND_BYTES)
+

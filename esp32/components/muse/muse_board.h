@@ -124,6 +124,10 @@ typedef struct {
      * buttons needn't be polled. NULL: polled. */
     void (*wait_buttons)(int timeout_ms);
     esp_err_t (*read_power)(muse_power_t *out);
+    /* Optional: print the fuel gauge's raw registers to the log, for
+     * calibrating it against the cell that is actually fitted. NULL: the
+     * board has no gauge worth dumping. */
+    void (*power_debug)(void);
     /* Turns the board off; returns only on failure. */
     esp_err_t (*power_off)(void);
 } muse_board_t;
