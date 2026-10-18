@@ -74,3 +74,8 @@ void muse_imu_tap_diary_log(const char *why);
 /* One accel-threshold wake: counted in the same RTC record, so the knock path
  * is visible on battery too. */
 void muse_imu_tap_note_knock(int mg);
+
+/* A wake that actually changed the state (set_asleep(false, ...) that stuck).
+ * On battery this is the line between "nothing detected" and "detected but the
+ * screen stayed dark". */
+void muse_imu_tap_note_screen_wake(void);

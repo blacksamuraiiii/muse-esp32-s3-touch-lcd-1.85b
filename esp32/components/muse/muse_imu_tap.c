@@ -139,7 +139,7 @@ static unsigned s_rearms;
  * configured.
  */
 #define DIARY_EVENTS 16
-#define DIARY_MAGIC  0x54415045u   /* "TAPE": 字段一改就换，旧的 RTC 内容作废 */
+#define DIARY_MAGIC  0x54415046u   /* "TAPF": 字段一改就换，旧的 RTC 内容作废 */
 
 typedef struct {
     uint32_t magic;
@@ -157,6 +157,10 @@ typedef struct {
     uint32_t starts;       /* engine_start() calls */
     uint32_t knocks;       /* accel-threshold wakes (the engine-independent path) */
     uint32_t drifts;       /* CTRL1/CTRL2/CTRL7/CTRL8 comparisons that did not match */
+    uint32_t accel_reads;  /* accelerometer bursts the poll performed */
+    uint32_t accel_changes;/* ... whose six bytes differed from the previous read */
+    uint32_t accel_max_mg; /* biggest motion-above-gravity seen */
+    uint32_t screen_wakes; /* set_asleep(false) calls that actually changed the state */
     int32_t  last_tap_status;
     int32_t  last_int1;
     uint32_t n;            /* events recorded, ever */
@@ -177,6 +181,8 @@ typedef struct {
 
 RTC_NOINIT_ATTR static tap_diary_t s_diary;
 static bool s_diary_booted;
+static uint8_t s_acc_last[6];
+static bool s_acc_valid;
 
 static void diary_note(uint32_t tag, int32_t a, int32_t b)
 {
@@ -224,13 +230,16 @@ static void diary_dump(const char *why)
         return;
     }
     ESP_LOGW(TAG, "tap diary (%s): boots=%u wakes=%u gpio=%u timer=%u other=%u line_high=%u "
-             "taps=%u taps_awake=%u knocks=%u not_ready=%u repairs=%u rearm_fail=%u drifts=%u starts=%u",
+             "taps=%u taps_awake=%u knocks=%u not_ready=%u repairs=%u rearm_fail=%u drifts=%u "
+             "accel=%u/%u maxmg=%u screen_wakes=%u starts=%u",
              why, (unsigned)s_diary.boots, (unsigned)s_diary.wakes, (unsigned)s_diary.wake_gpio,
              (unsigned)s_diary.wake_timer, (unsigned)s_diary.wake_other,
              (unsigned)s_diary.line_high, (unsigned)s_diary.taps,
              (unsigned)s_diary.taps_awake, (unsigned)s_diary.knocks,
              (unsigned)s_diary.not_ready, (unsigned)s_diary.repairs,
              (unsigned)s_diary.rearm_fail, (unsigned)s_diary.drifts,
+             (unsigned)s_diary.accel_changes, (unsigned)s_diary.accel_reads,
+             (unsigned)s_diary.accel_max_mg, (unsigned)s_diary.screen_wakes,
              (unsigned)s_diary.starts);
     uint32_t n = s_diary.n < DIARY_EVENTS ? s_diary.n : DIARY_EVENTS;
     uint32_t first = s_diary.n - n;
@@ -533,6 +542,17 @@ int muse_imu_tap_bump_mg(void)
     if (err != ESP_OK) {
         return -1;
     }
+    /* Liveness: on battery the tap engine reports nothing at all, and the
+     * question this answers is whether the accelerometer is still taking
+     * samples (the six bytes move) or has gone quiet (they don't). A stuck
+     * reading would also explain the single knock of a whole session. */
+    if (s_acc_valid && memcmp(s_acc_last, raw, sizeof(raw)) != 0) {
+        s_diary.accel_changes++;
+    }
+    memcpy(s_acc_last, raw, sizeof(raw));
+    s_acc_valid = true;
+    s_diary.accel_reads++;
+
     int16_t ax = (int16_t)(raw[0] | (raw[1] << 8));
     int16_t ay = (int16_t)(raw[2] | (raw[3] << 8));
     int16_t az = (int16_t)(raw[4] | (raw[5] << 8));
@@ -546,7 +566,11 @@ int muse_imu_tap_bump_mg(void)
     }
     /* Linear around 1 g: the excess in mG, close enough for a log line. */
     int32_t over = sq - rest;
-    return (int)(over / (2 * ACC_LSB_PER_G) * 1000 / ACC_LSB_PER_G);
+    int bump = (int)(over / (2 * ACC_LSB_PER_G) * 1000 / ACC_LSB_PER_G);
+    if (bump > (int)s_diary.accel_max_mg) {
+        s_diary.accel_max_mg = (uint32_t)bump;
+    }
+    return bump;
 }
 
 /* ------------------------------------------------------- health and recovery */
@@ -699,6 +723,11 @@ void muse_imu_tap_note_wake(int int1)
         s_diary.line_high++;
     }
     diary_note(DIARY_WAKE, int1, (int32_t)cause);
+}
+
+void muse_imu_tap_note_screen_wake(void)
+{
+    s_diary.screen_wakes++;
 }
 
 void muse_imu_tap_note_knock(int mg)
