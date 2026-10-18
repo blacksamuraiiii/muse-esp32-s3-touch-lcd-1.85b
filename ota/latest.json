@@ -1,7 +1,7 @@
 {
   "version": "1.2",
   "url": "https://github.com/blacksamuraiiii/muse-esp32-s3-touch-lcd-1.85b/releases/download/v1.2/muse-gadget.bin",
-  "sha256": "74e7b231aa7cc40b53f08a9eedb021c301ebf258bd68a007f9fa330ef45daab0",
+  "sha256": "56e1002494f8cd4481fe07c056b53ebca55c3c984fd3e1c710d3abe80e170466",
   "size": 3018752,
-  "notes": "1.2：敲击电池失效修复、静态 IP 改 NVS、屏幕冻屏修复、毛毛 V7"
+  "notes": "1.2（敲击亮屏排查版）：触摸 INT 并入 light-sleep 唤醒线（电池下敲屏幕正面应能亮屏，待实测）；tap 计时器改 esp_timer 墙钟；引擎三条永久死路修复；RTC 诊断日记（>imu 可读）；FIFO 读取路线已实现但默认关闭。排查记录见 docs/20261019进展记录.md。注意：镜像内置作者的局域网 TTS 地址，请按 README 第 12 节改为自己的服务。"
 }
