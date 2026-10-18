@@ -58,6 +58,8 @@ static const char *TAG = "muse.imu";
 #define REG_ACC_X_L     0x35    /* 6 bytes: X, Y, Z, little endian */
 #define REG_TAP_STATUS  0x59    /* which axis / single or double, informational */
 #define REG_WHO_AM_I    0x00
+#define REG_RESET       0x60    /* write RESET_CMD to soft-reset the whole part */
+#define RESET_CMD       0xB0
 
 /* 2 g full scale: 16384 LSB per g. */
 #define ACC_LSB_PER_G   16384
@@ -250,6 +252,18 @@ static esp_err_t engine_start(bool quiet)
         ESP_LOGW(TAG, "no IMU on the bus: %s", esp_err_to_name(err));
         goto out;
     }
+
+    /* Reset the part before configuring it (datasheet Rev A, register 0x60:
+     * write 0xB0). Power-on register state is not guaranteed, and a reset
+     * clears whatever a previous engine or a half-written frame left behind.
+     * 15 ms is the datasheet's figure; 20 ms leaves margin. WHO_AM_I does not
+     * change across the reset, so there is nothing to re-check. */
+    err = write_reg(REG_RESET, RESET_CMD);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "IMU reset failed: %s", esp_err_to_name(err));
+        goto out;
+    }
+    vTaskDelay(pdMS_TO_TICKS(20));
 
     /* Auto-increment for burst writes, little-endian, INT1 push-pull enabled,
      * and the CTRL9 handshake kept on STATUSINT so configuring never pulls INT1. */
