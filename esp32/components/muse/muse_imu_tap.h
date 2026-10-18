@@ -62,3 +62,11 @@ esp_err_t muse_imu_tap_diag(muse_imu_tap_diag_t *out);
 /* The same dump as one WARN line, prefixed with `why`: the line to paste back
  * when a tap stops waking the screen. */
 void muse_imu_tap_log_diag(const char *why);
+
+/* One return from the input task's sleep: counts the wake, its cause
+ * (GPIO/timer/other) and the IMU line's level at that moment. */
+void muse_imu_tap_note_wake(int int1);
+
+/* The RTC-resident record of what taps and repairs happened - the only
+ * evidence that survives a battery session, where no cable is attached. */
+void muse_imu_tap_diary_log(const char *why);

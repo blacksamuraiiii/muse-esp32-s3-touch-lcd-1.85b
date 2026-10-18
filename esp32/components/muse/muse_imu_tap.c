@@ -37,7 +37,10 @@
 
 #include <string.h>
 
+#include "esp_attr.h"
 #include "esp_log.h"
+#include "esp_sleep.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
@@ -116,6 +119,115 @@ static uint8_t s_exp_cal[8];
 static TickType_t s_last_recover;
 static unsigned s_recoveries;
 static unsigned s_rearms;
+
+/* ------------------------------------------------------------ the tap diary
+ *
+ * Every failure of tap-to-wake reported so far happened on battery, and a
+ * battery run is exactly the one a serial cable cannot take part in: the USB
+ * host is what keeps the CPU out of light sleep, and the console dies with it.
+ * The diary is the way out: a small record that lives in RTC memory, keeps its
+ * contents across a reset as long as the battery stays in, and is printed by
+ * the next boot and by ">imu", where a cable is attached again. It answers, in
+ * order: did the task ever sleep, did the wake come from the IMU line or from a
+ * timer, what did the engine say when it did, and was the engine even
+ * configured.
+ */
+#define DIARY_EVENTS 16
+#define DIARY_MAGIC  0x54415044u   /* "TAPD" */
+
+typedef struct {
+    uint32_t magic;
+    uint32_t boots;
+    uint32_t wakes;        /* wait_buttons() returns */
+    uint32_t wake_gpio;    /* ... ended by a GPIO wake */
+    uint32_t wake_timer;   /* ... ended by a timer wake */
+    uint32_t wake_other;   /* ... anything else (a button line, a timeout) */
+    uint32_t line_high;    /* ... with the IMU's INT1 up at that moment */
+    uint32_t taps;         /* tap bits the poll read while asleep */
+    uint32_t taps_awake;   /* tap bits read while the screen was already on */
+    uint32_t not_ready;    /* polls that found the engine not configured */
+    uint32_t repairs;      /* re-inits the watchdog did */
+    uint32_t rearm_fail;   /* re-arms that failed */
+    uint32_t starts;       /* engine_start() calls */
+    int32_t  last_tap_status;
+    int32_t  last_int1;
+    uint32_t n;            /* events recorded, ever */
+    struct { uint32_t tag, ms; int32_t a, b; } ev[DIARY_EVENTS];
+} tap_diary_t;
+
+#define DIARY_ENGINE_OK   1
+#define DIARY_ENGINE_ERR  2
+#define DIARY_REPAIR      3
+#define DIARY_REARM       4
+#define DIARY_REARM_ERR   5
+#define DIARY_WAKE        6
+#define DIARY_TAP         7
+#define DIARY_TAP_AWAKE   8
+#define DIARY_NOT_READY   9
+
+RTC_NOINIT_ATTR static tap_diary_t s_diary;
+static bool s_diary_booted;
+
+static void diary_note(uint32_t tag, int32_t a, int32_t b)
+{
+    s_diary.ev[s_diary.n % DIARY_EVENTS].tag = tag;
+    s_diary.ev[s_diary.n % DIARY_EVENTS].ms = (uint32_t)(esp_timer_get_time() / 1000);
+    s_diary.ev[s_diary.n % DIARY_EVENTS].a = a;
+    s_diary.ev[s_diary.n % DIARY_EVENTS].b = b;
+    s_diary.n++;
+}
+
+static const char *diary_tag_name(uint32_t tag)
+{
+    switch (tag) {
+    case DIARY_ENGINE_OK:  return "engine-on";
+    case DIARY_ENGINE_ERR: return "engine-ERR";
+    case DIARY_REPAIR:     return "repaired";
+    case DIARY_REARM:      return "rearm";
+    case DIARY_REARM_ERR:  return "rearm-ERR";
+    case DIARY_WAKE:       return "wake";
+    case DIARY_TAP:        return "tap";
+    case DIARY_TAP_AWAKE:  return "tap-awake";
+    case DIARY_NOT_READY:  return "not-ready";
+    default:               return "?";
+    }
+}
+
+/* Called once per boot, before the engine is brought up. */
+static void diary_boot(void)
+{
+    if (s_diary.magic != DIARY_MAGIC) {
+        memset(&s_diary, 0, sizeof(s_diary));
+        s_diary.magic = DIARY_MAGIC;
+        s_diary.boots = 1;
+        return;
+    }
+    s_diary.boots++;
+}
+
+static void diary_dump(const char *why)
+{
+    if (s_diary.magic != DIARY_MAGIC) {
+        ESP_LOGW(TAG, "tap diary (%s): empty", why);
+        return;
+    }
+    ESP_LOGW(TAG, "tap diary (%s): boots=%u wakes=%u gpio=%u timer=%u other=%u line_high=%u "
+             "taps=%u taps_awake=%u not_ready=%u repairs=%u rearm_fail=%u starts=%u",
+             why, (unsigned)s_diary.boots, (unsigned)s_diary.wakes, (unsigned)s_diary.wake_gpio,
+             (unsigned)s_diary.wake_timer, (unsigned)s_diary.wake_other,
+             (unsigned)s_diary.line_high, (unsigned)s_diary.taps,
+             (unsigned)s_diary.taps_awake, (unsigned)s_diary.not_ready,
+             (unsigned)s_diary.repairs, (unsigned)s_diary.rearm_fail,
+             (unsigned)s_diary.starts);
+    uint32_t n = s_diary.n < DIARY_EVENTS ? s_diary.n : DIARY_EVENTS;
+    uint32_t first = s_diary.n - n;
+    for (uint32_t i = 0; i < n; i++) {
+        uint32_t k = (first + i) % DIARY_EVENTS;
+        ESP_LOGW(TAG, "  diary[%lu] t=%lums %s a=%ld b=%ld", (unsigned long)(first + i),
+                 (unsigned long)s_diary.ev[k].ms, diary_tag_name(s_diary.ev[k].tag),
+                 (long)s_diary.ev[k].a, (long)s_diary.ev[k].b);
+    }
+}
 
 /* ---------------------------------------------------------------- bus access */
 
@@ -242,6 +354,7 @@ static esp_err_t engine_start(bool quiet)
     const bool was_ready = s_ready;
     esp_err_t err;
     s_ready = false;
+    s_diary.starts++;
     uint8_t who = 0;
     err = read_reg(REG_WHO_AM_I, &who);
     if (err == ESP_OK && who != 0x05) {
@@ -322,6 +435,7 @@ static esp_err_t engine_start(bool quiet)
     s_exp_ctrl8 = CTRL8_HANDSHAKE_STATUSINT | CTRL8_TAP_TO_INT1 | CTRL8_TAP_EN;
     s_exp_ctrl7 = CTRL7_AEN | CTRL7_DRDY_DIS;
     s_ready = true;
+    diary_note(DIARY_ENGINE_OK, (int32_t)s_exp_ctrl7, (int32_t)s_exp_ctrl8);
     if (quiet) {
         ESP_LOGD(TAG, "tap engine restarted (#%u)", s_rearms);
     } else {
@@ -332,6 +446,7 @@ static esp_err_t engine_start(bool quiet)
 
 out:
     s_ready = was_ready;
+    diary_note(DIARY_ENGINE_ERR, (int32_t)err, (int32_t)was_ready);
     return err;
 }
 
@@ -348,6 +463,13 @@ esp_err_t muse_imu_tap_init(i2c_master_dev_handle_t dev)
         }
     }
 #endif
+    if (!s_diary_booted) {
+        s_diary_booted = true;
+        diary_boot();
+        /* The previous session left its record here, and this is the first
+         * moment a cable is likely to be attached again. */
+        diary_dump("boot");
+    }
     s_dev = dev;
     return engine_start(false);
 }
@@ -359,15 +481,20 @@ bool muse_imu_tap_ready(void)
 
 bool muse_imu_tap_tapped(void)
 {
-    if (!s_ready) {
-        return false;
-    }
+    /* Read even when the engine is not known to be configured: the read is what
+     * drops INT1, and a chip that is still running after a half-failed init
+     * would otherwise hold the line high for good. */
     uint8_t st = 0;
     if (read_reg(REG_STATUS1, &st) != ESP_OK) {
         return false;
     }
     /* Reading STATUS1 also clears the sticky bit and drops the INT line. */
-    return (st & 0x02) != 0;
+    bool tapped = (st & 0x02) != 0;
+    s_diary.last_tap_status = st;
+    if (tapped) {
+        diary_note(DIARY_TAP, (int32_t)st, (int32_t)s_ready);
+    }
+    return tapped;
 }
 
 /* Motion above gravity, in mG (milli-g), from one accelerometer read. Used by
@@ -468,6 +595,8 @@ static bool recover(const char *why)
     s_last_recover = now;
     muse_imu_tap_log_diag(why);
     s_recoveries++;
+    s_diary.repairs++;
+    diary_note(DIARY_REPAIR, (int32_t)s_recoveries, 0);
     if (muse_imu_tap_init(s_dev) != ESP_OK) {
         ESP_LOGW(TAG, "tap re-init failed (#%u)", s_recoveries);
         return false;
@@ -479,7 +608,12 @@ static bool recover(const char *why)
 bool muse_imu_tap_check(bool full)
 {
     if (!s_ready) {
-        return false;
+        /* Not "nothing to check": a boot that failed to configure the engine
+         * leaves this false for the rest of the session, which used to mean no
+         * watchdog and no tap-to-wake until the next reboot. Repair instead. */
+        s_diary.not_ready++;
+        diary_note(DIARY_NOT_READY, 0, 0);
+        return recover("engine not configured");
     }
     uint8_t c7 = 0, c8 = 0;
     if (read_reg(REG_CTRL7, &c7) != ESP_OK || read_reg(REG_CTRL8, &c8) != ESP_OK) {
@@ -513,6 +647,37 @@ void muse_imu_tap_rearm(void)
     s_rearms++;
     s_last_recover = xTaskGetTickCount();
     if (engine_start(true) != ESP_OK) {
+        s_diary.rearm_fail++;
+        diary_note(DIARY_REARM_ERR, (int32_t)s_rearms, 0);
         ESP_LOGW(TAG, "tap engine restart failed (#%u)", s_rearms);
+    } else {
+        diary_note(DIARY_REARM, (int32_t)s_rearms, 0);
     }
+}
+
+/* Records one return from wait_buttons(): how long the task was out, what the
+ * FreeRTOS tick made of it, and what the IMU's line was doing when it came
+ * back. The tick figure next to the wall-clock one settles whether light sleep
+ * moves the tick at all on this chip. */
+void muse_imu_tap_note_wake(int int1)
+{
+    s_diary.wakes++;
+    s_diary.last_int1 = int1;
+    esp_sleep_wakeup_cause_t cause = esp_sleep_get_wakeup_cause();
+    if (cause == ESP_SLEEP_WAKEUP_GPIO) {
+        s_diary.wake_gpio++;
+    } else if (cause == ESP_SLEEP_WAKEUP_TIMER) {
+        s_diary.wake_timer++;
+    } else {
+        s_diary.wake_other++;
+    }
+    if (int1) {
+        s_diary.line_high++;
+    }
+    diary_note(DIARY_WAKE, int1, (int32_t)cause);
+}
+
+void muse_imu_tap_diary_log(const char *why)
+{
+    diary_dump(why);
 }

@@ -1,11 +1,26 @@
 /*
- * Custom avatar: MaoMao (Buttercup-style), v2.
+ * Custom avatar: MaoMao (Buttercup-style), v8.
  *
  * 64x64 procedural pixel-art renderer for the muse-gadget-sdk avatar API.
  * Redesigned for the 360x360 round LCD (ESP32-S3-Touch-LCD-1.85B): the
- * character fills the frame, with Buttercup's signature flip-out bob,
- * the curling cowlick, huge green eyes with bold lashes, a confident
- * smirk, and the green dress with its black stripe.
+ * character fills the frame, huge green eyes, a confident smirk, and the
+ * green dress with its black stripe.
+ *
+ * The hair is one mass: no outline stroke anywhere (C_HAIRR is gone), so the
+ * dome, both flips and the cheeks' locks merge into the background they sit on
+ * and only the edge against skin is visible - the reference reads the same way.
+ * Nothing sits above the eyes either: no brow, no lash stroke, just the eye's
+ * own 1px ring (MaoMao has no brows; the band above the eye in the reference is
+ * the fringe).
+ *
+ * v8 changes one thing only - the hair. It is no longer built from ellipses,
+ * triangles and a per-row fringe loop, but is a 64x64 dot matrix traced off
+ * the reference photo (virtual-avatar/maomao/毛毛头像.png). The photo's hair
+ * is already flat black shapes on a light field, so it survives the downsample
+ * to one cell per 22.7 px with no interpretation: the dome, the tall bare-skin
+ * V up the forehead, the outward flip and the long crescent lock that hangs
+ * past the eye are all read off the photo, not re-drawn. Face, eyes, brows,
+ * blush, mouth, dress and the per-state animation are v7's, untouched.
  *
  * Per-state animation: boot fade, idle bob + blink, listening lean-in,
  * thinking glance, speaking mouth, error wobble, off dim, pet "happy"
@@ -34,7 +49,6 @@ enum {
     C_SKIN,     /* warm peach (won't blow out white on the LCD) */
     C_SKIND,    /* skin shadow */
     C_HAIR,     /* black hair */
-    C_HAIRR,    /* hair rim: the only thing separating the head from the black bg */
     C_EYE,      /* eye white */
     C_IRIS,     /* green iris */
     C_IRISD,    /* iris shade */
@@ -56,7 +70,6 @@ static const uint32_t PAL_RGB[C_COUNT] = {
     [C_SKIN]   = 0xffc890,
     [C_SKIND]  = 0xe0a068,
     [C_HAIR]   = 0x141414,
-    [C_HAIRR]  = 0x2a2a36,
     [C_EYE]    = 0xffffff,
     [C_IRIS]   = 0x3fae5a,
     [C_IRISD]  = 0x2b7a40,
@@ -158,50 +171,64 @@ static void ellipse_o(int cx, int cy, int rx, int ry, uint8_t fill, uint8_t out)
 }
 
 /*
- * Turns the outer boundary of `body` pixels into `edge` pixels. The reference
- * sheet separates the hair from a pale background by contrast alone, which does
- * not work on a black screen: without this the spines and the fringe are
- * invisible and only the face seems to float.
+ * v8 hair: a dot matrix, one bit per cell, traced off the reference photo.
+ *
+ * Row r of the table is canvas row r when the head sits on its nominal line
+ * (cy == 28), so the whole block simply rides the idle bob by HAIR_ROW0's
+ * offset. Bit (63 - x) belongs to column x; reading the table left to right
+ * is reading the head left to right.
+ *
+ * The matrix was produced by virtual-avatar/tools/hair_trace.py: the photo's
+ * black hair -> the eye/mouth/jaw linework removed -> an opening wide enough
+ * to erase the bold outlines -> area average per cell -> 0.45 threshold ->
+ * mirror the left half onto the right (the photo is drawn slightly rotated,
+ * the two locks differ by up to 3 cells).
  */
-static void rim(uint8_t body, uint8_t edge)
-{
-    for (int y = 0; y < H; y++) {
-        for (int x = 0; x < W; x++) {
-            if (s_fb[y * W + x] != body)
-                continue;
-            if ((x > 0 && s_fb[y * W + x - 1] == C_BG) ||
-                (x < W - 1 && s_fb[y * W + x + 1] == C_BG) ||
-                (y > 0 && s_fb[(y - 1) * W + x] == C_BG) ||
-                (y < H - 1 && s_fb[(y + 1) * W + x] == C_BG))
-                s_fb[y * W + x] = edge;
-        }
-    }
-}
-
-/* Down-pointing triangle (for bangs / hair flips): apex at (cx, y_top). */
-static void tri_down(int cx, int y_top, int half_w, int h, uint8_t c)
-{
-    for (int i = 0; i < h; i++) {
-        int w = half_w * (h - i) / h;
-        for (int x = cx - w; x <= cx + w; x++)
-            px(x, y_top + i, c);
-    }
-}
+#define HAIR_ROW0 28
+static const uint64_t HAIR_BITS[64] = {
+    0x0000000000000000ULL, 0x0000000000000000ULL, 0x0000000000000000ULL, 0x0000000000000000ULL,
+    0x0000000000000000ULL, 0x0000000ff8000000ULL, 0x000000ffff800000ULL, 0x000003ffffe00000ULL,
+    0x00000ffffff80000ULL, 0x00003ffffffe0000ULL, 0x00007fff7fff0000ULL, 0x0000fffe3fff8000ULL,
+    0x0001fffc1fffc000ULL, 0x0003fffc1fffe000ULL, 0x0007fff80ffff000ULL, 0x0007fff007fff000ULL,
+    0x000ffff007fff800ULL, 0x040f80000000f810ULL, 0x071e000000003c70ULL, 0x07f8000000000ff0ULL,
+    0x07f00000000007f0ULL, 0x07f00000000007f0ULL, 0x07e00000000003f0ULL, 0x07e00000000003f0ULL,
+    0x03e00000000003e0ULL, 0x03c00000000001e0ULL, 0x03c00000000001e0ULL, 0x03c00000000001e0ULL,
+    0x01c00000000001c0ULL, 0x01c00000000001c0ULL, 0x01c00000000001c0ULL, 0x00c0000000000180ULL,
+    0x00c0000000000180ULL, 0x0060000000000300ULL, 0x0060000000000300ULL, 0x0020000000000200ULL,
+    0x0030000000000600ULL, 0x0030000000000600ULL, 0x0018000000000c00ULL, 0x0018000000000c00ULL,
+    0x000c000000001800ULL, 0x0000000000000000ULL, 0x0000000000000000ULL, 0x0000000000000000ULL,
+    0x0000000000000000ULL, 0x0000000000000000ULL, 0x0000000000000000ULL, 0x0000000000000000ULL,
+    0x0000000000000000ULL, 0x0000000000000000ULL, 0x0000000000000000ULL, 0x0000000000000000ULL,
+    0x0000000000000000ULL, 0x0000000000000000ULL, 0x0000000000000000ULL, 0x0000000000000000ULL,
+    0x0000000000000000ULL, 0x0000000000000000ULL, 0x0000000000000000ULL, 0x0000000000000000ULL,
+    0x0000000000000000ULL, 0x0000000000000000ULL, 0x0000000000000000ULL, 0x0000000000000000ULL,
+};
 
 /*
- * Horizontal spine: thick at the root, tapering to a point, sweeping very
- * slightly upward - the lateral spine of a swimming crab. `dir` is -1 for the
- * left side of the head, +1 for the right. Replaces v2's jaw-level tri_down
- * flips, which read as sideburns rather than as spines.
+ * Half-width of the bare-skin V up the forehead, for rows cy-18 .. cy-12.
+ * The photo's hairline rises in a V nearly to the crown, well above the face
+ * ellipse's top row (cy-16), so those first rows would punch background holes
+ * through the crown if the V were left as a hole in the matrix. Painting the
+ * V in skin instead keeps the peak and hides the face outline underneath it.
  */
-static void spine(int x_root, int y_root, int len, int h_root, int dir, int rise)
+static const uint8_t WEDGE_HALF[7] = { 0, 1, 2, 2, 3, 4, 4 };
+
+static void draw_hair(int cy)
 {
-    for (int i = 0; i <= len; i++) {
-        int h = h_root * (len - i) / len;
-        int x = x_root + dir * i;
-        int y = y_root - i * rise / 10;   /* rise in tenths of a cell: 10 = 45 deg */
-        for (int k = -h; k <= h; k++)
-            px(x, y + k, C_HAIR);
+    int off = cy - HAIR_ROW0;
+    for (int r = 0; r < H; r++) {
+        uint64_t bits = HAIR_BITS[r];
+        if (!bits)
+            continue;
+        for (int x = 0; x < W; x++)
+            if (bits & (1ULL << (63 - x)))
+                px(x, r + off, C_HAIR);
+    }
+    /* The forehead V: skin, not hair, and no outline on either side. */
+    for (int i = 0; i < 7; i++) {
+        int y = cy - 18 + i;
+        for (int dx = -WEDGE_HALF[i]; dx <= WEDGE_HALF[i]; dx++)
+            px(32 + dx, y, C_SKIN);
     }
 }
 
@@ -277,13 +304,11 @@ static void draw_eye(int cx, int cy, float open, int look_dx, int look_dy)
         return;
     }
     int rx = 8, ry = (int)(10 * open + 0.5f);
-    /* Sclera with outline. */
+    /* Sclera with outline, and nothing else above it: v8 drops the lash stroke
+     * that used to ride one row above the ellipse. At three screen pixels a cell
+     * that stroke was indistinguishable from a brow, and MaoMao has none - in
+     * the reference the band over the eye is the fringe, not a line. */
     ellipse_o(cx, cy, rx, ry, C_EYE, C_OUT);
-    /* Bold upper lash line, 1px: 2px plus a brow above it read as a black band. */
-    for (int x = -9; x <= 9; x++) {
-        int y = cy - ry - 1 + (x * x) / 34;
-        px(cx + x, y, C_OUT);
-    }
     /* Iris (green), pupil, highlights — shift with look direction. */
     int ix = cx + look_dx, iy = cy + look_dy;
     int irx = (int)(rx * 0.74f), iry = (int)(ry * 0.8f);
@@ -419,66 +444,51 @@ void muse_pixel_render(const muse_pose_t *p)
     fill_rect(16, shoulder + 5, 48, shoulder + 8, C_STRIPE);
     fill_ellipse(cx, shoulder, 16, 6, C_DRESS);
 
-    /* -- Back hair mass -- */
-    fill_ellipse(cx, cy - 8, 22, 15, C_HAIR);
-    fill_ellipse(cx, cy + 8, 19, 7, C_HAIR);
-    /* v7: one short spine per side, angled up and out from above the temple. */
-    spine(cx - 16, cy - 4, 11, 3, -1, 9);
-    spine(cx + 16, cy - 4, 11, 3, +1, 9);
-
-    /* v7: no neck. The reference has the chin sitting straight on the dress,
-     * and the hair mass above now stops at the jaw, so nothing covers the
-     * collar. */
-
     /* -- Face (fills the frame) -- */
     ellipse_o(cx, cy, 18, 16, C_SKIN, C_OUT);
     /* thin shading crescent at the jaw edge */
     fill_ellipse(cx + 9, cy + 9, 7, 5, C_SKIND);
     fill_ellipse(cx + 6, cy + 7, 8, 6, C_SKIN);
 
-    /* -- Princess-cut fringe: one flat band, lower edge dead level --
-     * v2's four tri_down bangs plus the centre dip printed a zig-zag hairline;
-     * a princess cut wants a single horizontal cut, so the band is filled row by
-     * row inside the face ellipse and stops on the same row everywhere. */
-    for (int y = cy - 16; y <= cy - 12; y++) {
-        int gap = y - (cy - 15);          /* 0 at the top row, 3 at the last row */
-        for (int x = cx - 18; x <= cx + 18; x++) {
-            int dx = x - cx, dy = y - cy;
-            if (dx * dx * 256 + dy * dy * 324 > 324 * 256)
-                continue;
-            if (gap > 0 && (dx < 0 ? -dx : dx) <= gap)
-                continue;                 /* bare skin wedge up the centre */
-            px(x, y, C_HAIR);
-        }
-    }
+    /* -- Hair: the v8 dot matrix --
+     * Drawn after the face, not before it: the matrix carries only the hair
+     * that is visible in the photo, so the fringe, the temple edges and the
+     * two long locks land on top of the skin, and nothing that lives behind
+     * the face gets painted twice. v7's back-mass ellipses, lateral spines and
+     * per-row fringe loop are all gone - the matrix replaces them.
+     *
+     * No neck either: the photo has the chin sitting straight on the dress and
+     * the matrix stops at the jaw, so nothing covers the collar. */
+    draw_hair(cy);
 
-    /* -- The cowlick is gone in v7: a princess cut has a clean crown. -- */
-
-    /* -- Eyes (the huge signature ones) -- */
-    int ey = cy + 3;
+    /* -- Eyes (the huge signature ones) --
+     * v8: the eyes sit on cy, not cy+3. In the reference the fringe's cut and the
+     * top of the eye touch (the fringe hangs over the eye's upper edge); at cy+3
+     * there were four rows of bare forehead and the face read long. On cy the
+     * eye's outline top is cy-11, i.e. the row right under the fringe's cy-12, so
+     * hair and eye meet - the reference's stack. */
+    int ey = cy;
     draw_eye(cx - 11, ey, eye_open, look_dx, look_dy);
     draw_eye(cx + 11, ey, eye_open, look_dx, look_dy);
 
-    /* -- Brows: one cell, inner end a row lower (the confident frown).
-     * v2 had no brows at all - the 2px lash line above each eye stood in for
-     * them. Now that the lash is 1px, the brows carry the expression. -- */
-    for (int side = -1; side <= 1; side += 2) {
-        int bx = cx + side * 11;
-        for (int i = -4; i <= 4; i++) {
-            int inner = i * side > 0;
-            int y = cy - 11 + (inner && i * i >= 4 ? 1 : 0);
-            px(bx + i, y, C_OUT);
-        }
-    }
+    /* v8: no brows. The reference has none - the fringe covers that band - and a
+     * 1px brow at cy-11 read as a second line of hair. The expression rides on
+     * the eye's own outline and the mouth. */
 
-    /* -- Blush -- */
-    fill_ellipse(cx - 16, ey + 8, 3, 2, C_BLUSH);
-    fill_ellipse(cx + 16, ey + 8, 3, 2, C_BLUSH);
+    /* -- Blush -- keyed to the face, not to the eye: v8 moved the eyes up two
+     * rows, and a blush that follows ey landed on the eyes' lower corners. */
+    fill_ellipse(cx - 16, cy + 11, 3, 2, C_BLUSH);
+    fill_ellipse(cx + 16, cy + 11, 3, 2, C_BLUSH);
 
     /* -- Mouth -- */
     draw_mouth(cx, cy + 12, mode, level, happy);
 
-    rim(C_HAIR, C_HAIRR);
+    /* v8: no hair rim. v7 traced the hair's outer boundary in C_HAIRR so the
+     * head would not vanish on a black screen, but that stroke drew the hair as
+     * a separate outlined shape - the dome read as one piece, each flip as
+     * another, and the notch between them as a line. The hair is one mass now:
+     * where it meets the background it simply merges with it, and only the edge
+     * against skin is visible, exactly as the reference reads. */
 
     /* -- State glow ring (subtle) -- */
     if (mode == MUSE_MODE_LISTENING || mode == MUSE_MODE_THINKING ||
