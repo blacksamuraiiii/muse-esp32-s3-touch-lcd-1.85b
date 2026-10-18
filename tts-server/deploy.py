@@ -1,7 +1,12 @@
 #!/usr/bin/env python3
 """Deploy tts-server to the LAN host (10.168.2.7) and verify it there.
 
-    MUSE_HOST_PASSWORD='<root password>' python3 deploy.py [host]
+    ~/.venv/bin/python3 deploy.py [host]
+
+Auth: an SSH key is preferred -- ~/.ssh/muse-16827_rsa (override with
+MUSE_SSH_KEY). The root password still works as a fallback:
+
+    MUSE_HOST_PASSWORD='<root password>' ~/.venv/bin/python3 deploy.py [host]
 
 Pushes tts_server.py / requirements.txt / Dockerfile to /opt/muse-tts/, writes
 the Azure credentials there as .env (mode 600, never into the image or the repo),
@@ -22,8 +27,9 @@ import paramiko
 HOST = sys.argv[1] if len(sys.argv) > 1 else "10.168.2.7"
 USER = os.environ.get("MUSE_HOST_USER", "root")
 PASSWORD = os.environ.get("MUSE_HOST_PASSWORD", "")
+KEY = os.environ.get("MUSE_SSH_KEY", os.path.expanduser("~/.ssh/muse-16827_rsa"))
 REMOTE_DIR = "/opt/muse-tts"
-IMAGE = os.environ.get("TTS_IMAGE_TAG", "muse-tts:1.3")
+IMAGE = os.environ.get("TTS_IMAGE_TAG", "muse-tts:1.5")
 CONTAINER = "muse-tts"
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -33,7 +39,11 @@ UPLOADS = ["tts_server.py", "requirements.txt", "Dockerfile"]
 def env_file_text():
     """The .env to place on the host: only what the service needs."""
     wanted = ("AZURE_SPEECH_KEY", "AZURE_SPEECH_REGION", "TTS_VOICE",
-              "TTS_FORCE_VOICE", "AZURE_SPEECH_STYLE")
+              "TTS_FORCE_VOICE", "AZURE_SPEECH_STYLE", "AZURE_SPEECH_FORMAT",
+              # latency knobs and the BADPACKET regression hook
+              "TTS_STREAM_HEAD", "TTS_SEND_BYTES", "TTS_AZURE_POOL",
+              "TTS_TEST_HOOKS", "TTS_FORCE_BAD")
+
     lines = []
     with open(os.path.join(HERE, ".env")) as f:
         for line in f:
@@ -72,12 +82,16 @@ def run(ssh, cmd, timeout=600, quiet=False):
 
 
 def main():
-    if not PASSWORD:
-        sys.exit("set MUSE_HOST_PASSWORD first (root password of %s)" % HOST)
+    if not os.path.exists(KEY) and not PASSWORD:
+        sys.exit("no key at %s and MUSE_HOST_PASSWORD is empty (%s)" % (KEY, HOST))
 
     ssh = paramiko.SSHClient()
     ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-    ssh.connect(HOST, username=USER, password=PASSWORD, timeout=15, banner_timeout=15)
+    creds: dict = {"key_filename": KEY} if os.path.exists(KEY) else {}
+    if PASSWORD:
+        creds["password"] = PASSWORD       # used only if the key is refused
+    ssh.connect(HOST, username=USER, timeout=15, banner_timeout=15,
+                look_for_keys=False, allow_agent=False, **creds)
     sftp = ssh.open_sftp()
 
     print("=== upload to %s:%s" % (HOST, REMOTE_DIR))
