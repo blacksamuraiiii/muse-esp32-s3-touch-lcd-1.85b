@@ -1,7 +1,7 @@
 {
   "version": "1.3",
   "url": "https://github.com/blacksamuraiiii/muse-esp32-s3-touch-lcd-1.85b/releases/download/v1.3/muse-gadget.bin",
-  "sha256": "383182d8a107dc90dc16b9efcc84fe7880b8c35b7a4a7677ec66b8baa779fcc5",
+  "sha256": "6a9a601f2f1ff20406ce5a4773603fdbaf70db45ab60a2ed0fa3a22305e10259",
   "size": 3084288,
-  "notes": "Muse 1.85B 1.3：电池态敲击/按键唤醒（T0–T4 真机通过）、I2C 总线自愈、电量计改用官方 espressif/bq27220 写回本板 500mAh 模型（SoC 以电量计为准、电压仅作兜底）、界面图标对齐 BOOT/PWR 按键、音量图标移到表盘 180°"
+  "notes": "Muse 1.85B 1.3：电池态敲击/按键唤醒（T0–T4 真机通过）、I2C 总线自愈、电量计改用官方 espressif/bq27220 写回本板 500mAh 模型（SoC 以电量计为准、电压仅作兜底，读数异常不显示 0%）、界面图标对齐 BOOT/PWR 按键、音量图标移到表盘 180°"
 }
