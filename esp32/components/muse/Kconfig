@@ -291,4 +291,16 @@ menu "Muse"
             (about 220 KB), which still covers a push-to-talk turn. Board
             overlays with 2 MB of PSRAM turn it on.
 
+    config MUSE_TOUCH_IRQ_PULSE_WIDEN
+        bool "Widen the CST816S IRQ pulse (register 0xED = 0x14)"
+        depends on MUSE_BOARD_WAVESHARE_S3_TOUCH_LCD_185B
+        default y
+        help
+            A tap on the glass makes a low pulse shorter than the controller's
+            low-power wake sampler can catch, which is why a held finger woke
+            this board but a tap did not. Writing 0x14 to the CST816S's
+            IrqPluseWidth stretches the pulse so a tap wakes the chip too. The
+            register is not in the public CST816S tables, so this switch exists
+            to turn the write off if a future part disagrees.
+
 endmenu

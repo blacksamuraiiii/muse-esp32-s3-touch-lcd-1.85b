@@ -75,6 +75,7 @@
 #include "muse_imu_tap.h"
 #include "muse_lcd_bands.h"
 #include "muse_mem.h"
+#include "muse_ui.h"
 
 static const char *TAG = "board";
 
@@ -514,6 +515,7 @@ static esp_lcd_panel_handle_t s_panel;
 static esp_lcd_panel_io_handle_t s_tp_io;   /* CST816S register access */
 static esp_lcd_panel_io_handle_t s_panel_io; /* kept for SLPIN/SLPOUT */
 static esp_lcd_touch_handle_t s_tp;         /* read to release its INT */
+static lv_indev_t *s_touch_indev;           /* LVGL's input device for the face */
 static muse_gpio_button_t s_talk;
 
 /* The 500 mAh single-cell LiPo this board ships with, written as the CEDV model
@@ -674,7 +676,10 @@ static void touch_report_config(void)
      * wakes the board and a tap does not. IrqPluseWidth (0xED, per the CST816S
      * register manual) stretches that pulse; the unit is not documented in the
      * tables available here, so this is a middle setting, read back so the boot
-     * log carries what the chip ended up with. Held touches behave as before. */
+     * log carries what the chip ended up with. Held touches behave as before.
+     * The register is not in the public tables, so it is behind a Kconfig
+     * switch: it is on because a tap did not wake the board without it. */
+#if CONFIG_MUSE_TOUCH_IRQ_PULSE_WIDEN
     uint8_t width = 0;
     const uint8_t widen = 0x14;
     if (esp_lcd_panel_io_rx_param(s_tp_io, 0xED, &width, 1) == ESP_OK) {
@@ -682,6 +687,21 @@ static void touch_report_config(void)
         uint8_t after = 0;
         (void)esp_lcd_panel_io_rx_param(s_tp_io, 0xED, &after, 1);
         ESP_LOGI(TAG, "touch: IrqPluseWidth 0x%02X -> 0x%02X (%s)", width, after,
+                 esp_err_to_name(err));
+    }
+#endif
+    /* Auto-sleep lets the controller stop sampling between touches, and the
+     * first touch after a long pause then only wakes it without reporting
+     * coordinates. The INT line is one of this board's light-sleep wake lines,
+     * so the controller has to stay responsive: turn auto-sleep off and log
+     * what the chip says. */
+    uint8_t autosleep = 0;
+    if (esp_lcd_panel_io_rx_param(s_tp_io, 0xFE, &autosleep, 1) == ESP_OK && autosleep != 0x01) {
+        const uint8_t off = 0x01;
+        esp_err_t err = esp_lcd_panel_io_tx_param(s_tp_io, 0xFE, &off, 1);
+        uint8_t after = 0;
+        (void)esp_lcd_panel_io_rx_param(s_tp_io, 0xFE, &after, 1);
+        ESP_LOGI(TAG, "touch: DisAutoSleep 0x%02X -> 0x%02X (%s)", autosleep, after,
                  esp_err_to_name(err));
     }
 }
@@ -761,7 +781,13 @@ static lv_display_t *display_start(lv_indev_t **touch)
     }
     uint8_t version[4] = { 0 };
     const int probe_cmd = ((ST77916_REG_VERSION & 0xff) << 8) | (ST77916_OPCODE_READ_CMD << 24);
-    const esp_err_t probe_err = esp_lcd_panel_io_rx_param(io, probe_cmd, version, sizeof(version));
+    esp_err_t probe_err = esp_lcd_panel_io_rx_param(io, probe_cmd, version, sizeof(version));
+    if (probe_err != ESP_OK) {
+        /* One retry: the read is cheap and a silent fallback to the v2 table is
+         * how a "garbled screen" report gets mistaken for normal. */
+        vTaskDelay(pdMS_TO_TICKS(20));
+        probe_err = esp_lcd_panel_io_rx_param(io, probe_cmd, version, sizeof(version));
+    }
     const st77916_lcd_init_cmd_t *init_cmds = s_init_version_2;
     size_t init_cmds_size = sizeof(s_init_version_2) / sizeof(s_init_version_2[0]);
     if (probe_err == ESP_OK && version[0] == 0x00 && version[1] == 0x7F &&
@@ -769,9 +795,15 @@ static lv_display_t *display_start(lv_indev_t **touch)
         init_cmds = s_init_version_1;
         init_cmds_size = sizeof(s_init_version_1) / sizeof(s_init_version_1[0]);
     }
-    ESP_LOGI(TAG, "ST77916 reg 0x%02X = %02X %02X %02X %02X (%s) -> init table %s", ST77916_REG_VERSION,
-             version[0], version[1], version[2], version[3], esp_err_to_name(probe_err),
-             init_cmds == s_init_version_1 ? "v1" : "v2");
+    if (probe_err != ESP_OK) {
+        ESP_LOGW(TAG, "panel revision unknown (probe %s, readback %02X %02X %02X %02X): "
+                      "assuming the v2 init table", esp_err_to_name(probe_err),
+                 version[0], version[1], version[2], version[3]);
+    } else {
+        ESP_LOGI(TAG, "ST77916 reg 0x%02X = %02X %02X %02X %02X -> init table %s", ST77916_REG_VERSION,
+                 version[0], version[1], version[2], version[3],
+                 init_cmds == s_init_version_1 ? "v1" : "v2");
+    }
     esp_lcd_panel_io_del(io);
 
     /* Now put the device back on the fast clock for the draw path. */
@@ -854,6 +886,7 @@ static lv_display_t *display_start(lv_indev_t **touch)
     touch_report_config();
     const esp_lv_adapter_touch_config_t lv_tp_cfg = ESP_LV_ADAPTER_TOUCH_DEFAULT_CONFIG(disp, tp);
     *touch = esp_lv_adapter_register_touch(&lv_tp_cfg);
+    s_touch_indev = *touch;   /* poll_buttons() reads its state for hold-to-talk */
     /* A tap on the glass is how this board is woken by hand (the IMU's own
      * engine stays silent on battery). The CST816S drives INT **active low** -
      * that is what the driver configures GPIO_INTR_NEGEDGE for (muse_board.h's
@@ -989,9 +1022,55 @@ static esp_err_t audio_init(esp_codec_dev_handle_t *spk, esp_codec_dev_handle_t 
     return *spk && *mic ? ESP_OK : ESP_FAIL;
 }
 
+/* The settings page offers 3 dB steps; the ES7210's PGA moves in 3 dB steps and
+ * esp_codec_dev rounds 33 dB down to 30, so snap to the step and hand 34.5 for
+ * the 33 dB slot - otherwise the slider shows a gain the codec never got. */
+static void set_mic_gain(esp_codec_dev_handle_t mic, int db)
+{
+    db = (db / 3) * 3;
+    esp_codec_dev_set_in_gain(mic, db == 33 ? 34.5f : (float)db);
+}
+
+/* Hold-to-talk on the face tile: a finger held on the avatar for TOUCH_HOLD_MS
+ * acts as the talk button. A tap, or a press that starts on another tile (the
+ * settings list), never talks. The state comes from LVGL's input device, which
+ * owns the CST816S handle - reading the driver here would race LVGL's reads. */
+#define TOUCH_HOLD_MS 500
+
 static unsigned poll_buttons(void)
 {
-    return muse_gpio_button_poll(&s_talk);
+    unsigned ev = muse_gpio_button_poll(&s_talk);
+
+    static bool tp_down = false;          /* finger currently on the screen */
+    static bool tp_talking = false;       /* hold threshold reached */
+    static TickType_t tp_press_tick = 0;  /* when the current press began */
+    static bool tp_on_face = false;       /* the press started on the face tile */
+
+    bool pressed = false;
+    if (s_touch_indev != NULL) {
+        pressed = (lv_indev_get_state(s_touch_indev) == LV_INDEV_STATE_PRESSED);
+    }
+    if (pressed && !tp_down) {
+        /* New press: only a hold that starts on the face tile can talk. */
+        tp_down = true;
+        tp_on_face = muse_ui_face_active();
+        tp_press_tick = xTaskGetTickCount();
+        tp_talking = false;
+    } else if (!pressed && tp_down) {
+        /* Release: end the talk if one started. */
+        if (tp_talking) {
+            ev |= MUSE_BTN_TALK_RELEASE;
+        }
+        tp_down = false;
+        tp_talking = false;
+    } else if (pressed && tp_down && tp_on_face && !tp_talking) {
+        /* Still held on the face: start talking once the threshold passes. */
+        if ((xTaskGetTickCount() - tp_press_tick) >= pdMS_TO_TICKS(TOUCH_HOLD_MS)) {
+            tp_talking = true;
+            ev |= MUSE_BTN_TALK_PRESS;
+        }
+    }
+    return ev;
 }
 
 static void wait_buttons(int timeout_ms)
@@ -1197,7 +1276,9 @@ static const muse_board_t s_board = {
     .touch = true,
     .diagonal_in = 1.85f,
     .talk_button = "boot",
-    .aux_button = "boot",   /* single button board, like the Guition: aux never fires */
+    .aux_button = NULL,      /* single button board: aux never fires, and NULL is
+                              * what makes the settings page offer no
+                              * "press boot to turn the screen off" line */
     /* Both buttons sit on the bezel's right side (BOOT up at ~1:30, PWR down at
      * ~4:30), so the icons that name them go on the rim beside them: the mic at
      * the top right, the power symbol at the bottom right. The power glyph is
@@ -1215,6 +1296,7 @@ static const muse_board_t s_board = {
     .panel_sleep = panel_sleep,
     .display_pause = display_pause,
     .audio_init = audio_init,
+    .set_mic_gain = set_mic_gain,
     .mic_slot = 0,              /* MIC1; slot 1 is the speaker reference */
     .poll_buttons = poll_buttons,
     .wait_buttons = wait_buttons,
