@@ -1051,9 +1051,14 @@ static unsigned poll_buttons(void)
         pressed = (lv_indev_get_state(s_touch_indev) == LV_INDEV_STATE_PRESSED);
     }
     if (pressed && !tp_down) {
-        /* New press: only a hold that starts on the face tile can talk. */
+        /* New press: a hold that starts on the face tile talks - unless it
+         * started on one of the face's own controls (the speaker button, the
+         * power icon). Those own their presses: a hold on the volume button is
+         * its long-press, and a tap on the power icon is a power-off. */
+        lv_point_t p = { 0 };
+        lv_indev_get_point(s_touch_indev, &p);
         tp_down = true;
-        tp_on_face = muse_ui_face_active();
+        tp_on_face = muse_ui_face_active() && !muse_ui_face_control_at(p.x, p.y);
         tp_press_tick = xTaskGetTickCount();
         tp_talking = false;
     } else if (!pressed && tp_down) {
