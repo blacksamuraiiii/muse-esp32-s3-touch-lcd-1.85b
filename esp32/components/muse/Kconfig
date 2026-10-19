@@ -167,7 +167,7 @@ menu "Muse"
 
     config MUSE_TTS_URL
         string "Speech endpoint template (empty = replies stay silent)"
-        default "https://fanyi.baidu.com/gettts?lan=zh&text={text}&spd=5&source=web"
+        default ""
         help
             Where spoken replies come from. The SDK ships the playback half
             (minimp3, the resampler, the speaker) but no speech service, so
@@ -175,15 +175,19 @@ menu "Muse"
 
             The reply text is percent-encoded into the {text} placeholder and
             the MP3 that comes back is played. Any HTTP endpoint that answers
-            with MP3 works, so an Edge TTS (or other) bridge on the LAN is a
-            matter of pointing this at it:
+            with MP3 works:
 
-              https://fanyi.baidu.com/gettts?lan=zh&text={text}&spd=5&source=web
               http://192.168.1.1:5050/tts?voice=zh-CN-XiaoxiaoNeural&text={text}
 
-            Leave empty to keep the previous behaviour (captions only). Long
-            replies are split into several requests, so the header must stay
-            short enough for whatever proxies the request.
+            Empty by default on purpose: no vendor endpoint is baked in, so a
+            fresh build is silent until you point this at your own service.
+            Run a bridge on the LAN (see tts-server/ in this repo) rather than
+            synthesising on the device: Edge TTS now wants a Sec-MS-GEC v2
+            token (a deliberately obfuscated SHA-256 variant) that the device
+            cannot compute, and getting it wrong is a 403.
+
+            Long replies are split into several requests, so the header must
+            stay short enough for whatever proxies the request.
 
     config MUSE_POWER_TEST
         bool "Isolated board BSP power-characterization firmware"

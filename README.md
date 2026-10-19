@@ -379,15 +379,15 @@ Wi-Fi glue 注册的 `STA_START` 处理函数在前，此时 netif 和它的 DHC
 CONFIG_MUSE_TTS_URL="http://<tts-host>:5050/tts?voice=zh-CN-XiaoxiaoNeural&text={text}"
 ```
 
-留空则回到"只显示字幕"的老行为。长回复会按标点切成 **180 字符**一段、分多次请求，
+留空（默认值）就只显示字幕。长回复会按标点切成 **180 字符**一段、分多次请求，
 所以 URL 长度可控、播放也能早于全部合成完成就开始。
 
 > **本仓库的实际部署**是局域网 `tts-server/` + **Azure Speech（eastasia）**，
 > 音色 `zh-CN-XiaoxiaoNeural`，首音 0.47–0.58 s；服务端注册与 Docker 搭建见
 > [第 10 节](#10-tts-服务端azure-speech-注册--docker-搭建)。
 >
-> `CONFIG_MUSE_TTS_URL` 的**编译期默认值只是一个公开占位端点**（百度翻译朗读），
-> 不改成自己的服务，板子就只有字幕没有声音——这不是 bug。
+> `CONFIG_MUSE_TTS_URL` **默认留空**：固件里不烧任何厂商端点，新克隆的仓库构建出来
+> 就是"只有字幕、没有声音"——这是设计，不是 bug。要出声就把上面那行填进构建目录的 `sdkconfig`。
 
 **不要在设备端直连 Edge TTS**：`speech.platform.bing.com` 的 readaloud 端点现在要
 `Sec-MS-GEC` v2 令牌（内含一套刻意混淆的自定义 SHA-256），设备端算不动、算错即 403，
@@ -510,13 +510,31 @@ idf.py -B build-muse-waveshare-s3-touch-lcd-185b -DIDF_TARGET=esp32s3 \
 | **按住说话（PTT）** | 按住 **BOOT** 键说话，松开结束；亮屏时也可以**按住头像 0.5 秒**说话 |
 | **确认配对** | 按一下 **BOOT** 键 |
 | **亮屏** | **敲一下屏幕**、按一下 **BOOT**，或点设置页的电源图标 |
-| **熄屏** | 无操作自动熄屏（默认 **120 秒**，设置页可调 0–3600 s，`0` = 不自动熄）；也可在菜单里关屏 |
+| **熄屏** | 无操作自动熄屏（设置页 **AUTO-SLEEP**：从不 / 30 秒 / 1 分钟 / 2 分钟 / 5 分钟 / 10 分钟，出厂默认 **2 分钟**）；也可在设置页点 **Sleep now** 立刻熄 |
 | **菜单 / 设置** | 在**触摸屏**上操作（主界面左滑进入设置） |
 | **关机** | 点设置页的**电源图标**（或菜单里的关机）→ 进入 **deep sleep**；按 **BOOT** 键唤醒 |
 | **硬件断电** | 按 **PWR** 键（约 2 秒），这是纯硬件电源开关，固件读不到它 |
 
 > 这块板上「敲屏幕亮屏」走的是**触摸控制器 CST816S**（`INT=GPIO4`），不是 IMU 敲击引擎——
 > 见[第 8 节](#8-已知限制与注意事项)。
+
+### 熄屏（sleep）与关机的区别
+
+三档状态容易混，区分清楚：
+
+| 状态 | 屏幕 | CPU / 无线 | 怎么回来 | 日志 |
+|---|---|---|---|---|
+| **亮屏** | 亮 | 全速 | — | `full power` |
+| **熄屏（asleep）** | 背光 0 + 面板 `SLPIN` + 黑遮罩 | **电池供电**：CPU 降到晶振时钟、在按键/触摸轮询之间 light sleep，两分钟无网后 Wi-Fi 也 nap；**插 USB**：CPU 仍全速，只关显示 | 敲屏 / 按 BOOT / 点电源图标 | `sleeping (auto-sleep)` |
+| **关机（deep sleep）** | 灭 | 仅 RTC 域 | 按 **BOOT** | `power off` |
+
+所以「自动熄屏」= `muse_state_set_asleep(true)`，**不是** deep sleep，也**不等于**一定进 light sleep：
+`update_power()` 里进低功耗的前提是 `muse_state_on_battery()`——插着 USB 调试时只会关屏，
+CPU 不会降频（日志会写 `display paused (USB host: CPU at full speed)`）。想在 USB 上复现电池态的低功耗，
+用 `>pmlow=1`。
+
+自动熄屏只发生在**空闲（`MUSE_MODE_IDLE`）**且无操作超时的时刻；配对提示（passkey / 等待确认）期间
+会强制保持亮屏，说话与思考过程中也不会熄。设置 30 秒后，日志应出现 `sleeping (auto-sleep)`。
 
 **关于语音交互的一个重要设计**：
 
