@@ -33,6 +33,11 @@ bool muse_ui_dark(void);
 
 /* From any task: the face tile is the currently visible tile. */
 bool muse_ui_face_active(void);
+/* True when the point sits on a control the face draws itself (the speaker
+ * button, the power icon): those own their presses, so a board that turns a
+ * face hold into a talk must not do it on top of them. Coordinates are the
+ * touch's own, so this header stays free of LVGL types. */
+bool muse_ui_face_control_at(int x, int y);
 
 /* The functions below run in the LVGL task (or with the display lock held). */
 
