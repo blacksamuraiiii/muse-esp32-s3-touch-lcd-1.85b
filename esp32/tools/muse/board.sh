@@ -87,6 +87,11 @@ if [ -n "${MUSE_BENCH:-}" ]; then
     B=$B-bench; defaults="$defaults;devices/sdkconfig.muse-bench"
 fi
 [ -n "${iris:-}" ] && defaults="$defaults;devices/sdkconfig.muse-$profile-iris"
+# Local, machine-specific settings (the TTS endpoint, a Wi-Fi SSID, a static
+# address). Gitignored, so they neither leak nor disappear when the build
+# directory is deleted - which the README tells you to do after any config
+# change. Loaded last, so it wins over everything above.
+[ -f devices/sdkconfig.local ] && defaults="$defaults;devices/sdkconfig.local"
 log=/tmp/muse_build_$board.log
 # ESP-Mosaico: its Vibe Mode firmware installs an ESP-Iris System Update
 # bundle (the app and this partition table; never the bootloader or the
