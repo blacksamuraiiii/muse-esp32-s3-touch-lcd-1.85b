@@ -49,6 +49,7 @@ static size_t s_chunk_bytes;
 static int s_chunks_out;                 /* of the band being sent */
 static SemaphoreHandle_t s_band_done;    /* given once the band LVGL queued has gone */
 static volatile bool s_band_busy;        /* queued and not yet gone */
+static uint32_t s_stalls;                /* waits that hit their timeout */
 static portMUX_TYPE s_lock = portMUX_INITIALIZER_UNLOCKED;
 
 /* A piece has gone, or failed to; true if it was the band's last. */
@@ -103,8 +104,18 @@ static esp_err_t queue_band(lv_display_t *disp, esp_lcd_panel_handle_t panel, in
 static void wait_band(lv_display_t *disp)
 {
     (void)disp;
-    while (s_band_busy) {
+    /* Bounded on purpose: if the chunk callbacks stop coming (a failed
+     * draw_bitmap, DMA descriptors exhausted) s_band_busy would never clear and
+     * LVGL would spin here for good - a frozen screen with no way back. Give up
+     * after 5 s, release the flush and let the UI carry on (P1-2 in the review). */
+    for (int i = 0; i < 50 && s_band_busy; i++) {
         xSemaphoreTake(s_band_done, pdMS_TO_TICKS(100));
+    }
+    if (s_band_busy) {
+        s_stalls++;
+        ESP_LOGE(TAG, "band never completed (%u stalls): releasing the flush", s_stalls);
+        s_band_busy = false;
+        lv_display_flush_ready(s_disp);
     }
 }
 
@@ -126,13 +137,25 @@ static void send_bands(void *arg)
             continue;
         }
         size_t row = (size_t)(b.x2 - b.x1) * 2;
-        int rows = s_chunk_bytes / row & ~1;
+        /* A band narrower than one chunk divides to 0 rows and the loop below
+         * would never advance. Even counts keep each window starting on an even
+         * row, which the CO5300 needs. */
+        int rows = (int)(s_chunk_bytes / row) & ~1;
+        if (rows <= 0) {
+            rows = 2;
+        }
         /* LVGL sends no more until this band is done, so nothing is still
          * counting down. */
         s_chunks_out = (b.y2 - b.y1 + rows - 1) / rows;
         for (int y = b.y1; y < b.y2; y += rows) {
             int h = b.y2 - y < rows ? b.y2 - y : rows;
-            xSemaphoreTake(s_chunk_free, portMAX_DELAY);
+            /* Never wait forever: a chunk that never completes must not take the
+             * send task down with it. Reusing the buffer can tear a frame; a
+             * frozen screen is worse (P1-2 in the review). */
+            if (xSemaphoreTake(s_chunk_free, pdMS_TO_TICKS(500)) != pdTRUE) {
+                s_stalls++;
+                ESP_LOGE(TAG, "chunk never completed (%u stalls): reusing a buffer", s_stalls);
+            }
             memcpy(s_chunk[k], b.data + (size_t)(y - b.y1) * row, h * row);
             esp_err_t err = esp_lcd_panel_draw_bitmap(s_panel, b.x1, y, b.x2, y + h, s_chunk[k]);
             if (err != ESP_OK) {

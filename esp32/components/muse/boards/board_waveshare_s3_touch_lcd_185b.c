@@ -54,6 +54,7 @@
 #include "driver/i2c_master.h"
 #include "driver/i2s_std.h"
 #include "driver/ledc.h"
+#include "driver/rtc_io.h"
 #include "driver/spi_master.h"
 #include "driver/usb_serial_jtag.h"
 #include "esp_check.h"
@@ -753,7 +754,7 @@ static lv_display_t *display_start(lv_indev_t **touch)
     esp_lcd_panel_io_del(io);
 
     /* Now put the device back on the fast clock for the draw path. */
-    io_config.pclk_hz = 40 * 1000 * 1000;
+    io_config.pclk_hz = 80 * 1000 * 1000;
     if (esp_lcd_new_panel_io_spi((esp_lcd_spi_bus_handle_t)LCD_HOST, &io_config, &io) != ESP_OK) {
         return NULL;
     }
@@ -1129,7 +1130,19 @@ static void send_disp_off(void *arg)
 static esp_err_t power_off(void)
 {
     set_brightness(0);
+    /* SLPIN, not just DISPOFF: DISPOFF blanks the picture and leaves the
+     * panel's charge pump and bias running. GRAM is lost either way and the
+     * next boot re-inits the panel. */
+    bool sleep = true;
+    muse_lcd_bands_run(send_panel_sleep, &sleep);
     muse_lcd_bands_run(send_disp_off, NULL);
+    /* The amp must not be left enabled: PA_EN high is tens of mA in "off". */
+    gpio_set_direction(PA_EN, GPIO_MODE_OUTPUT);
+    gpio_set_level(PA_EN, 0);
+    /* ext0 reads the pin through the RTC domain, where the digital pull-up is
+     * gone. Without this a floating BOOT wakes the chip the moment it sleeps. */
+    rtc_gpio_pullup_en(TALK_GPIO);
+    rtc_gpio_pulldown_dis(TALK_GPIO);
     while (gpio_get_level(TALK_GPIO) == 0) {
         vTaskDelay(pdMS_TO_TICKS(20));
     }
@@ -1143,6 +1156,10 @@ static const muse_board_t s_board = {
     .width = LCD_H_RES,
     .height = LCD_V_RES,
     .round = true,
+    /* Touch INT, BOOT and the IMU's INT1 all interrupt a light sleep, so with
+     * no knock polling to do there is nothing for a 1 s rest wait to notice:
+     * the pause can wait as long as a Wi-Fi nap does (P1-4 in the code review). */
+    .wake_lines_reliable = true,
     .touch = true,
     .diagonal_in = 1.85f,
     .talk_button = "boot",
