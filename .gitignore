@@ -34,3 +34,8 @@ tts-server/.env
 # Local avatar iteration artefacts: renders, reference sheets, work files.
 virtual-avatar/preview/
 virtual-avatar/maomao/
+
+# Internal working notes: dated to-do lists, progress logs, code reviews and
+# ad-hoc analysis. Kept locally for the work itself, never part of the firmware
+# or of the published project.
+/docs/

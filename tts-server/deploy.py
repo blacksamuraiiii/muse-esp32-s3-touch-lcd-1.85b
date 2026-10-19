@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-"""Deploy tts-server to the LAN host (10.168.2.7) and verify it there.
+"""Deploy tts-server to a LAN host and verify it there.
 
-    ~/.venv/bin/python3 deploy.py [host]
-
-Auth: an SSH key is preferred -- ~/.ssh/muse-16827_rsa (override with
+Auth: an SSH key is preferred -- ~/.ssh/muse-tts_rsa (override with
 MUSE_SSH_KEY). The root password still works as a fallback:
 
-    MUSE_HOST_PASSWORD='<root password>' ~/.venv/bin/python3 deploy.py [host]
+    MUSE_HOST_PASSWORD='<root password>' ~/.venv/bin/python3 deploy.py <host>
+
+The host has no default on purpose: this repository is public, so no internal
+address is baked in - pass the address you are deploying to.
 
 Pushes tts_server.py / requirements.txt / Dockerfile to /opt/muse-tts/, writes
 the Azure credentials there as .env (mode 600, never into the image or the repo),
