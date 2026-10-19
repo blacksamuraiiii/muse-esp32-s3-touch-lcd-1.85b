@@ -71,6 +71,11 @@ typedef struct {
     const char *name;
     int width, height;
     bool round;             /* circular panel: keep content inside the circle */
+    /* Every wake line this board has interrupts a light sleep (touch INT, the
+     * buttons, the IMU). True lets the paused wait skip the short polling rest
+     * and sleep as long as a Wi-Fi nap does; leave false on a board that has to
+     * poll something to notice a wake. */
+    bool wake_lines_reliable;
     bool no_ring;           /* square panel: progress as a bar along the bottom edge, no ring around Muse */
     bool touch;             /* no touch: no settings screen, set up over BLE */
     float diagonal_in;      /* screen size; under 2" typing uses a keypad with bigger keys */

@@ -783,8 +783,12 @@ static void input_task(void *arg)
         if (paused && muse_board->wait_buttons) {
             int64_t before_ms = esp_timer_get_time() / 1000;
             TickType_t before_tick = xTaskGetTickCount();
+            /* Nothing polls here when knock detection is off: every wake line
+             * this board has interrupts, so a 1 s rest wait would only wake the
+             * CPU to look at nothing. A board whose wake lines aren't reliable
+             * keeps the short wait (P1-4 in the code review). */
             muse_board->wait_buttons(knock_polling ? ASLEEP_WAIT_MS
-                                                   : (napping ? NAP_WAIT_MS : REST_WAIT_MS));
+                                    : (napping || muse_board->wake_lines_reliable ? NAP_WAIT_MS : REST_WAIT_MS));
             /* Woken by the case: STATUS1 latches until it is read, and the IMU
              * holds INT1 high until then - which means the line the next sleep
              * arms on is already satisfied, so a missed read costs every later
