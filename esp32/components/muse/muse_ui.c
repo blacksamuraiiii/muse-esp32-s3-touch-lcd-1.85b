@@ -15,6 +15,7 @@
  */
 
 #include "muse_ui.h"
+#include "muse_input.h"   /* muse_input_request_power_off, from the power icon */
 
 #include <math.h>
 #include <stdio.h>
@@ -136,6 +137,7 @@ static lv_obj_t *s_caption_lbl;
 static lv_obj_t *s_reply_lbl;   /* full layout: the reply's page while answering */
 static lv_obj_t *s_meter[METER_SEGS];
 static lv_obj_t *s_speaker;
+static void on_aux_clicked(lv_event_t *e);   /* the power icon's tap handler */
 static lv_obj_t *s_speaker_icon;
 static lv_obj_t *s_aux_icon;
 static lv_obj_t *s_image;   /* display.draw_url, over the face */
@@ -497,6 +499,38 @@ static void build_button_icons(lv_obj_t *face)
         lv_obj_set_style_transform_scale_x(s_aux_icon, a->scale, 0);
         lv_obj_set_style_transform_scale_y(s_aux_icon, a->scale, 0);
     }
+    /* The power icon is a control, not only a hint: tapping it powers the board
+     * off, through the same request the menu and the settings page use. A
+     * fingertip is bigger than the glyph, so pad the click area like the
+     * speaker's. */
+    lv_obj_add_flag(s_aux_icon, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_ext_click_area(s_aux_icon, 12);
+    lv_obj_add_event_cb(s_aux_icon, on_aux_clicked, LV_EVENT_CLICKED, NULL);
+}
+
+/* Does a press at this point fall on one of the face's own controls? The
+ * speaker pads its click area by 12 px (a fingertip is bigger than the circle),
+ * so the test pads it the same way. */
+static bool point_in_padded(lv_obj_t *obj, const lv_point_t *p, int pad)
+{
+    if (obj == NULL || lv_obj_has_flag(obj, LV_OBJ_FLAG_HIDDEN)) {
+        return false;
+    }
+    lv_area_t a;
+    lv_obj_get_coords(obj, &a);
+    return p->x >= a.x1 - pad && p->x <= a.x2 + pad && p->y >= a.y1 - pad && p->y <= a.y2 + pad;
+}
+
+bool muse_ui_face_control_at(int x, int y)
+{
+    const lv_point_t p = { .x = (lv_coord_t)x, .y = (lv_coord_t)y };
+    return point_in_padded(s_speaker, &p, 12) || point_in_padded(s_aux_icon, &p, 12);
+}
+
+static void on_aux_clicked(lv_event_t *e)
+{
+    (void)e;
+    muse_input_request_power_off();
 }
 
 static void on_canvas_clicked(lv_event_t *e)
