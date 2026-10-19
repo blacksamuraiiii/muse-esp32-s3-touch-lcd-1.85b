@@ -61,6 +61,10 @@ extern "C" {
 typedef struct {
     lv_align_t align;
     int16_t x, y;
+    /* Optional size for the icon this hint draws: LVGL transform scale, 256 =
+     * unchanged. Lets a board shrink just its own rim icon without pulling in
+     * another font; 0 means "leave the icon as it is". */
+    uint16_t scale;
 } muse_button_hint_t;
 
 typedef struct {
@@ -81,6 +85,10 @@ typedef struct {
     const char *speaker_button;
     muse_button_hint_t power_hint;
     muse_button_hint_t speaker_hint;
+    /* Where the round panel's speaker control sits, in degrees (math convention:
+     * 90 = top, 180 = the dial's far left). 0 keeps the round-panel default, a
+     * third of the way up the left side. */
+    int16_t speaker_angle_deg;
     /* 466 px round-panel layout: dedicated 26-36 px rim icons, safe header chord
      * and central read-reply column. Requires all three hint positions/names. */
     bool rim_controls;

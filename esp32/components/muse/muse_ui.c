@@ -471,6 +471,10 @@ static void build_button_icons(lv_obj_t *face)
     const muse_button_hint_t *t = &muse_board->talk_hint, *a = &muse_board->aux_hint;
     s_mic_icon = make_mic(face, s_tall ? 24 : s_small ? 12 : 26);
     lv_obj_align(s_mic_icon, t->align, t->x, t->y);
+    if (t->scale) {
+        lv_obj_set_style_transform_scale_x(s_mic_icon, t->scale, 0);
+        lv_obj_set_style_transform_scale_y(s_mic_icon, t->scale, 0);
+    }
     set_mic_color(COLOR_DIM);
     if (muse_board->touch_talk) {
         lv_obj_add_flag(s_mic_icon, LV_OBJ_FLAG_CLICKABLE);
@@ -489,6 +493,10 @@ static void build_button_icons(lv_obj_t *face)
     s_aux_icon = make_label(face, s_small ? &lv_font_montserrat_14 : &lv_font_montserrat_28, COLOR_DIM);
     lv_label_set_text(s_aux_icon, muse_board->touch ? LV_SYMBOL_POWER : LV_SYMBOL_LIST);
     lv_obj_align(s_aux_icon, a->align, a->x, a->y);
+    if (a->scale) {
+        lv_obj_set_style_transform_scale_x(s_aux_icon, a->scale, 0);
+        lv_obj_set_style_transform_scale_y(s_aux_icon, a->scale, 0);
+    }
 }
 
 static void on_canvas_clicked(lv_event_t *e)
@@ -741,10 +749,18 @@ static void build_answer(lv_obj_t *face, int ring_in)
          * it only 75 px out and the full-size art covered it. Going lower on the
          * rim widens it further: a third of the radius gives ~117 px, 42 px
          * further from the face than the original, and keeps the reply box above
-         * where it was (art_bottom is the higher of the two). */
-        spk_y = -ring_in / 3;
+         * where it was (art_bottom is the higher of the two).
+         * A board may instead name the angle (math convention: 90 = top, 180 =
+         * the dial's far left), which is what the 1.85B wants. */
         int d = ring_in - spk_r - 4;   /* just inside the ring, even when swollen */
-        spk_x = -(int)sqrtf((float)(d * d - spk_y * spk_y));
+        if (muse_board->speaker_angle_deg != 0) {
+            float a = (float)muse_board->speaker_angle_deg * 3.14159265f / 180.0f;
+            spk_x = (int)((float)d * cosf(a));
+            spk_y = -(int)((float)d * sinf(a));
+        } else {
+            spk_y = -ring_in / 3;
+            spk_x = -(int)sqrtf((float)(d * d - spk_y * spk_y));
+        }
     }
     const lv_font_t *font = caption_font();
     int cw = lv_font_get_glyph_width(font, 'M', ' ');
@@ -1114,6 +1130,10 @@ static lv_obj_t *make_control_icon(lv_obj_t *scr, const muse_button_hint_t *pos,
     lv_label_set_text(icon, symbol);
     lv_obj_remove_flag(icon, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_align(icon, pos->align, pos->x, pos->y);
+    if (pos->scale) {
+        lv_obj_set_style_transform_scale_x(icon, pos->scale, 0);
+        lv_obj_set_style_transform_scale_y(icon, pos->scale, 0);
+    }
     return icon;
 }
 

@@ -503,6 +503,12 @@ static void align_on_bar(lv_obj_t *l, lv_align_t icon, int pad)
     case LV_ALIGN_BOTTOM_MID:
         lv_obj_align(l, LV_ALIGN_BOTTOM_MID, 0, -pad);
         break;
+    case LV_ALIGN_TOP_RIGHT:
+        /* Icon on the top-right rim (the mic beside a BOOT button up there):
+         * its caption stays on the bar's centre, where it was for boards whose
+         * mic icon sat bottom-mid. */
+        lv_obj_align(l, LV_ALIGN_BOTTOM_MID, 0, -pad);
+        break;
     default:
         lv_obj_align(l, LV_ALIGN_BOTTOM_RIGHT, -2 * pad, -pad);
         break;
