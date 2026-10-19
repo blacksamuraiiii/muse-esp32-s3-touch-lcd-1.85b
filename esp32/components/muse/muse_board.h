@@ -20,6 +20,7 @@
 #include <stdint.h>
 
 #include "driver/gpio.h"
+#include "driver/i2c_master.h"
 #include "esp_codec_dev.h"
 #include "esp_err.h"
 #include "lvgl.h"
@@ -171,6 +172,74 @@ esp_err_t muse_gpio_wake_line_add(gpio_num_t gpio, bool wake_high);
 /* Same, for a line another driver already interrupts on: the pin is armed as a
  * light-sleep wake source, and its interrupt is left alone (see muse_board.c). */
 esp_err_t muse_gpio_wake_line_add_wake_only(gpio_num_t gpio, bool wake_high);
+
+/* Take this line's interrupt enable for the armed window (restores
+ * `normal_intr` on disarm). Needed for a line whose own driver stops
+ * interrupting while the display is paused, e.g. the touch controller. */
+esp_err_t muse_gpio_wake_line_take_intr(gpio_num_t gpio, gpio_int_type_t normal_intr);
+
+/* Whatever releases a line its part keeps asserted (the touch controller holds
+ * INT low until it is read); called just before that line is armed. */
+esp_err_t muse_gpio_wake_line_set_drain(gpio_num_t gpio, esp_err_t (*drain)(void));
+
+/* The line's level when the last wait armed it (-1 unknown): a low line is a
+ * new touch only if it was high when the sleep started. */
+int muse_gpio_wake_line_armed_level(int index);
+
+/* Cycles where the line was already at its armed level and was left unarmed. */
+unsigned muse_gpio_wake_line_skips(int index);
+
+/* The level a registered line is armed on, changed while running: < 0 stops
+ * arming it, 0 arms a low level, 1 a high level. One build can therefore test
+ * both polarities of a line that a datasheet does not settle ("tpwake=" in the
+ * console). ESP_ERR_NOT_FOUND for a gpio that is not registered. */
+esp_err_t muse_gpio_wake_line_set_level(gpio_num_t gpio, int level);
+
+/* Marks a line as the touch panel's: a touch pulls it to the level it is armed
+ * on and holds it until the controller is read. The input task reads the line
+ * to turn a touch into a wake - while the screen is dark on battery the display
+ * is paused, so the LVGL task that owns on_cover_event() is not running. */
+void muse_gpio_wake_line_mark_touch(gpio_num_t gpio);
+
+/* Wake forensics, filled by every muse_gpio_buttons_wait(). These separate the
+ * four candidates behind "the screen did not come on": the line never woke the
+ * chip, it woke it and nobody read it, the button never interrupted, or the
+ * state did change and the display did not resume. */
+int muse_gpio_wake_cause(void);         /* esp_sleep_get_wakeup_cause(); 0 = timeout */
+bool muse_gpio_wake_was_line(void);     /* the last sleep ended on a GPIO line, not a timer */
+bool muse_gpio_wake_was_timer(void);    /* ... and this one ended when the nap ran out */
+unsigned muse_gpio_button_irqs(void);   /* button interrupts since boot */
+int muse_gpio_button_level(void);       /* button level when the wait returned, -1 unknown */
+int muse_gpio_wake_line_count(void);
+gpio_num_t muse_gpio_wake_line_gpio(int i);
+int muse_gpio_wake_line_armed(int i);   /* -1 not armed, 0 low level, 1 high level */
+int muse_gpio_wake_line_live(int i);    /* level read now, -1 unknown */
+int muse_gpio_wake_line_seen(int i);    /* level when the wait returned, -1 unknown */
+unsigned muse_gpio_wake_line_irqs(int i);
+int muse_gpio_wake_line_touch_index(void);   /* -1 when no line is marked as the touch */
+
+/* ------------------------------------------------------- the shared I2C bus
+ *
+ * Every part on the board's I2C bus - the touch controller above all - goes
+ * quiet together when the bus itself stops working, which is what a battery
+ * session can leave behind: the console then shows probe timeouts on the fuel
+ * gauge and no answer from the IMU, and the touch reads are just slow. The two
+ * candidates are a slave holding a line low (recoverable with the nine clocks
+ * IDF's bus reset emits) and a pad that lost its configuration during light
+ * sleep (recoverable by re-applying the pull-ups), so the recovery below does
+ * both and reports the pad levels before and after.
+ *
+ * Boards call muse_i2c_register() once, report every transaction result with
+ * muse_i2c_report(), and get a self-healing bus: two failures in a row and the
+ * recovery runs, rate-limited. The console reaches the same path as "i2c". */
+void muse_i2c_register(i2c_master_bus_handle_t bus, gpio_num_t sda, gpio_num_t scl);
+void muse_i2c_report(bool ok);
+esp_err_t muse_i2c_recover(void);       /* reset the bus, re-apply the pull-ups */
+bool muse_i2c_registered(void);
+void muse_i2c_levels(int *sda, int *scl);   /* pad levels read as GPIO, -1 unknown */
+unsigned muse_i2c_fails(void);          /* failed transactions since boot */
+unsigned muse_i2c_recovers(void);       /* recoveries run since boot */
+unsigned muse_i2c_streak(void);         /* failures in a row right now */
 
 #ifdef __cplusplus
 }
