@@ -16,8 +16,17 @@ name: Linux client
 
 on:
   pull_request:
+    # Docs-only changes don't need the Linux client tests either.
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - 'LICENSE'
   push:
     branches: [main]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - 'LICENSE'
 
 permissions:
   contents: read
