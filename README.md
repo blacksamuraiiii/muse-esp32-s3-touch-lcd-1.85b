@@ -16,8 +16,7 @@
 
 ## 目录
 
-- [更新记录（v1.0 → v1.3）](#更新记录)
-
+- [更新记录](#更新记录)
 1. [这是什么](#1-这是什么)
 2. [你的开发板](#2-你的开发板)
 3. [准备清单](#3-准备清单)
@@ -33,10 +32,8 @@
 7. [故障排查](#7-故障排查)
 8. [已知限制与注意事项](#8-已知限制与注意事项)
 9. [恢复微雪原厂固件](#9-恢复微雪原厂固件)
-10. [进阶：改固件、换头像、加指令](#10-进阶改固件换头像加指令)
-11. [本次移植踩过的坑（屏幕 / 构建环境）](#11-本次移植踩过的坑屏幕--构建环境)
-12. [TTS 服务端：Azure Speech 注册 + Docker 搭建](#12-tts-服务端azure-speech-注册--docker-搭建)
-13. [许可证](#13-许可证)
+10. [TTS 服务端：Azure Speech 注册 + Docker 搭建](#10-tts-服务端azure-speech-注册--docker-搭建)
+11. [许可证](#11-许可证)
 
 ---
 
@@ -82,7 +79,7 @@
   **按住说话与脸页控件互斥**：脸页上的音量圆钮与电源图标自己拥有按压（命中测试含 12 px 外扩，与点击区一致），
   按住它们不再被当成「按住头像说话」；电源图标同时改为可点——点一下即关机，走菜单/设置页同一条 `muse_input_request_power_off()`。
 - 已知限制：电量计 CEDV 模型用的是参考电芯参数、未做 GPCCEDV 标定（容量项已按本板 500 mAh 写回）；
-  I2C 自愈尚未在真实故障上复现验证；上述 P0 级修复已完成代码修改，待电池态复测。
+  I2C 自愈已在电池态 T3 上验证生效，但「真实总线卡死」这一触发条件难以主动复现，属于**有备无患**的代码路径。
 
 ### v1.2（2026-10-18）
 
@@ -122,8 +119,8 @@
   OTA 流程（镜像签名校验、重启自动）；不再广告 `device.ota` 命令（云端曾推来别的芯片的固件）。
 - 新增 **敲击唤醒**：QMI8658A tap 引擎（加速度 500 Hz，INT1 → GPIO8，经 R51 0R）；睡着时靠
   GPIO 电平唤醒，另每 200 ms 读 STATUS1 兜底。
-  ⚠️ **已知问题**：长时间睡眠（约 2 分钟以上）后敲击失效；按键点亮→30 秒自动息屏后再敲则正常。
-  留待下次修。
+  ⚠️ 当时的已知问题（v1.2 / v1.3 已分别修掉硬件引擎的配置漂移与 I2C 截断，详见上方记录）：
+  长时间睡眠后敲击失效；按键点亮→自动息屏后再敲则正常。
 - 改进 **音量按钮位置**：`y = -ring_in/3`（原 `-5/8·ring_in`）。距 Muse 净空 15 px → 33 px，
   与圆环内缘仍留 5 px；回复页字格数不变（17×3 / 14×7）。
 - 改进 **TTS 载荷校验**：前 8 字节须是 `0xFF`（MPEG 同步字）或 `ID3`，否则整段丢弃、只留字幕；
@@ -172,13 +169,14 @@ Muse 用文字（字幕）回答、还能显示图片的语音小助手。
 | 内存 | 512 KB SRAM + **8 MB Octal PSRAM**（片上堆叠） |
 | 存储 | **16 MB NOR Flash**（外挂） |
 | 屏幕 | 1.85 英寸 **360 × 360** 圆屏 TFT，262K 色，亮度 450 cd/m²，对比度 1200:1 |
-| 屏幕驱动 | **ST77916**，**QSPI** 接口 |
+| 屏幕驱动 | **ST77916**，**QSPI**（80 MHz），出厂混装两个面板修订版（靠寄存器 `0x04` 区分） |
 | 触摸 | **CST816S** 电容触摸，I2C（7 位地址 `0x15`） |
-| 音频输出 | **ES8311** 编解码器 + 功放使能引脚（`PA_CTRL`） |
-| 音频输入 | **ES7210** 双麦克风阵列 + 回声消除 |
-| 姿态传感器 | QMI8658 六轴 IMU（加速度 + 陀螺仪） |
-| 电量计 | BQ27220 |
-| 按键 | **BOOT**（可编程）、**PWR**（纯硬件电源键，固件读不到） |
+| 音频输出 | **ES8311** 编解码器（`0x18`）+ 功放使能引脚（`PA_CTRL`） |
+| 音频输入 | **ES7210** 双麦克风阵列（`0x40`）+ 回声消除 |
+| 姿态传感器 | **QMI8658A** 六轴 IMU（`0x6B`），已接入：tap 引擎 + 敲击唤醒 |
+| 电量计 | **BQ27220**（`0x55`） |
+| RTC | **PCF85063**（`0x51`），固件暂未使用 |
+| 按键 | **BOOT**（可编程，按住说话）、**PWR**（纯硬件电源键，固件读不到） |
 | 接口 | Type-C（含 USB Serial/JTAG）、SH1.0 4PIN 串口、SH1.0 4PIN GPIO、MX1.25 2PIN 锂电池 |
 | 外壳 | CNC 铝合金 |
 
@@ -191,10 +189,12 @@ Muse 用文字（字幕）回答、还能显示图片的语音小助手。
 | LCD QSPI | `CS=21`、`PCLK=40`、`D0=46`、`D1=45`、`D2=42`、`D3=41`、`RST=3`、`BL=5` |
 | 触摸 CST816S | `SCL=10`、`SDA=11`、`RST=1`、`INT=4` |
 | I2S 音频 | `MCLK=2`、`BCLK=48`、`LRCK=38`、`DOUT=47`、`DIN=39`、功放使能 `PA=9` |
+| 板载 I2C 总线（共用） | `SCL=10`、`SDA=11`；挂 CST816S `0x15`、ES8311 `0x18`、ES7210 `0x40`、BQ27220 `0x55`、QMI8658A `0x6B`、PCF85063 `0x51` |
+| IMU 中断 | `QMI8658A INT1 = GPIO8`（经 R51 0R）；`INT2` 未接 |
 | 按键 | `BOOT=GPIO0` |
 
 > 注意：`GPIO45 / GPIO46` 同时是芯片的 strapping 引脚（`GPIO45` 在复位时决定 `VDD_SPI` 电压），
-> 这是微雪原厂设计，属于已知取舍，无需处理。
+> 它们同时是 LCD 的 `DATA1 / DATA0`，这是微雪原厂设计，属于已知取舍，无需处理。
 
 ---
 
@@ -304,7 +304,7 @@ idf.py -B build-muse-waveshare-s3-touch-lcd-185b -DIDF_TARGET=esp32s3 \
 ```
 
 首次构建会从 Espressif 组件仓库下载 LVGL、`esp_codec_dev`、`esp_lvgl_adapter`、
-`esp_lcd_st77916`、`esp_lcd_touch_cst816s` 等依赖到 `managed_components/`，需要联网。
+`esp_lcd_st77916`、`esp_lcd_touch_cst816s`、`espressif/bq27220` 等依赖到 `managed_components/`，需要联网。
 
 > ### 🇨🇳 国内网络：组件仓库加速（重要）
 >
@@ -359,23 +359,13 @@ Wi-Fi glue 注册的 `STA_START` 处理函数在前，此时 netif 和它的 DHC
 正是 `esp_netif_dhcpc_stop()` 需要的状态；之后也不会有别的路径把 DHCP 重新拉起来。
 地址解析失败会自动退回 DHCP，不会把设备卡死在没网的状态。
 
-实测（`backups/boot-log-lcd185b-2026-10-15-wifi-online.txt`）：
-
-```
-I (1307) link.wifi: static IP 192.168.1.50 mask 255.255.255.0 gw 192.168.1.1 dns 192.168.1.1
-I (3513) link.app: wifi override active, connecting to MyHome_5G
-I (3678) link.wifi: got IP 192.168.1.50
-...
-I (10926) link.noise_ctrl: TLS connected to hatch.metaaivm.com:443
-I (12397) link.noise_ctrl: handshake msg3 sent (64 bytes), session established
-I (14373) link.noise_tun: tunnel stream open (stream 2)
-I (18901) link.heartbeat: hb t=17s setup=done wifi=up ws=up raw=up ble=off
-```
+> 运行期改地址用 `>net.set ip=… mask=… gw=… [dns=…]`（写 NVS 后重启），`>net` 查当前生效值
+> 与来源（nvs / build / dhcp），`>net.clear` 交回 DHCP。地址存 NVS 是为了**OTA 升级后不丢**。
 
 > ⚠️ 把密码写进 `sdkconfig` 就等于写进固件镜像，任何人拿到板子都能读出来。
 > 仅适合自己调试用的板子。
 
-#### 3.4 让 Muse 说话（语音播报，可选）
+#### 3.4 让 Muse 说话（语音播报）
 
 **Muse SDK 默认不会出声。** 这不是故障：它是"瘦客户端"设计，录音上传云端转文字，
 回复只回文字（`voice.h` / `muse_chat.h` 都写明了），官方留了一个 TTS 接口让你自己接。
@@ -386,60 +376,35 @@ I (18901) link.heartbeat: hb t=17s setup=done wifi=up ws=up raw=up ble=off
 换个语音服务＝**改一行 URL**，不用碰固件：
 
 ```
-CONFIG_MUSE_TTS_URL="https://fanyi.baidu.com/gettts?lan=zh&text={text}&spd=5&source=web"
-CONFIG_MUSE_TTS_URL="http://192.168.1.1:5050/tts?voice=zh-CN-XiaoxiaoNeural&text={text}"
+CONFIG_MUSE_TTS_URL="http://<tts-host>:5050/tts?voice=zh-CN-XiaoxiaoNeural&text={text}"
 ```
 
-留空则回到"只显示字幕"的老行为。长回复会按标点切成 180 字节分多次请求，
+留空则回到"只显示字幕"的老行为。长回复会按标点切成 **180 字符**一段、分多次请求，
 所以 URL 长度可控、播放也能早于全部合成完成就开始。
 
-**为什么默认用百度而不是 Edge TTS**：Edge TTS（`speech.platform.bing.com` 的
-readaloud 端点）现在的 `Sec-MS-GEC` 令牌已经是 **v2**（`<16位CS64>-<64位SHA256>`，
-内含一套刻意混淆的自定义 SHA-256），要在设备上移植约 200 行密集位运算，算错即 403，
-且微软随 Chromium 版本推进会改。百度翻译的朗读端点免令牌、免 key、直连可用、
-返回标准 MP3，是更稳的默认值。
+> **本仓库的实际部署**是局域网 `tts-server/` + **Azure Speech（eastasia）**，
+> 音色 `zh-CN-XiaoxiaoNeural`，首音 0.47–0.58 s；服务端注册与 Docker 搭建见
+> [第 10 节](#10-tts-服务端azure-speech-注册--docker-搭建)。
+>
+> `CONFIG_MUSE_TTS_URL` 的**编译期默认值只是一个公开占位端点**（百度翻译朗读），
+> 不改成自己的服务，板子就只有字幕没有声音——这不是 bug。
 
-想用 Edge TTS 的音色，在局域网任意一台常开的 Linux 上跑
-[`edge-tts`](https://github.com/rany2/edge-tts) 包一个小 HTTP 服务（收到 `text` 返回
-MP3），再把上面第二行填进去即可——令牌算法由上游维护，设备端不用管。
+**不要在设备端直连 Edge TTS**：`speech.platform.bing.com` 的 readaloud 端点现在要
+`Sec-MS-GEC` v2 令牌（内含一套刻意混淆的自定义 SHA-256），设备端算不动、算错即 403，
+且微软随 Chromium 版本推进会改。令牌算法交给服务端的 `edge-tts` 包维护，设备只收 MP3。
 
 > **注意**：目前只有**语音回合**（按住按钮说话）会朗读回复。串口/App 里**打字**的回合
 > 是"只显示文字"的设计（`muse_chat_session.cpp` 的 `message_done()` 在文字分支提前返回），
 > 所以**没法用串口命令触发一次朗读来做验证**，只能按住按钮说话。
 
-> ✅ **实现状态：2026-10-17 已切到 Azure Speech，真机出声。** 服务端从 edge-tts 换成
-> **Azure Speech（eastasia）**，音色默认 **晓伊 zh-CN-XiaoyiNeural**（`TTS_VOICE`，可用
-> `TTS_FORCE_VOICE` 覆盖板子 URL 里带的音色，改音色不必重刷固件）；并叠加
-> `mstts:express-as style='friendly' styledegree='1.2'` 与 `pitch=+4%`。
->
-> 同一次换血里踩到一个**服务端坑**：Flask 自带的开发服务器（werkzeug）会把给板子的长响应
-> **截断在约 1440 字节**，板子串口表现为
-> `E HTTP_CLIENT: Incomlete data received, ret=0, 1440/51264 bytes` → 只显示字幕、没有声音。
-> 换成 **waitress** 一次通过（镜像 `muse-tts:1.4` 起；`TTS_SERVER=werkzeug` 只留给本地 curl）。
-> 排查手法：容器日志显示服务端发满 51264 字节 → 同一 URL 从 WSL 取亦是完整 → 用**裸 socket 探针**
-> 占同一端口回放同一份载荷（绕开 werkzeug），板子完整播出 → 责任锁定在 HTTP 服务器层。
->
-> 2026-10-16 打通时的两个真因（仍记在案）：
->
-> | 现象 | 根因 | 修法 |
-> |---|---|---|
-> | 只出字幕、`muse.tts: no task for TTS` | 内部 RAM 最大连续块只剩 9 KB，而 TTS 任务要 12 KB 连续栈 → `xTaskCreate` 失败，回合退回静音 | TTS 任务栈与 16 KB 环形缓冲都改从 PSRAM 分配（`xTaskCreateWithCaps` / `xStreamBufferCreateWithCaps`）。任务改为常驻 worker，不再自我删除 |
-> | 回复根本不入队 | `SUB_LINE_MAX` 只有 256 KB，长 `message_done` 事件整行被丢 | `muse_chat_session.cpp:94` → 1 MB |
->
-> 成功时的串口标志（可作以后回归的验收行）：
->
-> ```
-> I muse_chat_session: speaking message assistant-msg-… (N chars)
-> I muse_chat_session: reply audio: 24000 Hz, 1 ch, 48 kbps
-> I muse.tts: TTS got NNNNN bytes
-> I muse_voice: muse reply: X.XXs of audio, N.NNs total
-> ```
->
-> 另注：edge-tts 固定回 24 kHz MP3，固件自带重采样器会降到 codec 的 16 kHz，服务端不用管采样率。
-> 端到端首音约 6–9 秒，其中 **Muse 服务端吐文本占 4–7.6 秒**（改不了），本机合成约 1.3–3 秒。
-> 服务端已改流式返回（`Transfer-Encoding: chunked`），首字节由 3.15 s 降到 **1.29 s**；
-> 串口 `muse.tts` 行会打 `first byte N ms` 便于回归对比。换后端仍只需改 `CONFIG_MUSE_TTS_URL` 一行；
-> 局域网服务见 `tts-server/README.md`。
+成功时的串口标志（可作回归的验收行）：
+
+```
+I muse_chat_session: speaking message assistant-msg-… (N chars)
+I muse_chat_session: reply audio: 24000 Hz, 1 ch, 48 kbps
+I muse.tts: TTS got NNNNN bytes
+I muse_voice: muse reply: X.XXs of audio, N.NNs total
+```
 
 ---
 
@@ -466,6 +431,8 @@ python -m esptool --chip esp32s3 -p COM5 read-flash 0 0x1000000 esp32-s3-touch-l
 #### 5.1 擦除 Flash（首次刷入必须做）
 
 微雪原厂固件的 NVS / 数据分区布局与 Muse 不同，**不擦除会导致固件起不来**。
+Muse 分区表没有 `factory` 分区（只有 `ota_0` / `ota_1`），所以 `erase-flash` 之后
+**原厂固件在片上就没了**——第 4 步那份备份是唯一的回退途径。
 
 ```sh
 python -m esptool --chip esp32s3 -p COM5 erase-flash
@@ -528,10 +495,11 @@ idf.py -B build-muse-waveshare-s3-touch-lcd-185b -DIDF_TARGET=esp32s3 \
 | 紫色 | 尚未配对 |
 | 红色闪烁 | 出错了，去看串口日志 |
 
-**重新配对**：长按 BOOT 键 **5 秒**即可重置设备并重新配置。
+**重新配对**：触摸屏进 **设置页 → Reset pairing**（要连点两次确认），确认后设备会
+忘掉 Wi-Fi 与 Muse 配对并重启。想只换 Wi-Fi 就在设置页的 Wi-Fi 列表里双击那条记录（"Tap to forget"）。
 
 > 每次配置都会建立一条全新的加密会话。由于这是社区设备，
-> **配对没有厂商验证，无法防御主动中间人攻击**——请在可信的网络上配置。
+> **配对没有厂商验证，无法主动防御中间人攻击**——请在可信的网络上配置。
 
 ---
 
@@ -539,12 +507,16 @@ idf.py -B build-muse-waveshare-s3-touch-lcd-185b -DIDF_TARGET=esp32s3 \
 
 | 操作 | 方式 |
 |---|---|
-| **按住说话（PTT）** | 按住 **BOOT** 键说话，松开结束 |
+| **按住说话（PTT）** | 按住 **BOOT** 键说话，松开结束；亮屏时也可以**按住头像 0.5 秒**说话 |
 | **确认配对** | 按一下 **BOOT** 键 |
-| **菜单 / 设置** | 在**触摸屏**上操作（从 Muse 主界面左滑进入设置） |
-| **息屏 / 亮屏** | 由固件根据电源状态与电量自动管理 |
-| **关机** | 菜单里选择关机 → 进入 **deep sleep**；按 **BOOT** 键唤醒 |
+| **亮屏** | **敲一下屏幕**、按一下 **BOOT**，或点设置页的电源图标 |
+| **熄屏** | 无操作自动熄屏（默认 **120 秒**，设置页可调 0–3600 s，`0` = 不自动熄）；也可在菜单里关屏 |
+| **菜单 / 设置** | 在**触摸屏**上操作（主界面左滑进入设置） |
+| **关机** | 点设置页的**电源图标**（或菜单里的关机）→ 进入 **deep sleep**；按 **BOOT** 键唤醒 |
 | **硬件断电** | 按 **PWR** 键（约 2 秒），这是纯硬件电源开关，固件读不到它 |
+
+> 这块板上「敲屏幕亮屏」走的是**触摸控制器 CST816S**（`INT=GPIO4`），不是 IMU 敲击引擎——
+> 见[第 8 节](#8-已知限制与注意事项)。
 
 **关于语音交互的一个重要设计**：
 
@@ -558,8 +530,9 @@ Muse **只在你按住 BOOT 键时才录音**，所以扬声器的声音永远�
 就在 `menuconfig` 的 **Muse** 菜单下把这个值调大；如果发现开头被削掉了，就调小。
 设为 `0` 表示不丢弃。
 
-**电池与功耗**：电量由 BQ27220 电量计读出。屏幕关闭时，
-CPU 会降频并在按键轮询之间进入 light sleep；插着 USB 时芯片保持全速运行。
+**电池与功耗**：电量由 BQ27220 电量计读出（CEDV 模型按本板 500 mAh 电池写回，
+百分比以电量计为准）。屏幕关闭时，CPU 会降频并在按键/触摸轮询之间进入 light sleep；
+插着 USB 时芯片保持全速运行。接上 3.7 V 锂电池后电量与充电状态才有真实数据。
 
 ---
 
@@ -577,19 +550,22 @@ CPU 会降频并在按键轮询之间进入 light sleep；插着 USB 时芯片�
 | 擦除 Flash | `python -m esptool --chip esp32s3 -p COM5 erase-flash` |
 | 列出已接入的板子 | `python tools/muse/ports.py --list` |
 | 跑主机端单元测试 | `python -m unittest discover -s tests -p 'test_*.py'` |
-| 更换屏幕头像 | `python tools/muse/avatar.py` |
 
 板子自己的控制台命令（串口连上后输入，前面带 `>`）：
 
 | 命令 | 作用 |
 |---|---|
+| `>status` | 一行 JSON：版本、电量、Wi-Fi、Muse 会话状态 |
 | `>net` | 打印实际 IP/掩码/网关/DNS、DHCP 状态与地址来源（nvs / build / dhcp） |
 | `>net.set ip=10.0.0.5 mask=255.255.255.0 gw=10.0.0.1 dns=10.0.0.1` | 写入 NVS 并重启；发布件里不内置地址，靠它给板子定地址 |
 | `>net.clear` | 删除 NVS 地址，重启后回到 DHCP |
+| `>tp` | 触摸线电平、唤醒武装状态、睡前 drain 的结果 |
+| `>i2c` / `>i2c.reset` | 总线失败计数与 SDA/SCL 电平 / 立刻复位总线并重设上拉 |
 | `>imu` / `>imu.check` / `>imu.rearm` | 打印 / 校验 / 重臂 QMI8658A tap 引擎 |
-| `>batt` | BQ27220 标准寄存器全量转储 |
+| `>batt` | BQ27220 标准寄存器全量转储（`Voltage`/`Capacity`/`Current`…） |
+| `>power` / `>power.reset` | 电池计时统计（睡眠占比等）/ 归零重新计 |
 | `>pmlow=1` / `>pmlow=0` | 带 USB 也强制进 / 退出 light sleep（复现电池态用；进入后 USB 串口会断） |
-| `>status` | 一行 JSON：版本、电量、Wi-Fi、Muse 会话状态 |
+| `>ota` | 手动触发一次 GitHub OTA |
 
 ---
 
@@ -600,24 +576,35 @@ CPU 会降频并在按键轮询之间进入 light sleep；插着 USB 时芯片�
 | 构建报错 `No SDK token` / Token 非法 | Token 必须为空（仅警告）或严格为 `mgst_` + 43 个 base64url 字符 |
 | 构建报错 `Cannot establish a connection to the component registry`（URL 指向 `components-file.espressif.com`） | 国内网络访问不了 CloudFront 文件源。设置 `IDF_COMPONENT_STORAGE_URL=https://components-file.espressif.cn/` 后重新构建，详见[第 3 步的国内加速说明](#32-构建) |
 | 构建报错 TCP buffer / cJSON nesting | 生成的 `sdkconfig` 过期，删除整个构建目录后重新构建 |
+| 构建反复出现 `Direct dependencies have changed` / `Deleting N unused components` 后失败 | `dependencies.lock` 被截断（正常应有约 19 条 `dependencies:` 映射，只剩 4 条即异常）。把 `managed_components/` 与 `dependencies.lock` **一起删掉**再重建（`tools/muse/board.sh` 每次构建前就会这么做） |
 | `esptool` 找不到串口 | 换一根**能传数据**的 USB 线；检查设备管理器里的 COM 口；按住 BOOT 再重插 USB 进入下载模式 |
 | 刷完起不来 / 反复重启 | 首次刷入前**没有执行 `erase-flash`**，执行后重刷 |
-| 屏幕有竖条纹 / 边缘色带 | ST77916 面板初始化表选错。参照 `board_waveshare_s3_touch_lcd_185b.c` 顶部的说明，通过 `st77916_vendor_config_t.init_cmds` 传入自定义初始化表 |
+| 屏幕有竖条纹 / 边缘色带 | ST77916 面板初始化表选错。板级文件已按寄存器 `0x04` 自动选表（v1 / v2 两张），日志应打印 `ST77916 reg 0x04 = … -> init table vN`；探测失败会 WARN 并重试一次 |
 | 屏幕红蓝反了 | 把板级文件里 `rgb_ele_order` 从 `LCD_RGB_ELEMENT_ORDER_RGB` 改成 `BGR` |
-| 触摸无反应 | overlay 已设 `CONFIG_ESP_LCD_TOUCH_CST816S_DISABLE_READ_ID=y`（部分 CST816S 变体读 ID 会失败）；若仍无反应，检查触摸排线与 `TP_RST=GPIO1 / TP_INT=GPIO4` |
+| 触摸无反应 | overlay 已设 `CONFIG_ESP_LCD_TOUCH_CST816S_DISABLE_READ_ID=y`（部分 CST816S 变体读 ID 会失败）；若仍无反应，用 `>tp` 看 INT 电平与武装状态，并检查触摸排线与 `TP_RST=GPIO1 / TP_INT=GPIO4` |
+| 亮屏后 UI 冻住、触摸和按键都像失效 | 电池态首次睡醒后 I2C 总线可能卡死（日志 `probe device timeout`、`BQ27220 not answering`）。1.3 已加自愈：连续 2 次失败自动 `i2c_master_bus_reset()`；手动用 `>i2c` 看计数、`>i2c.reset` 立刻复位 |
+| 熄屏后屏幕每隔半分钟左右自己亮一下 | 熄屏瞬间触摸控制器自抖的中断被当成触摸。1.3 已修（睡前 drain + `last_slept_ms≈0` 判为"睡眠被拒绝"）；仍复现就贴 `>tp` 与 `@imu.wakes` 的输出 |
+| 敲屏幕唤不醒 | 这块板的敲醒来自 CST816S 触摸（`GPIO4`），不是 IMU。先 `>tp` 看 INT 是否被武装；电池态才需要关注唤醒线，USB 供电下不会进 light sleep |
+| 电量显示明显不对（如恒 33% / 0%） | 电量计电池模型不对：`>batt` 看 `DesignCapacity` / `FullChargeCapacity`（本板电池是 **500 mAh**）；读回 0 mV / 0% 会被判为总线故障并保留上次值。`>power.reset` 归零统计后重启 |
 | 一直显示「紫色（未配对）」 | SDK Token 未填或已失效，去 gadgets.muse.ai 重新签发并重新构建 |
-| 日志里报 `BQ27220 not answering` | 未接电池时属正常现象；接了电池仍报错则检查 I2C |
+| 日志里报 `BQ27220 not answering` | 未接电池时属正常现象；接了电池仍报错则检查 I2C（`>i2c`） |
+| 只有字幕、没有声音 | 先看 `CONFIG_MUSE_TTS_URL` 是否还停在占位端点（[3.4](#34-让-muse-说话语音播报)）；再确认服务端 `/health` 正常、`reply audio: 24000 Hz` 这行是否出现 |
 | 连不上 Wi-Fi | 确认路由器是 **2.4 GHz**（ESP32-S3 不支持 5 GHz） |
 
 ---
 
 ## 8. 已知限制与注意事项
 
-- **无常开语音唤醒**：必须按住 BOOT 说话，不支持「小爱同学式」的随时唤醒。
+- **无常开语音唤醒**：必须按住 BOOT（或按住头像）说话，不支持「小爱同学式」的随时唤醒。
 - **无全双工**：Muse 说话时无法同时录音（有 barge-in 机制，见第 5 节）。
-- **PWR 键固件不可读**：菜单关机走的是 deep sleep，靠 BOOT 唤醒。
-- **IMU / RTC 未接入**：QMI8658 六轴传感器与板载 RTC 当前固件尚未使用。
-- **电量计充电状态未解码**：只上报电量百分比与电压，`charging` 恒为 `false`（USB 在线状态可读）。
+- **PWR 键固件不可读**：纯硬件电源开关；菜单/设置里的关机走 deep sleep，靠 BOOT 唤醒。
+- **IMU 只用于敲击唤醒，且电池态引擎不出事件**：QMI8658A 已接入（tap 引擎、`>imu` 诊断、
+  睡着时作为一条唤醒线），但电池态下引擎配置全对却零事件（`taps=0`，多次复现）。
+  实际能用的是**触摸控制器**那条路——敲屏幕亮屏走 CST816S（`GPIO4`）。
+- **RTC 未接入**：板载 PCF85063（`0x51`）在 I2C 总线上，但固件没有读它；日志里的「RTC 日记」
+  指的是芯片的 RTC 慢速内存（掉电不丢），与 PCF85063 无关。
+- **电量计未做 GPCCEDV 标定**：CEDV 模型用的是参考电芯参数，容量项已按本板 500 mAh 写回；
+  充电状态由 `BatteryStatus` 的 `DSG` 位反推，没有做充放电电流积分。
 - **无板载状态指示灯**：状态信息全部通过圆屏呈现。
 - **安全建议**：强烈建议开启 NVS 加密——NVS 里存着 Wi-Fi 凭据和设备 Token，
   不加密时任何拿到板子实物的人都能读出来。在 `idf.py menuconfig` 的
@@ -643,165 +630,9 @@ python -m esptool --chip esp32s3 -p COM5 write-flash 0 esp32-s3-touch-lcd-1.85b-
 
 ---
 
-## 10. 进阶：改固件、换头像、加指令
+## 10. TTS 服务端：Azure Speech 注册 + Docker 搭建
 
-- **换成你自己的头像**：插上板子后运行 `python tools/muse/avatar.py`。
-  它会请你的 Muse 把头像重绘为该板子的像素版本、校验结果，然后自动构建并刷入。
-  自定义头像不会进 Git。详见
-  [`tools/muse/AVATAR_RECIPE.md`](esp32/tools/muse/AVATAR_RECIPE.md)。
-- **给 Muse 加一条自定义指令**（例如读传感器、开关继电器）：
-  在 `link.register` 里声明，并在 `esp32/main/app.c` 中处理。
-  详见 [`esp32/AGENTS.md`](esp32/AGENTS.md)。
-- **不想接板子就调 UI**：用
-  [`esp32/simulator/`](esp32/simulator/README.md) 的桌面预览，
-  它在 412 × 412 的 SenseCAP Watcher 窗口中运行**生产环境的 UI 与头像渲染器**，
-  支持鼠标键盘输入，也能在无显示服务器的情况下渲染脚本化截图。
-- **让 Muse 说中文**：本板 overlay 已启用 `CONFIG_MUSE_CJK_FONT=y`，
-  字幕会回退到 GNU Unifont 16×16 位图来显示中日文字（约占 850 KB Flash，不占 RAM）。
-- **想自己移植新板子**：见 [`esp32/devices/README.md`](esp32/devices/README.md#add-a-board)
-  与 [`esp32/AGENTS.md`](esp32/AGENTS.md)。
-- **功耗分析**：起点是 [`esp32/docs/power/README.md`](esp32/docs/power/README.md)，
-  使用 PPK2 前请先读 [`ppk2.md`](esp32/docs/power/ppk2.md)。
-
-**给 AI 编码助手用的说明**：每个目录下的 `AGENTS.md` 是给
-[Muse Code](https://developer.meta.com/ai/lp/muse-code/) 这类编码代理读的，
-里面包含了完整的环境搭建、构建、刷写与读日志流程。
-
----
-
-## 11. 本次移植踩过的坑（屏幕 / 构建环境）
-
-这一节把 2026-10-15 一天真机调试里踩到的坑集中记下来。前面各步散落着同样的内容，
-这里是可以直接跳查的索引。
-
-### 11.1 屏幕不亮 → PSRAM 绘制缓冲，改分带渲染
-
-**现象**：刷完屏幕全黑。串口四条错误，只在第一次绘制时出现一次：
-
-```
-E spi_master: DMA TX underflow detected
-E lcd_panel.io.spi: panel_io_spi_tx_param(221): recycle spi transactions failed
-E st77916_spi: panel_st77916_draw_bitmap(485): send command failed
-E esp_lvgl:bridge_v9: Draw bitmap failed: ESP_ERR_INVALID_STATE
-```
-
-**根因（有 IDF 源码级证据，不是猜的）**：ESP-IDF 的 SPI 驱动**不能通过 DMA 直接读 PSRAM**。
-
-- `esp_lcd_panel_io_spi.c` 判断 `esp_ptr_external_ram(color)`，是 PSRAM 就给事务打上
-  `SPI_TRANS_DMA_USE_PSRAM`；
-- `esp_driver_spi/src/gpspi/spi_master.c` 里那句 `DMA TX underflow` 的检测**本身被
-  `#if SOC_PSRAM_DMA_CAPABLE && CONFIG_SPIRAM` 门控**，且要求发送缓冲在外部 RAM
-  —— 也就是说**这条错误只可能因缓冲在 PSRAM 而触发**；
-- 失败的事务在下一次 `spi_device_get_trans_result()` 回收时报 `recycle spi transactions failed`。
-
-即：`use_psram = true` 的 LVGL 缓冲经 DMA 发 QSPI 时饿死 → 第一次 flush 失败 →
-屏幕从头到尾没拿到有效像素。
-
-**修法**：改用本仓库既有的 **`muse_lcd_bands`（分带渲染）**——1.75C / 2.16 / Watcher /
-Stopwatch 四块板都这么做，**1.85B 是唯一漏掉的**。LVGL 在 PSRAM 画整条 90 行的高带，
-专用任务切成 8 行的块拷进两块固定的内部 DMA 缓冲交替发出。
-
-加新板务必：`DRAW_BUF_LINES = LCD_V_RES / 4`、`LCD_CHUNK_BYTES = LCD_H_RES * 8 * 2`、
-`max_transfer_sz = LCD_CHUNK_BYTES`，并在 `components/muse/CMakeLists.txt` 该板分支
-**同时登记** `boards/<board>.c` 和 `boards/muse_lcd_bands.c`。
-`muse_lcd_bands_register()` 之后，面板与面板 IO 的一切访问都要经 `muse_lcd_bands_run()`。
-
-### 11.2 屏幕花屏横条纹 → 面板混装两个修订版
-
-**现象**：绘制通路修好后屏幕点亮，但显示彩色横条纹。
-
-**根因**：微雪这块板**出厂混装两个 ST77916 面板修订版**，靠**面板寄存器 0x04** 区分：
-
-| 0x04 返回值 | 修订 | 需要的初始化表 |
-|---|---|---|
-| `00 7F 7F 7F` | version 1 | `vendor_specific_init_version_1`（182 条） |
-| `00 02 7F 7F` | version 2 | `vendor_specific_init_version_2`（185 条） |
-
-`espressif/esp_lcd_st77916` **2.x 只剩一张内置默认表**（`F0=0x08, F2=0x08` 开头），
-**两张修订都对不上** → 无论拿到哪块板都是花屏。探测逻辑在**厂商 BSP**里，不在组件里：
-`Examples/ESP-IDF-V5.5.3/*/components/waveshare__esp32_s3_touch_lcd_1_85B/esp32_s3_touch_lcd_1_85B.c`
-
-**修法**（已内置在板级文件，照搬官方流程）：
-
-1. 先手工拉一次面板复位（驱动的复位要等面板创建后，晚于探测）；
-2. 以 **3 MHz** 建 panel IO，用读操作码 `0x0B` 读寄存器 `0x04`；
-3. 按返回值选表；
-4. `esp_lcd_panel_io_del()` 后以 **40 MHz** 重建 IO 交给绘制路径；
-5. 经 `st77916_vendor_config_t.init_cmds` 传入。
-
-**本机这块板是 v2**（启动日志会打印 `ST77916 reg 0x04 = 00 02 7F 7F ... -> init table v2`）。
-换到另一块 1.85B（v1）**不用改任何代码**，探测会自动选对。
-
-> 经验：这类"亮但花"的问题，**优先去厂商 BSP 拿权威初始化序列**，别对着组件默认表猜。
-> 微雪的例程在 `Examples/ESP-IDF-V5.5.3/*/components/waveshare__<board>/`；
-> 用 GitHub API 拉 `git/trees?recursive=1` 找文件最快（网页列表会漏文件名）。
-
-### 11.3 构建环境坑（Windows / 本机）
-
-#### （1）组件仓库走中国镜像
-
-`components-file.espressif.com`（CloudFront）本机不可达，构建报
-`Cannot establish a connection to the component registry`。构建前设：
-
-```powershell
-$env:IDF_COMPONENT_STORAGE_URL = "https://components-file.espressif.cn/"
-```
-
-#### （2）在 AI 代理里构建时，删除保护会打断 ESP-IDF
-
-WorkBuddy（以及同类的代理工具）会通过 `PYTHONPATH` 给所有 Python 进程注入一个
-`sitecustomize.py`，把删除操作改成"移入回收站"。ESP-IDF 的组件管理器清理未使用组件时
-一次删掉整个目录，于是：
-
-- `[safe-delete][SAFE_DELETE_BULK_CONFIRM_REQUIRED]` —— 单次删除超过阈值（默认 50）就拒绝；
-- `[safe-delete][SAFE_DELETE_FAIL_CLOSED]` + `SHFileOperationW ... 0x2` —— 长路径进回收站失败后"失败关闭"。
-
-**这两条都会让 CMake 以 FATAL_ERROR 终止，构建直接失败。**
-
-#### （3）⚠️ 依赖锁会被写坏，形成死循环（本机反复踩到）
-
-组件管理器的流程是「**先写 `dependencies.lock`，再清理未使用组件**」。清理被上面的保护
-打断 → **锁就停在半截** → 下一次构建读到半截锁，认为其余组件都"未使用"要删 → 再次被拦。
-
-判断方法：锁里 `dependencies:` **映射**条目应约 19 条（对应 19 个组件目录）。
-**只剩 4 条就说明被截断了**，日志会反复出现 `Direct dependencies have changed` 和
-`Deleting N unused components`。
-
-**唯一的破解：两个一起清，再重新构建。**
-
-```powershell
-# 走 PowerShell 原生删除通道，不经 Python shim
-Remove-Item -LiteralPath "esp32\managed_components" -Recurse -Force
-Remove-Item -LiteralPath "esp32\dependencies.lock" -Force
-# 然后正常 idf.py build
-```
-
-这正是仓库 `tools/muse/board.sh` 每次构建前做的 `clean()` —— 不同板卡的依赖集不同，
-组件管理器本来就要清理上一套，所以**养成"先清再建"的习惯最省事**。
-全量重建 2166 步、约 18～20 分钟（ccache 热）。
-
-#### （4）构建耗时数字会被机器休眠污染
-
-CMake configure 日志里的 `Configuring done (82001.7s)` 是**墙钟时间**，
-机器休眠会被算进去，别据此判断环境异常。
-
-### 11.4 小结：今天改了什么
-
-| 文件 | 改动 |
-|---|---|
-| `components/muse/boards/board_waveshare_s3_touch_lcd_185b.c` | 分带渲染；内置官方两张初始化表 + 0x04 探测选表；背光日志；面板 IO 访问经 `muse_lcd_bands_run()` |
-| `components/muse/CMakeLists.txt` | 185B 分支补登 `boards/muse_lcd_bands.c`；源列表加 `muse_tts.c` |
-| `components/muse/muse_tts.{c,h}` | 新增：URL 模板 → MP3 的语音播报 |
-| `components/muse/muse_chat_session.cpp` | `start_tts()` 发声分支、主循环 `pump_tts()`、`turn_finish()` 取消防护 |
-| `components/muse/Kconfig` | 新增 `MUSE_TTS_URL` |
-| `main/Kconfig.projbuild` | 新增 `HOMEHUB_STATIC_IP` / `_NETMASK` / `_GATEWAY` / `_DNS` |
-| `main/wifi_mgr.c` | 新增 `apply_static_ip()`，挂在 `WIFI_EVENT_STA_START` |
-
----
-
-## 12. TTS 服务端：Azure Speech 注册 + Docker 搭建
-
-### 12.1 注册 Azure Speech（拿 key 与 region）
+### 10.1 注册 Azure Speech（拿 key 与 region）
 
 1. 打开 <https://portal.azure.com> 注册并登录（个人免费账号可用；F0 层不产生费用）。
 2. 搜索 **Speech services（语音服务）** → **创建**：
@@ -821,19 +652,19 @@ CMake configure 日志里的 `Configuring done (82001.7s)` 是**墙钟时间**�
 > 头带 `Ocp-Apim-Subscription-Key` 与 `X-Microsoft-OutputFormat: audio-24khz-48kbitrate-mono-mp3`
 > （与固件验通的 `reply audio: 24000 Hz, 1 ch, 48 kbps` 一致），正文是 SSML。
 
-### 12.2 用 Docker 跑 tts-server
+### 10.2 用 Docker 跑 tts-server
 
 ```sh
 cd tts-server
 cat > .env <<'EOF'
 AZURE_SPEECH_KEY=<KEY 1>
 AZURE_SPEECH_REGION=eastasia
-TTS_VOICE=zh-CN-XiaoyiNeural
+TTS_VOICE=zh-CN-XiaoxiaoNeural
 EOF
 docker build -t muse-tts:1.5 .
 docker run -d --name muse-tts --restart unless-stopped -p 5050:5050 --env-file .env muse-tts:1.5
 curl -s http://127.0.0.1:5050/health
-curl -s -o /tmp/t.mp3 "http://127.0.0.1:5050/tts?text=你好&voice=zh-CN-XiaoyiNeural"
+curl -s -o /tmp/t.mp3 "http://127.0.0.1:5050/tts?text=你好&voice=zh-CN-XiaoxiaoNeural"
 head -c 4 /tmp/t.mp3 | od -An -tx1     # ff f3 或 49 44 33 = MP3
 ```
 
@@ -859,16 +690,16 @@ head -c 4 /tmp/t.mp3 | od -An -tx1     # ff f3 或 49 44 33 = MP3
 - 板子侧只改一行 URL（写进构建目录的 `sdkconfig`，不入库）：
 
 ```
-CONFIG_MUSE_TTS_URL="http://<tts-host>:5050/tts?voice=zh-CN-XiaoyiNeural&text={text}"
+CONFIG_MUSE_TTS_URL="http://<tts-host>:5050/tts?voice=zh-CN-XiaoxiaoNeural&text={text}"
 ```
 
 - 验收：`/health` 里 `azure_pool_idle=1`、`stream_head=512`；板子串口出现
   `muse_chat_session: reply audio: 24000 Hz, 1 ch, 48 kbps` 与 `muse.tts: TTS got N bytes`。
-  排查见 [`tts-server/README.md`](tts-server/README.md) 与本文第 11 节。
+  排查见 [`tts-server/README.md`](tts-server/README.md)。
 
 ---
 
-## 13. 许可证
+## 11. 许可证
 
 本项目采用 **Apache License 2.0**（见 [`LICENSE`](LICENSE)），但以下第三方文件保留其上游许可证：
 
@@ -881,185 +712,3 @@ CONFIG_MUSE_TTS_URL="http://<tts-host>:5050/tts?voice=zh-CN-XiaoyiNeural&text={t
 Apache 许可证**不覆盖** [Jollybot 头像](esp32/avatar)。
 
 **社区**：欢迎加入 [Discord](https://discord.gg/3bhjCkZdd6) 与其他玩家交流。
-
----
-
-## 附：本次移植的验证状态
-
-本仓库的 1.85B 移植已通过**真实编译验证**（ESP-IDF v6.0.1，xtensa-esp32s3-elf-gcc 15.2.0）：
-
-| 项目 | 结果 |
-|---|---|
-| 编译 | ✅ 通过，无错误无警告 |
-| 固件体积 | `muse-gadget.bin` = **2.88 MB**，4 MB 应用分区剩余 **28%** |
-| 生效板卡 | `CONFIG_MUSE_BOARD_ID="waveshare_s3_touch_lcd_185b"` |
-| 内存配置 | `CONFIG_SPIRAM=y` + `SPIRAM_MODE_OCT` + 80 MHz（8 MB Octal PSRAM 已启用） |
-| 分区表 | `partitions_muse.csv`（16 MB 双 OTA 布局，`otadata`@0x1d000） |
-| 中文字体 | `CONFIG_MUSE_CJK_FONT=y` |
-| 依赖解析 | `esp_lcd_st77916` 2.0.2、`esp_lcd_touch_cst816s` 1.1.2、`esp_lvgl_adapter` 0.6.4、`esp_codec_dev` ✅ |
-| 刷入真机 | ✅ **已完成**（2026-10-15，真机 MAC `44:BD:8D:xx:xx:xx`） |
-| 原厂固件备份 | ✅ 16 MB 全片镜像，MD5 `7655af5517e5667b2c35b1298482c0fc` |
-| SDK Token | ✅ 已写入并嵌入固件（真机日志 `link.app: SDK token: mgst_…`） |
-| 真机启动 | ✅ 无 panic / 无重启循环，Wi-Fi 扫描、BLE 广播、心跳均正常 |
-| 屏幕点亮 | ✅ 绘制通路已修复（分带渲染），串口零绘制错误；画面需肉眼确认 |
-
-### 真机实测结果（2026-10-15）
-
-**环境**：ESP-IDF v6.0.1，`idf.py build` + `esptool` erase/write，串口 COM3（USB-Serial/JTAG，921600 读 / 460800 写）。
-
-**原厂固件备份**（刷写前）：
-
-| 项 | 值 |
-|---|---|
-| 文件 | `backups/esp32-s3-touch-lcd-1.85b-backup.bin` |
-| 大小 | 16,777,216 字节（0x1000000，整片） |
-| MD5 | `7655af5517e5667b2c35b1298482c0fc` |
-| 原厂工程名 | `01_factory`，构建于 2026-03-23，ESP-IDF v5.5.3 |
-| 原厂分区 | `factory`@0x20000 (6.5 MB) + `ota_0`@0x6c0000 + `assets`@0xac0000 (4 MB 字体/图片资源) |
-
-> 注意：Muse 分区表**没有 `factory` 分区**（只有 `ota_0` / `ota_1`），所以 `erase-flash` 之后原厂固件在片上就没了。上表这份备份是唯一的回退途径，别弄丢。
-
-**Muse 固件刷入结果**：四个镜像全部写入并通过哈希校验。
-
-```
-bootloader.bin          22608 B  @0x0       Hash of data verified
-partition-table.bin      3072 B  @0x10000   Hash of data verified
-ota_data_initial.bin     8192 B  @0x1d000   Hash of data verified
-muse-gadget.bin       3018752 B  @0x20000   Hash of data verified
-```
-
-**真机启动日志要点**：
-
-- 引导器识别分区表为 Muse 双 OTA 布局（`ota_0`@0x20000、`ota_1`@0x420000、`prod_data`/`prod_bak`@0x820000）。
-- Octal PSRAM 正常：`vendor id 0x0d (AP)`、`density 0x03 (64 Mbit)`、`Speed: 80MHz`，向堆加入 5287 KB。
-- 板卡识别正确：`muse: board: Waveshare ESP32-S3-Touch-LCD-1.85B`。
-- Token 生效：`link.app: SDK token: mgst_…`（对比：token 留空时会打印 `muse no token`）。
-- 节点身份：`node_id=homelink-780c1c`、`ble_name=MuseGadget-780C1C`，处于未配对广播状态。
-- 触摸控制器 CST816S 注册成功；Wi-Fi 扫描到 AP；`link.heartbeat` 每 5 s 一次，堆稳定在 int 70 K / psram 5165 K，无下降趋势。
-
-**发现的问题：屏幕点不亮（已定位并修复）**
-
-首刷之后屏幕无画面，串口日志里是这四条：
-
-```
-E spi_master: DMA TX underflow detected
-E lcd_panel.io.spi: panel_io_spi_tx_param(221): recycle spi transactions failed
-E st77916_spi: panel_st77916_draw_bitmap(485): send command failed
-E esp_lvgl:bridge_v9: Draw bitmap failed: ESP_ERR_INVALID_STATE
-```
-
-根因**不是驱动型号选错**——微雪官方文档与板级文件逐条核对过：驱动 IC `ST77916`、
-QSPI 接口、360×360、CS=21 / PCLK=40 / D0=46 / D1=45 / D2=42 / D3=41 / RST=3 / BL=5，
-全部一致。
-
-真正的原因是**绘制缓冲放在了 PSRAM**：ESP-IDF 的 SPI 驱动不能通过 DMA 直接读 PSRAM
-（`esp_lcd_panel_io_spi` 检测到 `esp_ptr_external_ram(color)` 就打上 `SPI_TRANS_DMA_USE_PSRAM`），
-ESP32-S3 上 DMA 从 PSRAM 取数供不上 40 MHz QSPI 的消耗，于是 `spi_master` 报
-`DMA TX underflow`（这个检测本身就是 `#if SOC_PSRAM_DMA_CAPABLE && CONFIG_SPIRAM` 门控的，
-只有 TX 缓冲在外部 RAM 时才可能触发）；下一条命令在
-`spi_device_get_trans_result()` 回收事务时失败，即 `recycle spi transactions failed`，
-LVGL 的第一次 flush 就此失败，屏幕始终没有有效像素。
-
-修法沿用本仓库既有的 **`muse_lcd_bands`（分带渲染）**——1.75C、2.16、Watcher、Stopwatch
-四块板都这么做的，1.85B 是唯一漏掉的：
-
-- LVGL 仍把每个 90 行的整条带画在 PSRAM（360 ÷ 4 = 4 条带）；
-- 专用发送任务把每带切成 8 行的块，拷进**两块固定的内部 DMA 缓冲**（各 5760 B）交替发出，
-  交给 DMA 的永远是可访问的内部 RAM；
-- `max_transfer_sz` 设为单块上限 `LCD_CHUNK_BYTES`。
-
-**修复后实测**（`backups/boot-log-lcd185b-2026-10-15-bands-fix.txt`）：
-
-| 指标 | 修复前 | 修复后 |
-|---|---|---|
-| `DMA TX underflow` | 1 | **0** |
-| `recycle spi transactions failed` | 1 | **0** |
-| `Draw bitmap failed` | 1 | **0** |
-| panic / 重启 | 0 | 0 |
-
-同时新增一行确认背光的日志（`board: backlight 100%`），说明 LEDC 确实把背光拉到了满亮。
-堆余量：`int 46 K / dma 43 K / psram 4024 K`，无下降趋势。
-
-**第二个问题：屏幕亮起后花屏条纹（已定位并修复）**
-
-修好绘制通路后屏幕亮了，但显示的是彩色横条纹。原因**不在数据通路，而在面板初始化表**：
-微雪这块板出厂时**混装两个 ST77916 面板修订版**，靠面板的**寄存器 0x04**区分
-（QSPI 读操作码 `0x0B`）：
-
-| 0x04 返回值 | 面板修订 | 需要的初始化表 |
-|---|---|---|
-| `00 7F 7F 7F` | version 1 | `vendor_specific_init_version_1`（182 条） |
-| `00 02 7F 7F` | version 2 | `vendor_specific_init_version_2`（185 条） |
-
-`espressif/esp_lcd_st77916` **2.x 只有一张内置默认表**（以 `F0=0x08, F2=0x08` 开头），
-它**两张都对不上**——所以无论拿到哪个修订版都是花屏。（1.x 时代据称有探测逻辑，
-2.0 起改由厂商 BSP 自己实现。板级文件顶部那句"探测 0x04 二选一"的注释说的正是这件事，
-之前误以为已过时，实际它一直是对的。）
-
-修法：把微雪官方 BSP
-（`Examples/ESP-IDF-V5.5.3/01_comprehensive_example/components/waveshare__esp32_s3_touch_lcd_1_85B/esp32_s3_touch_lcd_1_85B.c`）
-的两张表**原样搬进板级文件**（`s_init_version_1` / `s_init_version_2`），并复刻它的流程：
-
-1. 先手工拉一次面板复位（驱动的复位要等面板创建后才会发生，晚于探测）；
-2. 以 **3 MHz** 建 panel IO，读寄存器 `0x04`；
-3. 按返回值选表；
-4. `esp_lcd_panel_io_del()` 后以 **40 MHz** 重建 IO，交给绘制路径；
-5. 把选中的表经 `st77916_vendor_config_t.init_cmds` 传入。
-
-本机的实测结果（`backups/boot-log-lcd185b-2026-10-15-init-v2.txt`）：
-
-```
-I (1114) board: ST77916 reg 0x04 = 00 02 7F 7F (ESP_OK) -> init table v2
-I (1132) st77916_spi: LCD panel create success, version: 2.0.2
-I (1940) board: backlight 100%
-```
-
-即此板是 **version 2** 修订。绘制错误仍为 0（`DMA TX underflow` / `Draw bitmap failed` / panic 全 0）。
-
-### 验证中发现并已修复的问题
-
-**`board_waveshare_s3_touch_lcd_185b.c` 编译不过**：BQ27220 电量计的读寄存器代码用了
-**旧版 I2C 主站 API 的参数形式**，把总线句柄当成设备句柄、把地址当成写缓冲区传了进去，
-在 ESP-IDF v6 上直接编译失败：
-
-```
-error: passing argument 1 of 'i2c_master_transmit_receive' from incompatible pointer type
-error: too many arguments to function 'i2c_master_transmit_receive'; expected 6, have 7
-```
-
-已按 IDF 新 API 修正：在 `init()` 中先用 `i2c_master_bus_add_device()` 把 BQ27220 注册为
-该总线上的一个从设备（句柄 `s_bq`），再由 `i2c_master_transmit_receive(s_bq, ...)` 读取。
-
-**`board_waveshare_s3_touch_lcd_185b.c` 显示点不亮**：本板是全仓库唯一把 LVGL 绘制缓冲
-放进 PSRAM、且没有走 `muse_lcd_bands` 分带渲染的板子（2 × 360×32×2 B = 46 KB 在 PSRAM），
-导致 SPI DMA 从 PSRAM 取数饿死（详见上一节的完整分析）。已改为分带渲染：
-
-- `components/muse/boards/board_waveshare_s3_touch_lcd_185b.c`：
-  `DRAW_BUF_LINES` 由 32 改为 `LCD_V_RES / 4`（= 90，四条带），新增
-  `LCD_CHUNK_BYTES (LCD_H_RES * 8 * 2)`；`spi_bus_config_t.max_transfer_sz` 由整带大小
-  改为 `LCD_CHUNK_BYTES`；`esp_lv_adapter_register_display()` 换成
-  `muse_lcd_bands_register(disp_cfg, DRAW_BUF_LINES, LCD_CHUNK_BYTES)`，
-  并把 `profile` 里的 `buffer_height` / `use_psram` / `require_double_buffer` 交给分带模块自己设。
-- 分带模块注册后，面板与其 IO 必须经它自己的任务访问，因此 `panel_sleep()` 与
-  `power_off()` 里的 `esp_lcd_panel_disp_sleep()` / `esp_lcd_panel_disp_on_off()`
-  都改由 `muse_lcd_bands_run()` 包一层（背光是 LEDC，不经面板 IO，无需包装）。
-- `components/muse/CMakeLists.txt`：把 `boards/muse_lcd_bands.c` 加进
-  `CONFIG_MUSE_BOARD_WAVESHARE_S3_TOUCH_LCD_185B` 分支的源列表（此前只有板级文件本身）。
-
-**`board_waveshare_s3_touch_lcd_185b.c` 花屏条纹**：面板初始化表不匹配（组件 2.x 只剩一张
-默认表，而这块板混装两个面板修订）。已把微雪官方 BSP 的两张表原样引入，并在
-`display_start()` 里复刻它的"手工复位 → 3 MHz 下读 `0x04` → 选表 → 40 MHz 重建 IO"流程。
-详见上一节的对照表。
-
-### 仍待真机验证的部分（编译无法覆盖）
-
-1. **ST77916 面板初始化表**：✅ 已解决——组件 2.x 只有一张默认表，两块面板修订都不是，
-   已改为**读寄存器 0x04 自动选表**（见上）。此板实测为 **version 2**。
-   若换到另一块 1.85B（version 1），代码会自动选中 v1 表，无需改动。
-2. **RGB / BGR 顺序**：首启若红蓝颠倒，把 `rgb_ele_order` 改成 `LCD_RGB_ELEMENT_ORDER_BGR`。
-   微雪官方 BSP 用的是 `LCD_RGB_ELEMENT_ORDER_RGB` + 16 bpp，与此处一致。
-3. **触摸方向与阈值**：CST816S 的 `swap_xy` / `mirror_x` / `mirror_y` 可能需要按实机微调。
-4. **绘制缓冲**：✅ 已解决——改为分带渲染，见上（原 `use_psram = true` 是屏幕不亮的根因）。
-5. **barge-in 时长**：默认 200 ms，按第 5 节的说明在实机上微调。
-6. **电量计充电状态**：当前 `charging` 恒为 `false`（未解码 BQ27220 充电状态寄存器）。
-
