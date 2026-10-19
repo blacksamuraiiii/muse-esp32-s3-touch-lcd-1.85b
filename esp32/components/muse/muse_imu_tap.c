@@ -595,14 +595,16 @@ int muse_imu_tap_bump_mg(void)
     /* Resting on the desk the magnitude is 1 g; anything above that is motion.
      * Squaring avoids the sqrt for the comparison, so squint-free on a CPU
      * that has no hardware divider for doubles. */
-    int32_t sq = (int32_t)ax * ax + (int32_t)ay * ay + (int32_t)az * az;
-    int32_t rest = (int32_t)ACC_LSB_PER_G * ACC_LSB_PER_G;
+    /* int64: at +/-2 g full scale three axes reach 3 x 32767^2, past
+     * INT32_MAX, so the sum went negative and the hardest knock read as none. */
+    int64_t sq = (int64_t)ax * ax + (int64_t)ay * ay + (int64_t)az * az;
+    int64_t rest = (int64_t)ACC_LSB_PER_G * ACC_LSB_PER_G;
     if (sq <= rest) {
         return 0;
     }
     /* Linear around 1 g: the excess in mG, close enough for a log line. */
-    int32_t over = sq - rest;
-    int bump = (int)(over / (2 * ACC_LSB_PER_G) * 1000 / ACC_LSB_PER_G);
+    int64_t over = sq - rest;
+    int bump = (int)(over / (2 * (int64_t)ACC_LSB_PER_G) * 1000 / ACC_LSB_PER_G);
     if (bump > (int)s_diary.accel_max_mg) {
         s_diary.accel_max_mg = (uint32_t)bump;
     }
@@ -777,13 +779,13 @@ int muse_imu_tap_fifo_peak_mg(void)
         int16_t ax = (int16_t)(p[0] | (p[1] << 8));
         int16_t ay = (int16_t)(p[2] | (p[3] << 8));
         int16_t az = (int16_t)(p[4] | (p[5] << 8));
-        int32_t sq = (int32_t)ax * ax + (int32_t)ay * ay + (int32_t)az * az;
-        int32_t rest = (int32_t)ACC_LSB_PER_G * ACC_LSB_PER_G;
+        int64_t sq = (int64_t)ax * ax + (int64_t)ay * ay + (int64_t)az * az;
+        int64_t rest = (int64_t)ACC_LSB_PER_G * ACC_LSB_PER_G;
         if (sq <= rest) {
             continue;
         }
-        int32_t over = sq - rest;
-        int mg = (int)(over / (2 * ACC_LSB_PER_G) * 1000 / ACC_LSB_PER_G);
+        int64_t over = sq - rest;
+        int mg = (int)(over / (2 * (int64_t)ACC_LSB_PER_G) * 1000 / ACC_LSB_PER_G);
         if (mg > peak) {
             peak = mg;
         }
