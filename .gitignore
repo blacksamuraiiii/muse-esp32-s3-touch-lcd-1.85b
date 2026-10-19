@@ -39,3 +39,8 @@ virtual-avatar/maomao/
 # ad-hoc analysis. Kept locally for the work itself, never part of the firmware
 # or of the published project.
 /docs/
+
+# Machine-local sdkconfig overlay (TTS endpoint, Wi-Fi, static IP). Loaded last
+# by tools/muse/board.sh so it survives deleting the build directory; never
+# committed, because it holds addresses and possibly credentials.
+esp32/devices/sdkconfig.local

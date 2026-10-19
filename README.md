@@ -338,11 +338,16 @@ idf.py -B build-muse-waveshare-s3-touch-lcd-185b -DIDF_TARGET=esp32s3 \
 
 > 💡 **改了配置文件后必须删掉构建目录**：生成出来的 `sdkconfig` 会覆盖后来对
 > `sdkconfig.defaults` 或 overlay 的修改。改完配置就 `rm -rf build-muse-waveshare-s3-touch-lcd-185b` 重新构建。
+>
+> 💡 **本机私有配置放 `esp32/devices/sdkconfig.local`**（已 gitignore）：TTS 地址、Wi-Fi 凭据、
+> 静态 IP 这类「只属于这台机器」的东西写这里，`tools/muse/board.sh` 会最后加载它。
+> 好处是删构建目录不会丢，也不会被提交上去——只写进 `build-…/sdkconfig` 的话，删一次就没了。
 
 #### 3.3 预置 Wi-Fi 与静态 IP（可选）
 
 如果不想每次刷完都走蓝牙配网，可以把 Wi-Fi 凭据直接编进固件。在
-`idf.py menuconfig` 的 **Home Hub** 菜单里填（或直接改构建目录下的 `sdkconfig`）：
+`idf.py menuconfig` 的 **Home Hub** 菜单里填，或写进 `esp32/devices/sdkconfig.local`
+（推荐，已 gitignore，删构建目录不丢）：
 
 | 配置项 | 作用 |
 |---|---|
@@ -387,7 +392,14 @@ CONFIG_MUSE_TTS_URL="http://<tts-host>:5050/tts?voice=zh-CN-XiaoxiaoNeural&text=
 > [第 10 节](#10-tts-服务端azure-speech-注册--docker-搭建)。
 >
 > `CONFIG_MUSE_TTS_URL` **默认留空**：固件里不烧任何厂商端点，新克隆的仓库构建出来
-> 就是"只有字幕、没有声音"——这是设计，不是 bug。要出声就把上面那行填进构建目录的 `sdkconfig`。
+> 就是"只有字幕、没有声音"——这是设计，不是 bug。
+>
+> **填在哪里**：写进 `esp32/devices/sdkconfig.local`（已 gitignore，`tools/muse/board.sh`
+> 最后加载它，优先级最高），而不是只写进 `build-…/sdkconfig`——后者删构建目录就没了：
+>
+> ```
+> CONFIG_MUSE_TTS_URL="http://<tts-host>:5050/tts?voice=zh-CN-XiaoxiaoNeural&text={text}"
+> ```
 
 **不要在设备端直连 Edge TTS**：`speech.platform.bing.com` 的 readaloud 端点现在要
 `Sec-MS-GEC` v2 令牌（内含一套刻意混淆的自定义 SHA-256），设备端算不动、算错即 403，
