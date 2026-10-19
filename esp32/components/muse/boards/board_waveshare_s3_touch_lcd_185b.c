@@ -506,6 +506,8 @@ static i2c_master_bus_handle_t s_i2c;
 static i2c_master_dev_handle_t s_bq;   /* BQ27220 fuel gauge, added to s_i2c */
 static i2c_master_dev_handle_t s_imu;  /* QMI8658A: tap-to-wake only */
 static esp_lcd_panel_handle_t s_panel;
+static esp_lcd_panel_io_handle_t s_tp_io;   /* CST816S register access */
+static esp_lcd_touch_handle_t s_tp;         /* read to release its INT */
 static muse_gpio_button_t s_talk;
 
 static esp_err_t init(void)
@@ -519,6 +521,10 @@ static esp_err_t init(void)
         .flags.enable_internal_pullup = true,
     };
     ESP_RETURN_ON_ERROR(i2c_new_master_bus(&i2c_cfg, &s_i2c), TAG, "i2c");
+    /* Everything on this bus - the touch controller above all - goes quiet
+     * together when the bus itself stops working, which is what a battery
+     * session can leave behind (muse_board.h has the recovery). */
+    muse_i2c_register(s_i2c, I2C_SDA, I2C_SCL);
     /* i2c_master_transmit_receive() takes a device handle, not a bus handle:
      * register the fuel gauge as one device on the shared bus. */
     const i2c_device_config_t bq_cfg = {
@@ -545,6 +551,63 @@ static esp_err_t init(void)
         ESP_LOGW(TAG, "no IMU device handle");
     }
     return muse_gpio_button_init(&s_talk, TALK_GPIO);
+}
+
+/* The CST816S reports a touch as a *low pulse* on IRQ rather than a held level.
+ * The touch chip's own IRQ settings, read-only, logged for the record:
+ * 0xA7 chip id, 0xED IrqPluseWidth (the low pulse a touch makes - the thing a
+ * light-sleep wake has to catch), 0xFA IrqCtl, 0xFE DisAutoSleep. An earlier
+ * round *wrote* 0xEE here on the assumption it was IrqPluseWidth: the vendor
+ * SDK's register table is shifted by one in places and 0xEE is not that
+ * register. The write cost a night of the chip waking the screen as soon as it
+ * went dark, so the settings are read, never poked, until a datasheet settles
+ * their meaning. */
+static void touch_report_config(void)
+{
+    static const struct {
+        uint8_t reg;
+        const char *name;
+    } regs[] = {
+        { 0xA7, "chip id" },
+        { 0xED, "IrqPluseWidth" },
+        { 0xFA, "IrqCtl" },
+        { 0xFE, "DisAutoSleep" },
+    };
+    for (size_t i = 0; i < sizeof(regs) / sizeof(regs[0]); i++) {
+        uint8_t v = 0;
+        if (esp_lcd_panel_io_rx_param(s_tp_io, regs[i].reg, &v, 1) == ESP_OK) {
+            ESP_LOGI(TAG, "touch: 0x%02X %s = 0x%02X", regs[i].reg, regs[i].name, v);
+        } else {
+            ESP_LOGW(TAG, "touch: 0x%02X %s not readable", regs[i].reg, regs[i].name);
+        }
+    }
+    /* A tap on the glass is a short low pulse - shorter than the level the
+     * chip's low-power wake sampler can catch, which is why a *held* finger
+     * wakes the board and a tap does not. IrqPluseWidth (0xED, per the CST816S
+     * register manual) stretches that pulse; the unit is not documented in the
+     * tables available here, so this is a middle setting, read back so the boot
+     * log carries what the chip ended up with. Held touches behave as before. */
+    uint8_t width = 0;
+    const uint8_t widen = 0x14;
+    if (esp_lcd_panel_io_rx_param(s_tp_io, 0xED, &width, 1) == ESP_OK) {
+        esp_err_t err = esp_lcd_panel_io_tx_param(s_tp_io, 0xED, &widen, 1);
+        uint8_t after = 0;
+        (void)esp_lcd_panel_io_rx_param(s_tp_io, 0xED, &after, 1);
+        ESP_LOGI(TAG, "touch: IrqPluseWidth 0x%02X -> 0x%02X (%s)", width, after,
+                 esp_err_to_name(err));
+    }
+}
+
+/* The CST816S holds INT low after a touch until the host reads the touch
+ * registers; while the display is paused nothing else does, so the line would
+ * still be low when the next sleep is armed - and a line already at its armed
+ * level wakes the chip the moment it sleeps. Reading here releases it. */
+static esp_err_t touch_drain(void)
+{
+    if (!s_tp) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    return esp_lcd_touch_read_data(s_tp);
 }
 
 static lv_display_t *display_start(lv_indev_t **touch)
@@ -684,15 +747,37 @@ static lv_display_t *display_start(lv_indev_t **touch)
     if (esp_lcd_touch_new_i2c_cst816s(tp_io, &tp_cfg, &tp) != ESP_OK) {
         return NULL;
     }
+    s_tp_io = tp_io;
+    s_tp = tp;
+    touch_report_config();
     const esp_lv_adapter_touch_config_t lv_tp_cfg = ESP_LV_ADAPTER_TOUCH_DEFAULT_CONFIG(disp, tp);
     *touch = esp_lv_adapter_register_touch(&lv_tp_cfg);
     /* A tap on the glass is how this board is woken by hand (the IMU's own
-     * engine stays silent on battery). The controller pulls its INT high on a
-     * touch whether or not the CPU is awake, so the same line the touch driver
-     * watches is also what light sleep waits on: without this the tap only
-     * works while a USB host keeps the CPU out of light sleep. */
-    if (muse_gpio_wake_line_add_wake_only(TP_INT, true) != ESP_OK) {
+     * engine stays silent on battery). The CST816S drives INT **active low** -
+     * that is what the driver configures GPIO_INTR_NEGEDGE for (muse_board.h's
+     * `levels.interrupt = 0`) - so the line idles high and a touch pulls it low
+     * until the controller is read. The wake level is therefore LOW. Armed for
+     * HIGH the line satisfies the wake condition the whole time it is idle, and
+     * the chip then refuses to stay in light sleep ("sleep_rejects" climbs).
+     * The line is also what the input task reads to turn a touch into a wake:
+     * while the screen is dark on battery the display is paused, and with it
+     * the LVGL task that owns on_cover_event(). */
+    if (muse_gpio_wake_line_add_wake_only(TP_INT, false) != ESP_OK) {
         ESP_LOGW(TAG, "touch INT is not a wake line: taps will not wake the screen on battery");
+    } else {
+        muse_gpio_wake_line_mark_touch(TP_INT);
+        /* Take the pin's interrupt for the armed window: the adapter's touch
+         * input stops it while the display is paused, and IDF only wakes light
+         * sleep from a GPIO whose interrupt is enabled. The driver triggers on
+         * the falling edge (levels.interrupt = 0); that type goes back on
+         * disarm, so the level-armed wake does not leave the pin interrupting
+         * by level once we are awake again. */
+        if (muse_gpio_wake_line_take_intr(TP_INT, GPIO_INTR_NEGEDGE) != ESP_OK) {
+            ESP_LOGW(TAG, "touch INT interrupt not taken: taps may not wake the chip");
+        }
+        if (muse_gpio_wake_line_set_drain(TP_INT, touch_drain) != ESP_OK) {
+            ESP_LOGW(TAG, "touch INT drain not set: a held INT would relight the screen at once");
+        }
     }
     if (!*touch || esp_lv_adapter_start() != ESP_OK) {
         return NULL;
@@ -804,9 +889,9 @@ static void wait_buttons(int timeout_ms)
 static esp_err_t bq27220_read_word(uint8_t reg, uint16_t *out)
 {
     uint8_t data[2];
-    ESP_RETURN_ON_ERROR(
-        i2c_master_transmit_receive(s_bq, &reg, 1, data, 2, 50),
-        TAG, "bq27220 read");
+    esp_err_t err = i2c_master_transmit_receive(s_bq, &reg, 1, data, 2, 50);
+    muse_i2c_report(err == ESP_OK);
+    ESP_RETURN_ON_ERROR(err, TAG, "bq27220 read");
     *out = (uint16_t)data[0] | ((uint16_t)data[1] << 8);
     return ESP_OK;
 }
@@ -849,9 +934,15 @@ static int pct_from_mv(int mv)
 static esp_err_t read_power(muse_power_t *out)
 {
     if (i2c_master_probe(s_i2c, BQ27220_ADDR, 20) != ESP_OK) {
-        ESP_LOGW(TAG, "BQ27220 not answering at 0x%02x", BQ27220_ADDR);
+        /* The pad levels go in the line: a bus that is held low by a slave and
+         * one whose pads lost their pull-ups look the same from here. */
+        int sda, scl;
+        muse_i2c_levels(&sda, &scl);
+        ESP_LOGW(TAG, "BQ27220 not answering at 0x%02x (sda=%d scl=%d)", BQ27220_ADDR, sda, scl);
+        muse_i2c_report(false);
         return ESP_ERR_NOT_FOUND;
     }
+    muse_i2c_report(true);
     uint16_t soc, mv, status;
     ESP_RETURN_ON_ERROR(bq27220_read_word(0x2c, &soc), TAG, "state of charge");
     ESP_RETURN_ON_ERROR(bq27220_read_word(0x08, &mv), TAG, "voltage");
@@ -859,16 +950,31 @@ static esp_err_t read_power(muse_power_t *out)
         status = 0;
     }
     int gauge = soc <= 100 ? (int)soc : -1;
+    int from_mv = pct_from_mv((int)mv);
     if (gauge < 0) {
         /* Out of range means the register is not what the TRM says it is on
          * this part; the cell voltage is a crude but always-available stand-in. */
-        gauge = pct_from_mv((int)mv);
+        gauge = from_mv;
         static bool warned;
         if (!warned) {
             warned = true;
             ESP_LOGW(TAG, "StateOfCharge reads %u, not a percentage: using %d mV (~%d%%)",
                      soc, (int)mv, gauge);
         }
+    } else if (gauge + 20 < from_mv || gauge > from_mv + 20) {
+        /* The gauge computes its percentage from its own battery model, and
+         * this one has lost it: DesignCapacity (0x3C) and FullChargeCapacity
+         * (0x12) both read 3000 mAh on a 500 mAh pack, with CycleCount 0 and
+         * Current stuck at 0 - so StateOfCharge sat at 33% while the cell rose
+         * to 4.165 V. A cell at that voltage is past 90%, not at 33%: trust the
+         * voltage until the model is written back (see the plan's follow-up). */
+        static bool mismatch_warned;
+        if (!mismatch_warned) {
+            mismatch_warned = true;
+            ESP_LOGW(TAG, "gauge %d%% vs %d mV (~%d%%): battery model looks reset, using voltage",
+                     gauge, (int)mv, from_mv);
+        }
+        gauge = from_mv;
     }
     out->battery_pct = gauge;
     out->battery_mv = (int)mv;

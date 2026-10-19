@@ -152,7 +152,7 @@ static unsigned s_rearms;
  * configured.
  */
 #define DIARY_EVENTS 16
-#define DIARY_MAGIC  0x54415047u   /* "TAPG": 字段一改就换，旧的 RTC 内容作废 */
+#define DIARY_MAGIC  0x54415048u   /* "TAPH": 字段一改就换，旧的 RTC 内容作废 */
 
 typedef struct {
     uint32_t magic;
@@ -162,6 +162,8 @@ typedef struct {
     uint32_t wake_timer;   /* ... ended by a timer wake */
     uint32_t wake_other;   /* ... anything else (a button line, a timeout) */
     uint32_t line_high;    /* ... with the IMU's INT1 up at that moment */
+    uint32_t wake_btn;     /* ... with the talk button down (its line low) */
+    uint32_t wake_touch;   /* ... with the touch controller's INT low (asserted) */
     uint32_t taps;         /* tap bits the poll read while asleep */
     uint32_t taps_awake;   /* tap bits read while the screen was already on */
     uint32_t not_ready;    /* polls that found the engine not configured */
@@ -254,12 +256,14 @@ static void diary_dump(const char *why)
         ESP_LOGW(TAG, "tap diary (%s): empty", why);
         return;
     }
-    ESP_LOGW(TAG, "tap diary (%s): boots=%u wakes=%u gpio=%u timer=%u other=%u line_high=%u "
+    ESP_LOGW(TAG, "tap diary (%s): boots=%u wakes=%u gpio=%u timer=%u other=%u btn=%u touch=%u "
+             "line_high=%u "
              "taps=%u taps_awake=%u knocks=%u not_ready=%u repairs=%u rearm_fail=%u drifts=%u "
              "accel=%u/%u maxmg=%u screen_wakes=%u fifo=%u/%u fifomax=%u fifofail=%d "
              "fifoon=%d starts=%u",
              why, (unsigned)s_diary.boots, (unsigned)s_diary.wakes, (unsigned)s_diary.wake_gpio,
              (unsigned)s_diary.wake_timer, (unsigned)s_diary.wake_other,
+             (unsigned)s_diary.wake_btn, (unsigned)s_diary.wake_touch,
              (unsigned)s_diary.line_high, (unsigned)s_diary.taps,
              (unsigned)s_diary.taps_awake, (unsigned)s_diary.knocks,
              (unsigned)s_diary.not_ready, (unsigned)s_diary.repairs,
@@ -854,11 +858,13 @@ void muse_imu_tap_rearm(void)
  * FreeRTOS tick made of it, and what the IMU's line was doing when it came
  * back. The tick figure next to the wall-clock one settles whether light sleep
  * moves the tick at all on this chip. */
-void muse_imu_tap_note_wake(int int1)
+void muse_imu_tap_note_wake(int imu_high, int button_low, int touch_low, int cause)
 {
     s_diary.wakes++;
-    s_diary.last_int1 = int1;
-    esp_sleep_wakeup_cause_t cause = esp_sleep_get_wakeup_cause();
+    s_diary.last_int1 = imu_high;
+    /* esp_sleep_get_wakeup_cause(): GPIO means some line woke the chip, TIMER a
+     * nap that ran out, 0 that the wait was ended from inside (a notification,
+     * or no light sleep at all - a USB host, ">knock=1" polling). */
     if (cause == ESP_SLEEP_WAKEUP_GPIO) {
         s_diary.wake_gpio++;
     } else if (cause == ESP_SLEEP_WAKEUP_TIMER) {
@@ -866,10 +872,23 @@ void muse_imu_tap_note_wake(int int1)
     } else {
         s_diary.wake_other++;
     }
-    if (int1) {
+    if (imu_high) {
         s_diary.line_high++;
     }
-    diary_note(DIARY_WAKE, int1, (int32_t)cause);
+    if (button_low) {
+        s_diary.wake_btn++;
+    }
+    if (touch_low) {
+        s_diary.wake_touch++;
+    }
+    /* One timer nap looks like the next: only a wake that found something
+     * asserted is worth a slot in the ring (16 of them, and a 10 s nap fills it
+     * in three minutes). */
+    if (imu_high || button_low || touch_low) {
+        diary_note(DIARY_WAKE,
+                   (imu_high ? 1 : 0) | (button_low ? 2 : 0) | (touch_low ? 4 : 0),
+                   cause);
+    }
 }
 
 void muse_imu_tap_note_screen_wake(void)

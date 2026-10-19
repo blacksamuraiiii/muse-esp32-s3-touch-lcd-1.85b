@@ -64,8 +64,12 @@ esp_err_t muse_imu_tap_diag(muse_imu_tap_diag_t *out);
 void muse_imu_tap_log_diag(const char *why);
 
 /* One return from the input task's sleep: counts the wake, its cause
- * (GPIO/timer/other) and the IMU line's level at that moment. */
-void muse_imu_tap_note_wake(int int1);
+ * (GPIO/timer/other) and the level of each wake line at that moment. The three
+ * flags separate the candidates behind a screen that stayed dark on battery:
+ * the button's line was low (pressed), the touch controller's INT was asserted
+ * (low), or the IMU's line was up. Only a wake that found one of them asserted
+ * is written into the event ring; the rest would fill it with timer naps. */
+void muse_imu_tap_note_wake(int imu_high, int button_low, int touch_low, int cause);
 
 /* The RTC-resident record of what taps and repairs happened - the only
  * evidence that survives a battery session, where no cable is attached. */
