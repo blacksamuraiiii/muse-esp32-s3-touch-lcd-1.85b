@@ -49,6 +49,7 @@
  * firmware. Pressing TALK mid-reply (barge-in) first discards
  * CONFIG_MUSE_BARGE_IN_SETTLE_MS of capture (muse_voice.c).
  */
+#include "bq27220.h"
 #include "driver/gpio.h"
 #include "driver/i2c_master.h"
 #include "driver/i2s_std.h"
@@ -64,6 +65,7 @@
 #include "esp_log.h"
 #include "esp_lv_adapter.h"
 #include "esp_sleep.h"
+#include "i2c_bus.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
@@ -502,7 +504,9 @@ static const st77916_lcd_init_cmd_t s_init_version_2[] = {
     {0x29, (uint8_t []){0x00}, 1, 0},
 };
 
-static i2c_master_bus_handle_t s_i2c;
+static i2c_bus_handle_t s_i2c_bus;     /* espressif/i2c_bus: the one bus owner */
+static i2c_master_bus_handle_t s_i2c;  /* its inner handle: touch, IMU, PMU */
+static bq27220_handle_t s_gauge;       /* espressif/bq27220 fuel gauge */
 static i2c_master_dev_handle_t s_bq;   /* BQ27220 fuel gauge, added to s_i2c */
 static i2c_master_dev_handle_t s_imu;  /* QMI8658A: tap-to-wake only */
 static esp_lcd_panel_handle_t s_panel;
@@ -510,21 +514,95 @@ static esp_lcd_panel_io_handle_t s_tp_io;   /* CST816S register access */
 static esp_lcd_touch_handle_t s_tp;         /* read to release its INT */
 static muse_gpio_button_t s_talk;
 
+/* The 500 mAh single-cell LiPo this board ships with, written as the CEDV model
+ * the BQ27220 gauges from. The capacity terms are this pack's; the
+ * voltage/temperature terms are the reference cell the component carries in
+ * test_apps/main/bq27220_test.c (they describe cell chemistry, not pack size).
+ * They are a sane starting model, not a GPCCEDV-calibrated one - see
+ * docs/20261018待办.md. */
+static const parameter_cedv_t s_cedv = {
+    .full_charge_cap = 500,
+    .design_cap = 500,
+    .reserve_cap = 0,
+    .near_full = 150,
+    .self_discharge_rate = 20,
+    .EDV0 = 3490,
+    .EDV1 = 3511,
+    .EDV2 = 3535,
+    .EMF = 3670,
+    .C0 = 115,
+    .R0 = 968,
+    .T0 = 4547,
+    .R1 = 4764,
+    .TC = 11,
+    .C1 = 0,
+    .DOD0 = 4147,
+    .DOD10 = 4002,
+    .DOD20 = 3969,
+    .DOD30 = 3938,
+    .DOD40 = 3880,
+    .DOD50 = 3824,
+    .DOD60 = 3794,
+    .DOD70 = 3753,
+    .DOD80 = 3677,
+    .DOD90 = 3574,
+    .DOD100 = 3490,
+};
+
+static const gauging_config_t s_gauging = {
+    .CCT = 1,
+    .CSYNC = 0,
+    .EDV_CMP = 0,
+    .SC = 1,
+    .FIXED_EDV0 = 0,
+    .FCC_LIM = 1,
+    .FC_FOR_VDQ = 1,
+    .IGNORE_SD = 1,
+    .SME0 = 0,
+};
+
 static esp_err_t init(void)
 {
-    const i2c_master_bus_config_t i2c_cfg = {
-        .i2c_port = I2C_NUM_0,
+    /* The fuel gauge is espressif/bq27220, which drives its own device through
+     * espressif/i2c_bus: that component creates the bus, and everything else on
+     * it - touch, IMU, PMU - takes the inner i2c_master handle. One owner, one
+     * bus, no second install on the same port. */
+    const i2c_config_t i2c_cfg = {
+        .mode = I2C_MODE_MASTER,
         .sda_io_num = I2C_SDA,
         .scl_io_num = I2C_SCL,
-        .clk_source = I2C_CLK_SRC_DEFAULT,
-        .glitch_ignore_cnt = 7,
-        .flags.enable_internal_pullup = true,
+        .sda_pullup_en = GPIO_PULLUP_ENABLE,
+        .scl_pullup_en = GPIO_PULLUP_ENABLE,
+        .master.clk_speed = 100000,
     };
-    ESP_RETURN_ON_ERROR(i2c_new_master_bus(&i2c_cfg, &s_i2c), TAG, "i2c");
+    s_i2c_bus = i2c_bus_create(I2C_NUM_0, &i2c_cfg);
+    ESP_RETURN_ON_FALSE(s_i2c_bus != NULL, ESP_FAIL, TAG, "i2c bus");
+    s_i2c = i2c_bus_get_internal_bus_handle(s_i2c_bus);
+    ESP_RETURN_ON_FALSE(s_i2c != NULL, ESP_FAIL, TAG, "i2c master handle");
     /* Everything on this bus - the touch controller above all - goes quiet
      * together when the bus itself stops working, which is what a battery
      * session can leave behind (muse_board.h has the recovery). */
     muse_i2c_register(s_i2c, I2C_SDA, I2C_SCL);
+    /* Hand the gauge its model. bq27220_create() checks what the chip already
+     * stores and writes only when it differs, so this lands once and then logs
+     * "Skip battery profile update" on later boots. That write is what fixes the
+     * flat 33%: the chip shipped with a 3000 mAh model on a 500 mAh pack.
+     * It reads the device number before touching anything, and on a cold boot
+     * (pack rail just powered) that first MAC read has come back garbage and
+     * refused the model once: retry, since the write is idempotent anyway. */
+    for (int attempt = 0; attempt < 2 && s_gauge == NULL; attempt++) {
+        if (attempt > 0) {
+            vTaskDelay(pdMS_TO_TICKS(200));
+        }
+        s_gauge = bq27220_create(&(bq27220_config_t){
+            .i2c_bus = s_i2c_bus,
+            .cfg = &s_gauging,
+            .cedv = &s_cedv,
+        });
+    }
+    if (s_gauge == NULL) {
+        ESP_LOGW(TAG, "gauge model not written: bq27220_create failed");
+    }
     /* i2c_master_transmit_receive() takes a device handle, not a bus handle:
      * register the fuel gauge as one device on the shared bus. */
     const i2c_device_config_t bq_cfg = {
@@ -896,9 +974,10 @@ static esp_err_t bq27220_read_word(uint8_t reg, uint16_t *out)
     return ESP_OK;
 }
 
-/* Single-cell Li-ion, open-circuit volts to percent. A cell under load reads a
- * few tens of mV low, so the bottom of the curve is deliberately a little
- * generous: the estimate errs towards "not empty yet". */
+/* Single-cell Li-ion, open-circuit volts to percent: the last-resort fallback
+ * for a gauge that answers out of range (see read_power). A cell under load
+ * reads a few tens of mV low, so the bottom of the curve is deliberately a
+ * little generous: the estimate errs towards "not empty yet". */
 static int pct_from_mv(int mv)
 {
     static const struct {
@@ -943,40 +1022,42 @@ static esp_err_t read_power(muse_power_t *out)
         return ESP_ERR_NOT_FOUND;
     }
     muse_i2c_report(true);
-    uint16_t soc, mv, status;
-    ESP_RETURN_ON_ERROR(bq27220_read_word(0x2c, &soc), TAG, "state of charge");
-    ESP_RETURN_ON_ERROR(bq27220_read_word(0x08, &mv), TAG, "voltage");
-    if (bq27220_read_word(0x0a, &status) != ESP_OK) {
-        status = 0;
+    /* The gauge's own numbers, from espressif/bq27220. Its model is written from
+     * this pack's capacity at init (s_cedv), so the percentage is the gauge's
+     * computation, not a voltage estimate: a gauge that answers out of range is
+     * reported as unknown (-1) rather than papered over with millivolts. */
+    uint16_t soc = 0, mv = 0, status = 0;
+    if (s_gauge != NULL) {
+        soc = bq27220_get_state_of_charge(s_gauge);
+        mv = bq27220_get_voltage(s_gauge);
+        battery_status_t bs;
+        if (bq27220_get_battery_status(s_gauge, &bs) == ESP_OK) {
+            status = bs.full;
+        }
+    } else {
+        /* Component handle missing (profile write failed): the same standard
+         * commands, read straight off the bus, so the UI still has numbers. */
+        ESP_RETURN_ON_ERROR(bq27220_read_word(0x2c, &soc), TAG, "state of charge");
+        ESP_RETURN_ON_ERROR(bq27220_read_word(0x08, &mv), TAG, "voltage");
+        if (bq27220_read_word(0x0a, &status) != ESP_OK) {
+            status = 0;
+        }
     }
-    int gauge = soc <= 100 ? (int)soc : -1;
-    int from_mv = pct_from_mv((int)mv);
-    if (gauge < 0) {
-        /* Out of range means the register is not what the TRM says it is on
-         * this part; the cell voltage is a crude but always-available stand-in. */
-        gauge = from_mv;
+    /* The gauge is the source of truth - its model is written from this pack's
+     * capacity at init (s_cedv). The cell-voltage curve stays only as a
+     * last-resort fallback for when the gauge gives nothing usable (out of
+     * range, or its handle is missing), never as an override of the gauge. */
+    int pct = soc <= 100 ? (int)soc : -1;
+    if (pct < 0) {
+        pct = pct_from_mv((int)mv);
         static bool warned;
         if (!warned) {
             warned = true;
-            ESP_LOGW(TAG, "StateOfCharge reads %u, not a percentage: using %d mV (~%d%%)",
-                     soc, (int)mv, gauge);
+            ESP_LOGW(TAG, "gauge reads %u, not a percentage: falling back to %d mV (~%d%%)",
+                     soc, (int)mv, pct);
         }
-    } else if (gauge + 20 < from_mv || gauge > from_mv + 20) {
-        /* The gauge computes its percentage from its own battery model, and
-         * this one has lost it: DesignCapacity (0x3C) and FullChargeCapacity
-         * (0x12) both read 3000 mAh on a 500 mAh pack, with CycleCount 0 and
-         * Current stuck at 0 - so StateOfCharge sat at 33% while the cell rose
-         * to 4.165 V. A cell at that voltage is past 90%, not at 33%: trust the
-         * voltage until the model is written back (see the plan's follow-up). */
-        static bool mismatch_warned;
-        if (!mismatch_warned) {
-            mismatch_warned = true;
-            ESP_LOGW(TAG, "gauge %d%% vs %d mV (~%d%%): battery model looks reset, using voltage",
-                     gauge, (int)mv, from_mv);
-        }
-        gauge = from_mv;
     }
-    out->battery_pct = gauge;
+    out->battery_pct = pct;
     out->battery_mv = (int)mv;
     /* BatteryStatus bit0 is DSG: clear while the charger is pushing current in. */
     out->charging = (status & 0x0001) == 0;
@@ -1057,7 +1138,14 @@ static const muse_board_t s_board = {
     .diagonal_in = 1.85f,
     .talk_button = "boot",
     .aux_button = "boot",   /* single button board, like the Guition: aux never fires */
-    .talk_hint = { LV_ALIGN_BOTTOM_MID, 0, -10 },
+    /* Both buttons sit on the bezel's right side (BOOT up at ~1:30, PWR down at
+     * ~4:30), so the icons that name them go on the rim beside them: the mic at
+     * the top right, the power symbol at the bottom right. The power glyph is
+     * drawn at 192/256 (28 px font -> ~21 px) so it reads as a rim hint rather
+     * than a second button. */
+    .talk_hint = { LV_ALIGN_TOP_RIGHT, -68, 50 },
+    .aux_hint = { LV_ALIGN_BOTTOM_RIGHT, -68, -46, 192 },
+    .speaker_angle_deg = 180,   /* the dial's far left (9 o'clock) */
     .frame_ms = 40,
     .init = init,
     .display_start = display_start,

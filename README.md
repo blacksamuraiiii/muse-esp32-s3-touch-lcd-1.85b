@@ -53,9 +53,13 @@
 - 修复 **1.2 引入的按键唤醒回归**。根因不在按键：电池态首次真睡/醒后 I2C 总线卡死（现场实测 `probe device timeout`
   每 2 秒、`BQ27220 not answering`、IMU 每次读失败），LVGL 任务在触摸读上等 IDF 的无限超时 → UI 冻住 → 按键看似无效。
   新增总线自愈：连续 2 次失败即 `i2c_master_bus_reset()` 并重设上拉（10 秒节流），失败日志带上 SDA/SCL 电平；`>i2c` 查询、`>i2c.reset` 强制。
-- 修复 **电量恒显 33%**。电量计的电池模型被重置（`DesignCapacity`/`FullChargeCapacity` 都读 3000 mAh、`CycleCount` 0、
-  `Current` 恒 0），SoC 按错误模型算成恒定值。现与电压折算比对，偏差超 ±20 点时改用电压值并打 WARN（4.165 V → 95%）。
+- 修复 **电量恒显 33%**：电量计的电池模型被重置（`DesignCapacity`/`FullChargeCapacity` 都读 3000 mAh，而实际电池是 500 mAh），
+  SoC 一直按错误容量算。现改用官方组件 `espressif/bq27220`（含 `espressif/i2c_bus`）：开机时把这块电池的 CEDV 模型写进电量计的数据内存
+  （幂等，写入后回读校验；实测 `DesignCapacity`/`FCC` 均 500 mAh、`SoC 100%` 与 4159 mV 自洽）。电量百分比**以电量计为准**，
+  电压折算曲线仅保留为电量计读数不可用时的最后兜底（不再用它去推翻电量计）。
 - 新增诊断：`>tp`（触摸线电平/武装状态/drain 结果）、`>i2c`，`@imu.wakes` 增加 `touch_armed`，RTC 日记加 `TAPH` 魔数与触摸/按键位。
+- 界面：把**麦克风图标**从屏幕底部中间挪到右上贴边（BOOT 键旁），并**新增电源图标**（`LV_SYMBOL_POWER`）放在右下贴边（PWR 键旁）——两个图标用来指示两个物理按键的位置。
+  `muse_button_hint_t` 增加可选 `scale`（0=不缩放），电源图标按 192/256 绘制；`align_on_bar()` 为 `LV_ALIGN_TOP_RIGHT` 补分支，菜单底部提示仍留在中间（其它板不受影响）。
 - 结论订正：这块板上「敲屏幕亮屏」来自**触摸控制器**（GPIO4），不是 IMU 敲击引擎；1.2 里的 `>knock` 软件敲击检测本轮未启用。
 - 已知限制：电量计电池模型尚未写回（现按电压折算）；I2C 自愈尚未在真实故障上复现验证。
 

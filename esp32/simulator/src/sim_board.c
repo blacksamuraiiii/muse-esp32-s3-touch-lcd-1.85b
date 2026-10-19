@@ -105,6 +105,7 @@ static muse_board_t s_sim_board = {
     .talk_button = "wheel",
     .aux_button = "scroll",
     .talk_hint = { LV_ALIGN_CENTER, 100, -143 },
+    .speaker_angle_deg = 180,   /* keep the stub on the 1.85B's geometry */
     .frame_ms = 40,
     .init = sim_init,
     .display_start = sim_display_start,
