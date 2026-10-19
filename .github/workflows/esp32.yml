@@ -16,8 +16,19 @@ name: ESP32 firmware
 
 on:
   pull_request:
+    # Docs-only changes don't need 30+ firmware builds. Any commit that also
+    # touches code still triggers the workflow: paths-ignore skips only when
+    # *every* changed file matches.
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - 'LICENSE'
   push:
     branches: [main]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - 'LICENSE'
 
 permissions:
   contents: read
