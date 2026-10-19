@@ -147,13 +147,22 @@ static int64_t s_bump_logged_ms;  /* last knock that made it into the log */
 /* Tap-wake forensics, printed by "imu": they separate "the line never rose"
  * from "the line rose and nobody read STATUS1" when a tap fails on battery. */
 static uint32_t s_stat_sleeps;      /* wait_buttons() returns */
+static uint32_t s_stat_wgpio;       /* ... ended by a line (cause GPIO) */
+static uint32_t s_stat_wtimer;      /* ... ended by the nap running out */
+static uint32_t s_stat_wother;      /* ... ended any other way */
 static uint32_t s_stat_line_high;   /* ... of which the IMU line was up */
+static uint32_t s_stat_wake_btn;    /* ... of which the button's line was down */
+static uint32_t s_stat_wake_touch;  /* ... of which the touch INT was asserted (low) */
+static uint32_t s_stat_touch_wakes; /* wakes this task made from the touch line */
 static uint32_t s_stat_taps;        /* taps the poll saw while asleep */
 static uint32_t s_stat_knocks;      /* wakes that came from the knock threshold */
 static uint32_t s_stat_taps_awake;  /* taps the poll saw with the screen already on */
-static int64_t s_stat_slept_ms;     /* last wait_buttons() duration */
+static int64_t s_stat_slept_ms = 1000;  /* before the first wait: not a rejected sleep */
 static int64_t s_stat_tick_ms;      /* ... and what the FreeRTOS tick made of it */
 static int s_stat_int1;             /* IMU line level when that wait returned */
+static int s_stat_btn_level;        /* button level when that wait returned */
+static int s_stat_touch_level;      /* touch INT level when that wait returned */
+static int s_stat_touch_armed;      /* ...and when the wait armed it (-1 unknown) */
 
 static void post(muse_ptt_t type, bool wake)
 {
@@ -162,7 +171,53 @@ static void post(muse_ptt_t type, bool wake)
     xQueueSend(s_queue, &ev, 0);
 }
 
+static void set_asleep(bool asleep, const char *why);
+
 static bool update_power(void);
+
+/* A hand on the glass pulls the touch controller's INT to the level light sleep
+ * waits on, and it stays there until the controller is read - which, with the
+ * screen dark on battery, nothing does: the display is paused, and with it the
+ * LVGL task that runs on_cover_event(). Reading the line here is what turns a
+ * touch into a wake, whether or not the line woke the chip by itself (on the
+ * 1.85B it does; a board whose line is not a wake source gets the wake from the
+ * 1 s / 10 s return instead, as long as the hand is still there). */
+static void check_touch_line(void)
+{
+    int i = muse_gpio_wake_line_touch_index();
+    if (i < 0 || muse_gpio_wake_line_armed(i) != 0) {
+        return;   /* no touch line registered, or "tpwake=0" took it out */
+    }
+    /* One wake per touch: the line stays low until the controller is read, and
+     * the read is what the resume triggers. A line that is already low when the
+     * screen goes dark therefore wakes it once, not once per poll. Clear the
+     * latch whenever the line is back high - awake or not, or a touch taken
+     * while the screen was on would lock every later tap out. */
+    static bool latched;
+    if (muse_gpio_wake_line_live(i) != 0) {
+        latched = false;
+        return;
+    }
+    if (muse_gpio_wake_line_armed_level(i) != 1) {
+        /* The line was already low when the sleep was armed: the controller
+         * still holds it (nobody read it), so this low is stale, not a new
+         * touch. Counted at arm time as a skip, and it must not relight the
+         * screen the moment it goes dark. */
+        return;
+    }
+    if (s_stat_slept_ms < 80) {
+        /* The wait never entered light sleep, so this level was satisfied as it
+         * went in: the pulse the touch controller emits when the panel is
+         * switched off, not a hand on the glass. */
+        return;
+    }
+    if (latched || !muse_state_asleep()) {
+        return;
+    }
+    latched = true;
+    s_stat_touch_wakes++;
+    set_asleep(false, "touch");
+}
 
 static void power_off(void)
 {
@@ -633,6 +688,9 @@ static void input_task(void *arg)
 
         TickType_t now = xTaskGetTickCount();
         int64_t now_ms = esp_timer_get_time() / 1000;   /* counts through light sleep */
+        /* A hand on the glass is the other thing that wakes the screen, and the
+         * only reader of that line lives here: see check_touch_line(). */
+        check_touch_line();
         /* A tap on the case wakes the screen. Read STATUS1 in both states: it
          * latches until it is read, and a tap taken while the screen was
          * already on used to leave the bit set, after which the engine stopped
@@ -738,10 +796,62 @@ static void input_task(void *arg)
              * so verify it at once rather than at the next 1 s tick. */
             s_tap_verified_ms = 0;
             s_stat_sleeps++;
+            if (muse_gpio_wake_was_line()) {
+                s_stat_wgpio++;
+            } else if (muse_gpio_wake_was_timer()) {
+                s_stat_wtimer++;
+            } else {
+                s_stat_wother++;
+            }
             s_stat_slept_ms = esp_timer_get_time() / 1000 - before_ms;
             s_stat_tick_ms = (int64_t)(xTaskGetTickCount() - before_tick) * portTICK_PERIOD_MS;
             s_stat_int1 = gpio_get_level(MUSE_IMU_TAP_GPIO);
-            muse_imu_tap_note_wake(s_stat_int1);
+            /* The same snapshot for the two lines that are the other candidates
+             * behind "nothing woke it": the button's and the touch panel's.
+             * muse_board.c read them before disarming, and the cause says
+             * whether a line ended the sleep or the nap simply ran out. */
+            s_stat_btn_level = muse_gpio_button_level();
+            int touch = muse_gpio_wake_line_touch_index();
+            s_stat_touch_level = touch < 0 ? -1 : muse_gpio_wake_line_seen(touch);
+            s_stat_touch_armed = touch < 0 ? -1 : muse_gpio_wake_line_armed_level(touch);
+            bool btn_down = s_stat_btn_level == 0;
+            /* A wait that returns after ~no sleep never entered light sleep: the
+             * wake level was already satisfied as it went in. The touch
+             * controller does exactly that once when the panel is switched off -
+             * a pulse of its own, with nobody touching the glass - and reading
+             * that as a touch relit the screen the moment it went dark, once per
+             * sleep, forever (last_slept_ms=0 in the counters). A hand that is
+             * really on the glass is still there 50 ms later; a pulse is not, so
+             * ask again before believing it. */
+            bool rejected = s_stat_slept_ms < 80;
+            if (rejected && touch >= 0) {
+                vTaskDelay(pdMS_TO_TICKS(50));
+                s_stat_touch_level = gpio_get_level(muse_gpio_wake_line_gpio(touch));
+            }
+            if (btn_down) {
+                s_stat_wake_btn++;   /* still down: a press that ended the sleep */
+            }
+            /* The panel's INT is a pulse, not a level the controller holds: on
+             * the bench three taps left the line back at 1 by the time this task
+             * ran, so a level check alone would miss every one of them. A GPIO
+             * wake with neither the button down nor the IMU's line up can only be
+             * the touch line: those three are the lines armed for the sleep.
+             * Either way the line has to have been *high* when the sleep was
+             * armed: the controller holds INT low after a touch until it is read,
+             * and reading a stale low as a fresh touch relit the screen the
+             * instant it went dark, once per sleep, forever. */
+            bool touch_wake = s_stat_touch_armed == 1 && !btn_down && s_stat_int1 == 0
+                              && (s_stat_touch_level == 0
+                                  || (!rejected && muse_gpio_wake_was_line()));
+            if (touch_wake) {
+                s_stat_wake_touch++;
+            }
+            muse_imu_tap_note_wake(s_stat_int1, btn_down, touch_wake, muse_gpio_wake_cause());
+            check_touch_line();
+            if (touch_wake && muse_state_asleep()) {
+                s_stat_touch_wakes++;
+                set_asleep(false, "touch");
+            }
             if (s_stat_slept_ms >= 100) {
                 /* Only when the sleep was a real one: on battery this is a
                  * handful of lines a minute, not the 1.5 wakes/s the power
@@ -923,14 +1033,26 @@ static bool console_command(char *line, bool whole)
         muse_imu_tap_log_diag("console");
         /* Why a tap did or did not wake the screen on battery, where the USB
          * cable that hides the state cannot be attached: sleeps is how often
-         * the task slept, line_high how often the IMU's line was up when it
-         * came back, taps how many of those the poll turned into a wake. */
-        printf("@imu.wakes sleeps=%lu line_high=%lu taps=%lu taps_awake=%lu knocks=%lu "
-               "sampling=%d last_slept_ms=%lld last_tick_ms=%lld int1=%d\n",
-               (unsigned long)s_stat_sleeps, (unsigned long)s_stat_line_high,
+         * the task slept; line_high, btn and touch how often each line was
+         * asserted when it came back (the button and the touch INT are active
+         * low, the IMU's line is active high); taps how many of those the poll
+         * turned into a wake; cause what the last light-sleep exit reported
+         * (0 = nothing slept, the wait was notified from inside - a USB host or
+         * a wake request; 4 = timer, the nap ran out; 7 = GPIO, a line did it). */
+        printf("@imu.wakes sleeps=%lu wgpio=%lu wtimer=%lu wother=%lu line_high=%lu btn=%lu touch=%lu "
+               "touch_wakes=%lu taps=%lu taps_awake=%lu knocks=%lu sampling=%d last_slept_ms=%lld "
+               "last_tick_ms=%lld int1=%d btn_level=%d touch_level=%d touch_armed=%d cause=%d "
+               "btn_irqs=%u\n",
+               (unsigned long)s_stat_sleeps, (unsigned long)s_stat_wgpio,
+               (unsigned long)s_stat_wtimer, (unsigned long)s_stat_wother,
+               (unsigned long)s_stat_line_high,
+               (unsigned long)s_stat_wake_btn, (unsigned long)s_stat_wake_touch,
+               (unsigned long)s_stat_touch_wakes,
                (unsigned long)s_stat_taps, (unsigned long)s_stat_taps_awake,
                (unsigned long)s_stat_knocks, (int)s_knock_on, (long long)s_stat_slept_ms,
-               (long long)s_stat_tick_ms, s_stat_int1);
+               (long long)s_stat_tick_ms, s_stat_int1, s_stat_btn_level, s_stat_touch_level,
+               s_stat_touch_armed,
+               muse_gpio_wake_cause(), muse_gpio_button_irqs());
         fflush(stdout);
         muse_imu_tap_diary_log("console");
         return true;
@@ -943,6 +1065,77 @@ static bool console_command(char *line, bool whole)
     if (!strcmp(line, "imu.rearm")) {
         muse_imu_tap_rearm();
         muse_imu_tap_log_diag("console rearm");
+        return true;
+    }
+    if (!strcmp(line, "tp")) {
+        /* The touch line, the level it is armed on and what it has done so far:
+         * the one place that answers "did a touch even reach the chip while the
+         * screen was dark on battery". */
+        int ti = muse_gpio_wake_line_touch_index();
+        printf("@tp lines=%d touch=%d line=%d armed=%d live=%d seen=%d irqs=%u "
+               "touch_wakes=%lu btn_irqs=%u btn_level=%d cause=%d touch_level=%d\n",
+               muse_gpio_wake_line_count(), ti,
+               ti < 0 ? -1 : (int)muse_gpio_wake_line_gpio(ti),
+               ti < 0 ? -1 : muse_gpio_wake_line_armed(ti),
+               ti < 0 ? -1 : muse_gpio_wake_line_live(ti),
+               ti < 0 ? -1 : muse_gpio_wake_line_seen(ti),
+               ti < 0 ? 0u : muse_gpio_wake_line_irqs(ti),
+               (unsigned long)s_stat_touch_wakes, muse_gpio_button_irqs(),
+               muse_gpio_button_level(), muse_gpio_wake_cause(), s_stat_touch_level);
+        for (int i = 0; i < muse_gpio_wake_line_count(); i++) {
+            /* Both lines, so the IMU's is read next to the touch's. */
+            printf("@tp.line[%d] gpio=%d armed=%d live=%d seen=%d irqs=%u\n", i,
+                   (int)muse_gpio_wake_line_gpio(i), muse_gpio_wake_line_armed(i),
+                   muse_gpio_wake_line_live(i), muse_gpio_wake_line_seen(i),
+                   muse_gpio_wake_line_irqs(i));
+        }
+        fflush(stdout);
+        return true;
+    }
+    if (!strncmp(line, "tpwake=", 7)) {
+        /* 0: not armed at all, 1: low level (the CST816S's INT is active low -
+         * the driver configures a falling edge), 2: high level. One build, both
+         * polarities: a wrong one costs a battery cycle to find out, and the
+         * chip refuses to stay in light sleep while the condition is already
+         * satisfied. */
+        int mode = atoi(line + 7);
+        int ti = muse_gpio_wake_line_touch_index();
+        if (ti < 0) {
+            printf("@tpwake no touch wake line registered\n");
+        } else {
+            esp_err_t err = muse_gpio_wake_line_set_level(muse_gpio_wake_line_gpio(ti),
+                                                          mode == 0 ? -1 : (mode == 2 ? 1 : 0));
+            printf("@tpwake mode=%d armed=%d live=%d (%s)\n", mode,
+                   muse_gpio_wake_line_armed(ti), muse_gpio_wake_line_live(ti),
+                   esp_err_to_name(err));
+        }
+        fflush(stdout);
+        return true;
+    }
+    if (!strcmp(line, "i2c")) {
+        /* The shared bus, its pad levels and what it has been doing. A bus that
+         * went quiet during a battery session takes the touch controller down
+         * with it, and that is what "the screen is slow" turns out to be. */
+        int sda, scl;
+        muse_i2c_levels(&sda, &scl);
+        printf("@i2c registered=%d sda=%d scl=%d fails=%u streak=%u resets=%u\n",
+               (int)muse_i2c_registered(), sda, scl, muse_i2c_fails(),
+               muse_i2c_streak(), muse_i2c_recovers());
+        fflush(stdout);
+        return true;
+    }
+    if (!strcmp(line, "i2c.reset")) {
+        /* Manual run of the same recovery the failure counter triggers: IDF's
+         * bus reset (nine clocks, FSM reset, pads re-routed) plus the pull-ups.
+         * The levels on both sides of it say which of the two it was. */
+        int sda_before, scl_before, sda_after, scl_after;
+        muse_i2c_levels(&sda_before, &scl_before);
+        esp_err_t err = muse_i2c_recover();
+        muse_i2c_levels(&sda_after, &scl_after);
+        printf("@i2c.reset %s: sda %d->%d scl %d->%d fails=%u resets=%u\n",
+               esp_err_to_name(err), sda_before, sda_after, scl_before, scl_after,
+               muse_i2c_fails(), muse_i2c_recovers());
+        fflush(stdout);
         return true;
     }
     /* Network commands live in main (sdk_token_console.c): the address is NVS
@@ -998,9 +1191,12 @@ static bool console_command(char *line, bool whole)
         /* Software knock detection costs sleep time: with it off the waits go
          * back to 1 s / 10 s and only the IMU's own engine can wake the screen. */
         s_knock_on = line[6] == '1';
-        printf("@knock sampling=%d (asleep wait %s), poll %d ms\n", (int)s_knock_on,
-               s_knock_on ? "55 ms" : "1 s / 10 s",
-               s_knock_on ? IMU_TAP_POLL_SLEEP_MS : IMU_TAP_POLL_MS);
+        if (s_knock_on) {
+            printf("@knock sampling=1 (asleep wait %d ms), poll %d ms\n",
+                   ASLEEP_WAIT_MS, IMU_TAP_POLL_SLEEP_MS);
+        } else {
+            printf("@knock sampling=0 (asleep wait 1 s / 10 s), poll %d ms\n", IMU_TAP_POLL_MS);
+        }
         fflush(stdout);
         return true;
     }
