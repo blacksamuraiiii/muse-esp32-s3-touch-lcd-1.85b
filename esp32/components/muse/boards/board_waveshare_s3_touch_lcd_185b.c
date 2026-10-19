@@ -1030,6 +1030,15 @@ static esp_err_t read_power(muse_power_t *out)
     if (s_gauge != NULL) {
         soc = bq27220_get_state_of_charge(s_gauge);
         mv = bq27220_get_voltage(s_gauge);
+        /* The component's getters swallow the transfer error and return 0, and
+         * no real cell reads 0 mV: both zero means the bus, not the battery.
+         * Report it so the caller keeps the last valid reading instead of
+         * showing 0%. */
+        if (soc == 0 && mv == 0) {
+            muse_i2c_report(false);
+            ESP_LOGW(TAG, "gauge read 0 mV / 0%%: bus glitch, keeping the last value");
+            return ESP_ERR_INVALID_RESPONSE;
+        }
         battery_status_t bs;
         if (bq27220_get_battery_status(s_gauge, &bs) == ESP_OK) {
             status = bs.full;
