@@ -512,6 +512,7 @@ static i2c_master_dev_handle_t s_bq;   /* BQ27220 fuel gauge, added to s_i2c */
 static i2c_master_dev_handle_t s_imu;  /* QMI8658A: tap-to-wake only */
 static esp_lcd_panel_handle_t s_panel;
 static esp_lcd_panel_io_handle_t s_tp_io;   /* CST816S register access */
+static esp_lcd_panel_io_handle_t s_panel_io; /* kept for SLPIN/SLPOUT */
 static esp_lcd_touch_handle_t s_tp;         /* read to release its INT */
 static muse_gpio_button_t s_talk;
 
@@ -629,7 +630,15 @@ static esp_err_t init(void)
     } else {
         ESP_LOGW(TAG, "no IMU device handle");
     }
-    return muse_gpio_button_init(&s_talk, TALK_GPIO);
+    esp_err_t err = muse_gpio_button_init(&s_talk, TALK_GPIO);
+    if (err == ESP_OK) {
+        /* BOOT is usually held while flashing or resetting, and button_init()
+         * leaves pressed = false: the first debounced sample would then read as
+         * a fresh press, and holding it 5 s reaches "reset setup" (which forgets
+         * the pairing and Wi-Fi). Seed the state instead, as 1.75C/1.85C do. */
+        s_talk.pressed = gpio_get_level(TALK_GPIO) == 0;
+    }
+    return err;
 }
 
 /* The CST816S reports a touch as a *low pulse* on IRQ rather than a held level.
@@ -687,6 +696,18 @@ static esp_err_t touch_drain(void)
         return ESP_ERR_INVALID_STATE;
     }
     return esp_lcd_touch_read_data(s_tp);
+}
+
+/* ST77916 windows must be even-aligned: QSPI carries two pixels per beat and
+ * the driver's draw_bitmap() writes the window as given. Same callback the
+ * official 1.75C/1.85C boards install. */
+static void round_area(lv_event_t *e)
+{
+    lv_area_t *a = lv_event_get_param(e);
+    a->x1 &= ~1;
+    a->y1 &= ~1;
+    a->x2 |= 1;
+    a->y2 |= 1;
 }
 
 static lv_display_t *display_start(lv_indev_t **touch)
@@ -758,6 +779,7 @@ static lv_display_t *display_start(lv_indev_t **touch)
     if (esp_lcd_new_panel_io_spi((esp_lcd_spi_bus_handle_t)LCD_HOST, &io_config, &io) != ESP_OK) {
         return NULL;
     }
+    s_panel_io = io;   /* the sleep commands below go out through this one */
     const st77916_vendor_config_t vendor_config = {
         .init_cmds = init_cmds,
         .init_cmds_size = init_cmds_size,
@@ -804,6 +826,7 @@ static lv_display_t *display_start(lv_indev_t **touch)
     if (!disp) {
         return NULL;
     }
+    lv_display_add_event_cb(disp, round_area, LV_EVENT_INVALIDATE_AREA, NULL);
 
     esp_lcd_panel_io_i2c_config_t tp_io_cfg = ESP_LCD_TOUCH_IO_I2C_CST816S_CONFIG();
     tp_io_cfg.dev_addr = TP_ADDR;
@@ -880,12 +903,23 @@ static void set_brightness(int pct)
  * on the task that owns the bus (muse_lcd_bands.h), so wrap these. */
 static void send_panel_sleep(void *sleep)
 {
-    esp_lcd_panel_disp_sleep(s_panel, *(bool *)sleep);   /* SLPIN/SLPOUT; GRAM is kept */
+    /* Raw SLPIN (0x10) / SLPOUT (0x11) on the QSPI command path (opcode 0x02).
+     * The driver's own esp_lcd_panel_disp_sleep() is a no-op here: esp_lcd_st77916
+     * 2.0.2 registers del/reset/init/draw_bitmap/disp_on_off and no base.disp_sleep,
+     * so the call came back ESP_ERR_NOT_SUPPORTED and the panel kept its charge
+     * pump and bias running (the official 1.75C sends these two commands for the
+     * same reason). */
+    if (s_panel_io == NULL) {
+        return;
+    }
+    const bool in = *(bool *)sleep;
+    esp_lcd_panel_io_tx_param(s_panel_io, (0x02u << 24) | ((in ? 0x10u : 0x11u) << 8), NULL, 0);
 }
 
 static void panel_sleep(bool sleep)
 {
     muse_lcd_bands_run(send_panel_sleep, &sleep);
+    vTaskDelay(pdMS_TO_TICKS(120));   /* SLPIN/SLPOUT settle, as 1.75C/1.85C do */
 }
 
 static void display_pause(bool pause)
