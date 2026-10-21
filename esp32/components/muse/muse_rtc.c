@@ -27,6 +27,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <inttypes.h>
 #include <sys/time.h>
 
 #include "esp_log.h"
@@ -49,6 +50,7 @@ static bool s_valid;
 static bool s_sntp_inited;
 static bool s_sntp_started;
 static volatile bool s_synced;
+static bool s_wake_armed;      /* an alarm is pending: fold RTC_INT into the mask */
 
 /* ------------------------------------------------------------ BCD and dates */
 
@@ -386,6 +388,42 @@ bool muse_rtc_clock_str(char *buf, size_t len)
     localtime_r(&now, &lt);
     snprintf(buf, len, "%02d:%02d", lt.tm_hour, lt.tm_min);
     return true;
+}
+
+/* ------------------------------------------------------------------ the alarm */
+/*
+ * Reserved, not implemented. The deep-sleep side is already in place: the board
+ * folds MUSE_RTC_INT_GPIO into the ext1 mask when muse_rtc_wake_armed() is true,
+ * and these calls keep it false, so the mask stays the single BOOT bit it has
+ * always been. A scheduled wake needs the register side only (Control_2 AIE/AF
+ * and the 0x0B-0x0F match registers); the signatures and the call sites do not
+ * have to change then.
+ */
+esp_err_t muse_rtc_arm_wakeup_in(uint32_t in_seconds)
+{
+    if (in_seconds < 2 || in_seconds > 86399) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    /* Logged, never silent: a caller that expected a wake must find out. */
+    ESP_LOGW(TAG, "RTC alarm not implemented (%" PRIu32 " s ignored)", in_seconds);
+    s_wake_armed = false;
+    return ESP_ERR_NOT_SUPPORTED;
+}
+
+esp_err_t muse_rtc_disarm(void)
+{
+    s_wake_armed = false;
+    return ESP_OK;
+}
+
+bool muse_rtc_alarm_pending(void)
+{
+    return false;
+}
+
+bool muse_rtc_wake_armed(void)
+{
+    return s_wake_armed;
 }
 
 bool muse_rtc_stamp_str(char *buf, size_t len)
