@@ -28,6 +28,7 @@
 #include "muse_input.h"
 #include "muse_settings.h"
 #include "muse_state.h"
+#include "muse_rtc.h"
 #include "muse_ui.h"
 #include "muse_voice.h"
 #include "muse_wifi.h"
@@ -69,6 +70,10 @@ void muse_app_run(const muse_board_t *board)
     muse_settings_set_listener(on_setting);
     muse_state_init();
     muse_battery_init();
+    /* Before the UI: adopts the RTC's time when the system clock is unset, so
+     * the first frame already shows a real clock rather than a placeholder. The
+     * SNTP half waits for Wi-Fi on its own. */
+    muse_time_start();
     muse_state_set_caption("WAKING UP...");
     ESP_ERROR_CHECK(muse_ui_start());
     ESP_LOGI(TAG, "UI built: free internal %u", (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
