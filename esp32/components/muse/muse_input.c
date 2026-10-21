@@ -39,7 +39,8 @@
 #include "muse_board.h"
 #include "muse_chat.h"
 #include "muse_console.h"
-#include "muse_imu_tap.h"
+#include "muse_imu.h"
+#include "muse_rtc.h"
 #include "muse_link.h"
 #include "muse_mem.h"
 #include "muse_menu.h"
@@ -73,44 +74,49 @@ static const char *TAG = "muse_input";
 #define GOODBYE_MS 1500        /* let the goodbye animation play */
 #define HINT_TICKS 60          /* 0.6 s: warn that holding powers off */
 #define LONG_TICKS 150         /* 1.5 s: power off */
+/* Eight seconds on the button, held while parked, is the way out of a park that
+ * was decided wrongly - a reference learned face down, or a part that disagrees
+ * with the vector it reported at boot. Nothing else in a parked state is
+ * listening and the screen is dark, so there is no hint to give: the exit is
+ * silent by design. */
+#define PARK_EXIT_TICKS 800    /* 8 s at POLL_MS */
 #define SLEEP_CHECK_MS 100
-/* A tap on the case wakes the screen. STATUS1 is read this often whether the
- * screen is on or off: left latched, it keeps the engine from reporting the
- * next tap, which is what made tap-to-wake die after a while. The INT1 line is
- * armed with the buttons in wait_buttons(), so this poll only has to cover an
- * edge the sleep missed. */
-#define IMU_TAP_POLL_MS 200
-/* Asleep, the engine on this board stops reporting altogether on battery, so
- * the poll stops relying on it and reads the chip's FIFO instead: 500 Hz of
- * buffered samples, the newest 128 of them (256 ms). Polling every 200 ms
- * therefore sees every sample a knock could be in. The sleeps between polls
- * have to be short enough for that rate. ">knock=0" puts the long waits back,
- * for measuring what this costs. */
-#define IMU_TAP_POLL_SLEEP_MS 200
-#define ASLEEP_WAIT_MS 190
+/* Picking the gadget up wakes the screen. STATUS1 is read this often whether
+ * the screen is on or off: left latched, the chip holds INT1 high, and the line
+ * the next sleep arms on is already satisfied - which is how a gesture stops
+ * working after a while. The INT1 line is armed with the buttons in
+ * wait_buttons(), so this poll only has to cover an edge the sleep missed. */
+#define IMU_POLL_MS 200
 /* CTRL1/CTRL2/CTRL7/CTRL8 - the accelerometer's ODR among them - are compared
- * against what init wrote this often, and the tap parameters (CAL1..CAL4) this
- * often again. A drifting chip is re-initialised by muse_imu_tap_check(). The
- * ODR matters most: with it wrong the engine still looks configured while it
- * gets no samples, which is what the battery-side silence looked like. */
-#define IMU_TAP_VERIFY_MS 1000
-#define IMU_TAP_FULL_VERIFY_MS (60 * 1000)
+ * against what init wrote this often, and the wake-on-motion parameters
+ * (CAL1_L/H) this often again. A drifting chip is re-initialised by
+ * muse_imu_check(). The ODR matters most: with it wrong the engine still looks
+ * configured while it gets no samples. */
+#define IMU_VERIFY_MS 1000
+#define IMU_FULL_VERIFY_MS (60 * 1000)
 /* The engine is restarted from scratch this often while asleep. It covers the
  * one failure that leaves no readable trace: an engine that stops detecting
- * with its configuration intact. A minute, as before: the restart resets the
- * chip (Soft-Reset + full reconfiguration), and doing that every ten seconds
- * threw away whatever the engine had learned - the diary showed eighteen
- * restarts in a few minutes with the screen merely dark. */
-#define IMU_TAP_REARM_MS (60 * 1000)
-/* A knock above this (milli-g, beyond gravity) leaves a line in the log, next
- * to what STATUS1 said. That pair is what separates "the engine never saw the
- * knock" from "it saw it and nobody read it" - which is exactly the question
- * when tap-to-wake works only sometimes. */
+ * with its configuration intact. A restart resets the chip and reconfigures it,
+ * so it is not free - a minute is often enough and rare enough. */
+#define IMU_REARM_MS (60 * 1000)
+/* Motion beyond gravity above this leaves a line in the log, next to what
+ * STATUS1 said. That pair is what separates "the engine never saw the
+ * movement" from "it saw it and nobody read it". */
 #define IMU_BUMP_LOG_MG 150
 #define IMU_BUMP_LOG_QUIET_MS 700
-/* A deliberate knock on the case, judged by the poll's own accelerometer read:
- * 400 mg is well above ordinary handling and below a real tap. */
-#define IMU_KNOCK_WAKE_MG 400
+/* The lift check: the motion event only arms it, and the posture 400 ms later
+ * decides. Long enough for the hand to stop, short enough that the screen still
+ * feels like it answered. */
+#define WAKE_CONFIRM_MS 400
+/* Raised gate once three lifts in a row were lit for nobody: the gadget was in
+ * a bag, not in a hand. */
+#define WAKE_ANGLE_SUPPRESSED_DEG 55
+/* A screen lit by a lift that nobody touches is a screen lit for nothing, and
+ * that is the whole cost of carrying the gadget in a bag. After this long with
+ * no interaction it goes back to sleep and counts as a false wake. */
+#define WAKE_IDLE_RECHECK_MS 6000
+#define WAKE_IDLE_RECHECK_SUPPRESSED_MS 2500
+#define FALSE_WAKE_LIMIT 3
 #define SERIAL_RX 1024         /* the driver drops what doesn't fit, so a console line must */
 #define SERIAL_LINE 1024
 #define CHAT_MAX (192 * 1024)  /* a typed message, assembled from "chat+=" lines */
@@ -127,36 +133,48 @@ static esp_pm_lock_handle_t s_awake;   /* with s_cpu_pd: held whenever !s_cpu_lo
 static bool s_awake_held;
 #endif
 static volatile bool s_nap_now;   /* ">nap": asleep, as if on battery, nap without waiting WIFI_NAP_MS */
-static bool s_knock_on;           /* ">knock=1": sample the accelerometer/FIFO while asleep (off by
-                                   * default: the FIFO reader is still being brought up, and
-                                   * every failed read costs a 100 ms I2C timeout in this task) */
 static bool s_force_low;          /* ">pmlow=1": light-sleep even with a USB host attached */
-/* The five tap-window timers below are wall-clock, not ticks. On battery the
- * CPU light-sleeps between polls, and a tick-based window can be skipped for
- * the whole sleep: the poll then runs late (or, if the tick did not move at
- * all, is skipped entirely), STATUS1 is left unread and the IMU keeps INT1
- * high - which the next sleep already satisfies, so the tap never wakes it
- * again. esp_timer_get_time() counts through light sleep, so the windows mean
- * what they say. */
-static int64_t s_tap_checked_ms;  /* last tap-status poll, ms of wall clock */
-static int64_t s_tap_verified_ms; /* last CTRL7/CTRL8 comparison */
-static int64_t s_tap_full_ms;     /* last tap-parameter comparison */
-static int64_t s_tap_rearmed_ms;  /* last engine restart, counted from the last wake */
-static int64_t s_bump_logged_ms;  /* last knock that made it into the log */
+/* The gadget is lying face down. This is not "asleep" with an extra step: it is
+ * a stronger state that also silences the glass. Face down on a table the panel
+ * is pressed by the weight of the device, the touch controller reports it as a
+ * finger, and a 500 ms press on the face tile starts a recording nobody asked
+ * for - which is where the blank voice notes came from. Parking turns the
+ * screen off and drops every touch event on the floor, so the only thing that
+ * brings it back is turning it over. */
+static bool s_parked;
+/* The IMU timers below are wall-clock, not ticks. On battery the CPU
+ * light-sleeps between polls, and a tick-based window can be skipped for the
+ * whole sleep: the poll then runs late (or, if the tick did not move at all, is
+ * skipped entirely), STATUS1 is left unread and the IMU keeps INT1 high - which
+ * the next sleep already satisfies, so the gesture never wakes it again.
+ * esp_timer_get_time() counts through light sleep, so the windows mean what
+ * they say. */
+static int64_t s_imu_checked_ms;  /* last STATUS1 poll, ms of wall clock */
+static int64_t s_imu_verified_ms; /* last CTRL1/2/7/8 comparison */
+static int64_t s_imu_full_ms;     /* last wake-on-motion parameter comparison */
+static int64_t s_imu_rearmed_ms;  /* last engine restart, counted from the last wake */
+static int64_t s_bump_logged_ms;  /* last motion that made it into the log */
 
-/* Tap-wake forensics, printed by "imu": they separate "the line never rose"
- * from "the line rose and nobody read STATUS1" when a tap fails on battery. */
+/* The lift check, and what a lift that nobody answered costs. */
+static bool s_wake_pending;       /* a motion event is waiting for its posture */
+static int64_t s_wake_check_ms;   /* ... until this wall-clock ms */
+static int64_t s_wake_hold_ms;    /* when a lift was accepted, 0 = none */
+static bool s_wake_interacted;    /* a touch or a button since then */
+static bool s_wake_suppressed;    /* three idle wakes in a row: the bag case */
+static int s_false_wakes;
+
+/* Wake forensics, printed by "imu": they separate "the line never rose" from
+ * "the line rose and nobody read STATUS1" when a gesture fails on battery. */
 static uint32_t s_stat_sleeps;      /* wait_buttons() returns */
 static uint32_t s_stat_wgpio;       /* ... ended by a line (cause GPIO) */
 static uint32_t s_stat_wtimer;      /* ... ended by the nap running out */
 static uint32_t s_stat_wother;      /* ... ended any other way */
 static uint32_t s_stat_line_high;   /* ... of which the IMU line was up */
 static uint32_t s_stat_wake_btn;    /* ... of which the button's line was down */
-static uint32_t s_stat_wake_touch;  /* ... of which the touch INT was asserted (low) */
 static uint32_t s_stat_touch_wakes; /* wakes this task made from the touch line */
-static uint32_t s_stat_taps;        /* taps the poll saw while asleep */
-static uint32_t s_stat_knocks;      /* wakes that came from the knock threshold */
-static uint32_t s_stat_taps_awake;  /* taps the poll saw with the screen already on */
+static uint32_t s_stat_motion;      /* motion events the poll saw while asleep */
+static uint32_t s_stat_motion_awake; /* ... and while the screen was already on */
+static uint32_t s_stat_ignored;     /* ... of which the posture gate dropped */
 static int64_t s_stat_slept_ms = 1000;  /* before the first wait: not a rejected sleep */
 static int64_t s_stat_tick_ms;      /* ... and what the FreeRTOS tick made of it */
 static int s_stat_int1;             /* IMU line level when that wait returned */
@@ -184,6 +202,11 @@ static bool update_power(void);
  * 1 s / 10 s return instead, as long as the hand is still there). */
 static void check_touch_line(void)
 {
+    if (s_parked) {
+        /* Face down: the line is low because the table is leaning on the panel.
+         * Waking for that is the misfire this state exists to stop. */
+        return;
+    }
     int i = muse_gpio_wake_line_touch_index();
     if (i < 0 || muse_gpio_wake_line_armed(i) != 0) {
         return;   /* no touch line registered, or "tpwake=0" took it out */
@@ -249,10 +272,15 @@ static void set_asleep(bool asleep, const char *why)
 {
     if (asleep != muse_state_asleep()) {
         ESP_LOGI(TAG, "%s (%s)", asleep ? "sleeping" : "waking", why);
-        if (!asleep) {
-            muse_imu_tap_note_screen_wake();
-        }
         muse_state_set_asleep(asleep);
+        if (asleep) {
+            /* The posture the user left it in is the one a lift has to change
+             * away from. Taken here and not at init: the gadget is put down in
+             * a different place every time. */
+            muse_imu_note_sleep_posture();
+            s_wake_pending = false;
+            s_wake_hold_ms = 0;
+        }
         if (s_input) {
             xTaskNotifyGive(s_input);   /* out of wait_buttons() */
         }
@@ -260,6 +288,35 @@ static void set_asleep(bool asleep, const char *why)
             muse_wifi_apply();   /* the screen says reconnecting: don't sit out the backoff */
         }
     }
+}
+
+/* Face down: screen off, touch ignored, and nothing but turning it over brings
+ * it back. Kept as a state rather than an action because the panel is still
+ * reporting presses while the device lies there - each of those has to be
+ * dropped, not just the first one. */
+static void park(bool on, const char *why)
+{
+    if (on == s_parked) {
+        /* The state is a latch, the screen is not: an image, a pairing prompt or
+         * a stray press on the cover can light it while the device still lies
+         * face down. Re-asserting is what keeps "parked" meaning "dark". */
+        if (on && !muse_state_asleep()) {
+            set_asleep(true, "face down again");
+        }
+        return;
+    }
+    s_parked = on;
+    ESP_LOGI(TAG, "%s (%s)", on ? "face down: parked" : "face up: unparked", why);
+    if (on) {
+        set_asleep(true, "face down");
+    } else {
+        set_asleep(false, "face up");
+    }
+}
+
+bool muse_input_parked(void)
+{
+    return s_parked;
 }
 
 static void toggle_phone_setup(void)
@@ -287,7 +344,30 @@ static void aux_button(bool pressed, bool edge)
     static bool swallow;
     static bool hinted;
     static int sleep_in;    /* ticks until a pending single press sleeps */
+    static int park_held;
     static char saved_caption[64];
+
+    /* Parked, the press is the table and every other gesture is dropped - but a
+     * park decided wrongly has to be escapable without a serial cable, so the
+     * button still counts here, and eight seconds of it clears the park and
+     * throws the reference away (the reference is usually why we are here). */
+    if (s_parked) {
+        if (edge && pressed) {
+            park_held = 0;
+        }
+        if (pressed) {
+            if (++park_held == PARK_EXIT_TICKS) {
+                park_held = 0;
+                muse_imu_face_calibrate();
+                park(false, "8 s hold");
+            }
+            return;
+        }
+        if (edge && !pressed) {
+            park_held = 0;
+        }
+        return;
+    }
 
     if (sleep_in && --sleep_in == 0) {
         set_asleep(true, muse_board->aux_button);
@@ -295,10 +375,12 @@ static void aux_button(bool pressed, bool edge)
     if (edge && pressed) {
         held = 0;
         hinted = false;
-        swallow = muse_state_asleep();
+        /* Parked, the press is the table: it must not light the screen. The
+         * hold counter below is left armed so power_off() stays reachable. */
+        swallow = muse_state_asleep() && !s_parked;
         if (swallow) {
             set_asleep(false, muse_board->aux_button);
-        } else if (sleep_in) {
+        } else if (sleep_in && !s_parked) {
             sleep_in = 0;
             swallow = true;
             toggle_phone_setup();
@@ -333,7 +415,7 @@ static void aux_button(bool pressed, bool edge)
 /* No touch: the aux button opens the menu and steps down it; any press wakes. */
 static void menu_button(bool pressed, bool edge)
 {
-    if (!edge || !pressed) {
+    if (!edge || !pressed || s_parked) {
         return;
     }
     if (muse_state_asleep()) {
@@ -358,6 +440,16 @@ static void aux_key(bool pressed, bool edge)
  * still held once awake. */
 static void talk_button(unsigned ev)
 {
+    /* Face down, the glass is being pressed by whatever the device is lying on.
+     * Not waking for it is the point of the park; a take already running when it
+     * was flipped over is closed here rather than left open. */
+    if (s_parked) {
+        if (s_talk_down) {
+            post(MUSE_PTT_UP, false);
+            s_talk_down = false;
+        }
+        return;
+    }
     bool talk_down = s_talk_down;
     static bool swallow;
 #if CONFIG_MUSE_WATCHER_CAMERA
@@ -392,9 +484,12 @@ static void talk_button(unsigned ev)
             muse_state_poke();
             swallow = true;
         } else if (muse_state_asleep()) {
+            /* Screen dark: the press only lights it, and the take starts on the
+             * next press with the screen already up. A hand inside a bag finds
+             * this panel constantly, and the first thing it used to do was open
+             * a recording nobody asked for. */
             set_asleep(false, muse_board->talk_button);
-            post(MUSE_PTT_DOWN, true);
-            talk_down = true;
+            swallow = true;
         } else if (muse_menu_is_open()) {
             muse_state_poke();
             if (!muse_board->keyboard) muse_menu_key(MUSE_MENU_SELECT);
@@ -445,6 +540,12 @@ static void keyboard_buttons(unsigned ev)
 /* A pairing prompt wakes the screen and keeps it on; otherwise idle sleeps. */
 static void check_sleep(void)
 {
+    /* Parked outranks every reason to wake: a pairing prompt can wait until the
+     * device is turned over, and the screen coming back on face down would put
+     * the touch panel under a table again. */
+    if (s_parked) {
+        return;
+    }
     muse_ble_status_t ble;
     muse_ble_status(&ble);
     bool prompt = ble.passkey || muse_link_state() == MUSE_LINK_CONFIRM;
@@ -616,7 +717,10 @@ static void dedicated_buttons(unsigned ev)
     }
     if (!s_power_down && (ev & MUSE_BTN_POWER_PRESS)) {
         s_power_down = true;
-        s_power_swallow = muse_state_asleep();
+        /* Parked, a press must not light the screen - but the hold below still
+         * reaches power_off(), which is the way out if the panel is ever parked
+         * by mistake. */
+        s_power_swallow = muse_state_asleep() && !s_parked;
         muse_state_poke();
         if (s_power_swallow) set_asleep(false, muse_board->power_button);
     }
@@ -628,9 +732,9 @@ static void dedicated_buttons(unsigned ev)
     if (release) power_release();
     if (ev & MUSE_BTN_SPEAKER_PRESS) {
         muse_state_poke();
-        if (muse_state_asleep()) {
+        if (muse_state_asleep() && !s_parked) {
             set_asleep(false, muse_board->speaker_button);   /* wake-only press */
-        } else if (muse_state_mode(NULL) != MUSE_MODE_OFF) {
+        } else if (!muse_state_asleep() && muse_state_mode(NULL) != MUSE_MODE_OFF) {
             bool on = !muse_settings_speaker_on();
             muse_settings_set_speaker_on(on);
             if (muse_state_mode(NULL) == MUSE_MODE_IDLE) {
@@ -691,73 +795,119 @@ static void input_task(void *arg)
         /* A hand on the glass is the other thing that wakes the screen, and the
          * only reader of that line lives here: see check_touch_line(). */
         check_touch_line();
-        /* A tap on the case wakes the screen. Read STATUS1 in both states: it
-         * latches until it is read, and a tap taken while the screen was
-         * already on used to leave the bit set, after which the engine stopped
-         * reporting anything. The value only acts while asleep. */
-        const bool knock_polling = muse_state_asleep() && s_knock_on;
-        /* Asleep with the sampler off: the waits go back to the long ones, and
-         * the touch line is what a hand finds. */
-        if (now_ms - s_tap_checked_ms >= (knock_polling ? IMU_TAP_POLL_SLEEP_MS : IMU_TAP_POLL_MS)) {
-            s_tap_checked_ms = now_ms;
-            bool tapped = muse_imu_tap_tapped();
-            if (tapped && muse_state_asleep()) {
-                s_stat_taps++;
-                set_asleep(false, "tap");
+        /* Picking the gadget up wakes the screen. STATUS1 is read in both
+         * states: it latches until it is read, and a motion taken while the
+         * screen was already on used to leave the bit set, after which the
+         * engine stopped reporting anything. The value only acts while asleep. */
+        if (now_ms - s_imu_checked_ms >= IMU_POLL_MS) {
+            s_imu_checked_ms = now_ms;
+            bool moved = muse_imu_moved();
+            /* Which way up the panel is. Read here and not only in the voice
+             * path, because this poll runs whether or not a reply is playing -
+             * and it is the same 200 ms window as the motion read, so the two
+             * gestures cost one transaction between them. */
+            bool down = muse_imu_face_down();
+            park(down, "imu");
+            /* A lift wakes the screen, but not on the motion alone: the event
+             * only arms a check, and WAKE_CONFIRM_MS later the posture decides.
+             * A press from inside a bag and a wobble on a desk both arm it and
+             * both fail it. While parked, none of it counts - waking for one
+             * would put the touch panel back under the table for a moment,
+             * which is the whole problem; turning it over clears the park and
+             * wakes it through park() instead. */
+            if (moved && muse_state_asleep() && !s_parked && !s_wake_pending) {
+                s_wake_pending = true;
+                s_wake_check_ms = now_ms + WAKE_CONFIRM_MS;
             }
-            /* Trace every knock the IMU can see. bump is the motion beyond
+            if (s_wake_pending && now_ms >= s_wake_check_ms) {
+                s_wake_pending = false;
+                if (muse_state_asleep() && !s_parked) {
+                    const int need = s_wake_suppressed ? WAKE_ANGLE_SUPPRESSED_DEG
+                                                      : CONFIG_MUSE_IMU_WAKE_ANGLE_DEG;
+                    const int deg = muse_imu_posture_delta_deg();
+                    if (muse_imu_wake_is_deliberate(need)) {
+                        s_stat_motion++;
+                        set_asleep(false, "lifted");
+                        s_wake_hold_ms = now_ms;
+                        s_wake_interacted = false;
+                        ESP_LOGI(TAG, "lift accepted (%d deg, need %d)", deg, need);
+                    } else {
+                        s_stat_ignored++;
+                        ESP_LOGI(TAG, "lift ignored (%d deg, need %d)", deg, need);
+                    }
+                }
+            }
+            /* Trace every movement the IMU can see. bump is the motion beyond
              * gravity; when it is high and STATUS1 still says nothing, the
              * engine is the one missing it, not the reader. */
-            int bump = muse_imu_tap_bump_mg();
+            int bump = muse_imu_bump_mg();
             if (bump > IMU_BUMP_LOG_MG
                 && now_ms - s_bump_logged_ms >= IMU_BUMP_LOG_QUIET_MS) {
                 s_bump_logged_ms = now_ms;
-                ESP_LOGW(TAG, "imu bump %d mg: status1 tap=%d, %s",
-                         bump, (int)tapped, muse_state_asleep() ? "asleep" : "awake");
+                ESP_LOGW(TAG, "imu bump %d mg: status1 motion=%d, %s",
+                         bump, (int)moved, muse_state_asleep() ? "asleep" : "awake");
             }
-            /* The engine is not the only reader of the case - on battery it is
-             * not a reader at all. The FIFO carries the whole 500 Hz stream,
-             * so a knock is found there rather than hoped for in the newest
-             * sample: the threshold is the same, the odds of seeing the impulse
-             * are not. */
-            int knock = 0;
-            if (muse_state_asleep() && s_knock_on) {
-                int fifo_peak = muse_imu_tap_fifo_peak_mg();
-                if (fifo_peak > knock) {
-                    knock = fifo_peak;
-                }
-                if (knock >= IMU_KNOCK_WAKE_MG) {
-                    ESP_LOGW(TAG, "imu knock %d mg (fifo): waking (tap)", knock);
-                    s_stat_knocks++;
-                    muse_imu_tap_note_knock(knock);
-                    set_asleep(false, "tap");
-                }
-            }
-            if (tapped && !muse_state_asleep()) {
+            if (moved && !muse_state_asleep()) {
                 /* Not an error in itself: the poll reads STATUS1 whether the
                  * screen is on or off, and that read is what drops INT1. Worth
                  * a counter all the same - on battery it is the difference
-                 * between "the engine saw the tap" and "the wake path lost it". */
-                s_stat_taps_awake++;
+                 * between "the engine saw the movement" and "the wake path lost
+                 * it". */
+                s_stat_motion_awake++;
             }
             /* The watchdog runs whether or not the engine is known to be
              * configured: a session whose init failed used to skip this for
              * good, and that is the one state it exists to repair. */
-            if (now_ms - s_tap_verified_ms >= IMU_TAP_VERIFY_MS) {
-                s_tap_verified_ms = now_ms;
-                bool full = now_ms - s_tap_full_ms >= IMU_TAP_FULL_VERIFY_MS;
+            if (now_ms - s_imu_verified_ms >= IMU_VERIFY_MS) {
+                s_imu_verified_ms = now_ms;
+                bool full = now_ms - s_imu_full_ms >= IMU_FULL_VERIFY_MS;
                 if (full) {
-                    s_tap_full_ms = now_ms;
+                    s_imu_full_ms = now_ms;
                 }
-                muse_imu_tap_check(full);   /* re-inits the chip when it drifted */
+                muse_imu_check(full);   /* re-inits the chip when it drifted */
             }
             if (muse_state_asleep()) {
-                if (now_ms - s_tap_rearmed_ms >= IMU_TAP_REARM_MS) {
-                    s_tap_rearmed_ms = now_ms;
-                    muse_imu_tap_rearm();
+                if (now_ms - s_imu_rearmed_ms >= IMU_REARM_MS) {
+                    s_imu_rearmed_ms = now_ms;
+                    muse_imu_rearm();
                 }
             } else {
-                s_tap_rearmed_ms = now_ms;   /* the window counts from the last wake */
+                s_imu_rearmed_ms = now_ms;   /* the window counts from the last wake */
+            }
+        }
+        /* Anything the user does clears the record: the point of the counter is
+         * "nobody was there", not "the gesture fired". One real interaction also
+         * puts the gate back to its configured angle. */
+        if (ev) {
+            s_wake_interacted = true;
+            if (s_false_wakes || s_wake_suppressed) {
+                s_false_wakes = 0;
+                if (s_wake_suppressed) {
+                    s_wake_suppressed = false;
+                    ESP_LOGI(TAG, "lift-to-wake back to %d deg: the user is here",
+                             CONFIG_MUSE_IMU_WAKE_ANGLE_DEG);
+                }
+            }
+        }
+        /* A lift nobody answered: the bag case, and the reason the screen used
+         * to stay lit for minutes at a time in one. */
+        if (s_wake_hold_ms && !muse_state_asleep()) {
+            const int window = s_wake_suppressed ? WAKE_IDLE_RECHECK_SUPPRESSED_MS
+                                                 : WAKE_IDLE_RECHECK_MS;
+            if (now_ms - s_wake_hold_ms >= window) {
+                s_wake_hold_ms = 0;
+                if (!s_wake_interacted) {
+                    if (++s_false_wakes >= FALSE_WAKE_LIMIT && !s_wake_suppressed) {
+                        s_wake_suppressed = true;
+                        ESP_LOGW(TAG, "lift-to-wake suppressed: %d idle wakes in a row, "
+                                      "now needs %d deg and %d ms",
+                                 s_false_wakes, WAKE_ANGLE_SUPPRESSED_DEG,
+                                 WAKE_IDLE_RECHECK_SUPPRESSED_MS);
+                    }
+                    ESP_LOGI(TAG, "no interaction in %d ms: back to sleep (#%d)",
+                             window, s_false_wakes);
+                    set_asleep(true, "no interaction");
+                }
             }
         }
         if (now - checked >= pdMS_TO_TICKS(SLEEP_CHECK_MS)) {
@@ -783,22 +933,31 @@ static void input_task(void *arg)
         if (paused && muse_board->wait_buttons) {
             int64_t before_ms = esp_timer_get_time() / 1000;
             TickType_t before_tick = xTaskGetTickCount();
-            /* Nothing polls here when knock detection is off: every wake line
-             * this board has interrupts, so a 1 s rest wait would only wake the
-             * CPU to look at nothing. A board whose wake lines aren't reliable
-             * keeps the short wait (P1-4 in the code review). */
-            muse_board->wait_buttons(knock_polling ? ASLEEP_WAIT_MS
-                                    : (napping || muse_board->wake_lines_reliable ? NAP_WAIT_MS : REST_WAIT_MS));
-            /* Woken by the case: STATUS1 latches until it is read, and the IMU
+            /* Every wake line this board has interrupts, so a 1 s rest wait
+             * would only wake the CPU to look at nothing. A board whose wake
+             * lines aren't reliable keeps the short wait (P1-4 in the code
+             * review). */
+            int wait_ms = napping || muse_board->wake_lines_reliable ? NAP_WAIT_MS
+                                                                    : REST_WAIT_MS;
+            if (s_wake_pending) {
+                /* A lift is waiting on its posture check. Sleeping the full nap
+                 * here would light the screen seconds after the hand stopped,
+                 * which reads as "the gesture does not work": come back for the
+                 * check instead. */
+                const int64_t left = s_wake_check_ms - esp_timer_get_time() / 1000;
+                wait_ms = left > 0 && left < wait_ms ? (int)left : 1;
+            }
+            muse_board->wait_buttons(wait_ms);
+            /* Woken by a movement: STATUS1 latches until it is read, and the IMU
              * holds INT1 high until then - which means the line the next sleep
              * arms on is already satisfied, so a missed read costs every later
-             * tap. Poll before going back to sleep instead of waiting for the
+             * wake. Poll before going back to sleep instead of waiting for the
              * 200 ms window to come round. */
-            s_tap_checked_ms = 0;
+            s_imu_checked_ms = 0;
             /* A light sleep is also the moment the IMU's own configuration can
              * come back changed (a bus glitch while the chip is not listening),
              * so verify it at once rather than at the next 1 s tick. */
-            s_tap_verified_ms = 0;
+            s_imu_verified_ms = 0;
             s_stat_sleeps++;
             if (muse_gpio_wake_was_line()) {
                 s_stat_wgpio++;
@@ -809,7 +968,7 @@ static void input_task(void *arg)
             }
             s_stat_slept_ms = esp_timer_get_time() / 1000 - before_ms;
             s_stat_tick_ms = (int64_t)(xTaskGetTickCount() - before_tick) * portTICK_PERIOD_MS;
-            s_stat_int1 = gpio_get_level(MUSE_IMU_TAP_GPIO);
+            s_stat_int1 = gpio_get_level(MUSE_IMU_INT_GPIO);
             /* The same snapshot for the two lines that are the other candidates
              * behind "nothing woke it": the button's and the touch panel's.
              * muse_board.c read them before disarming, and the cause says
@@ -835,27 +994,10 @@ static void input_task(void *arg)
             if (btn_down) {
                 s_stat_wake_btn++;   /* still down: a press that ended the sleep */
             }
-            /* The panel's INT is a pulse, not a level the controller holds: on
-             * the bench three taps left the line back at 1 by the time this task
-             * ran, so a level check alone would miss every one of them. A GPIO
-             * wake with neither the button down nor the IMU's line up can only be
-             * the touch line: those three are the lines armed for the sleep.
-             * Either way the line has to have been *high* when the sleep was
-             * armed: the controller holds INT low after a touch until it is read,
-             * and reading a stale low as a fresh touch relit the screen the
-             * instant it went dark, once per sleep, forever. */
-            bool touch_wake = s_stat_touch_armed == 1 && !btn_down && s_stat_int1 == 0
-                              && (s_stat_touch_level == 0
-                                  || (!rejected && muse_gpio_wake_was_line()));
-            if (touch_wake) {
-                s_stat_wake_touch++;
-            }
-            muse_imu_tap_note_wake(s_stat_int1, btn_down, touch_wake, muse_gpio_wake_cause());
+            /* The touch line is not a wake source on this board (the board file
+             * says why), so a line wake here can only be the button or the
+             * IMU's motion line, and both are already counted above. */
             check_touch_line();
-            if (touch_wake && muse_state_asleep()) {
-                s_stat_touch_wakes++;
-                set_asleep(false, "touch");
-            }
             if (s_stat_slept_ms >= 100) {
                 /* Only when the sleep was a real one: on battery this is a
                  * handful of lines a minute, not the 1.5 wakes/s the power
@@ -1025,6 +1167,29 @@ static bool console_command(char *line, bool whole)
         fflush(stdout);
         return true;
     }
+    if (!strcmp(line, "time") || !strncmp(line, "time=", 5)) {
+        if (line[4] == '=') {
+            /* ">time=YYYY-MM-DD HH:MM:SS" (UTC) for a bench with no network.
+             * Normal operation never needs it: SNTP sets both clocks as soon as
+             * Wi-Fi associates. */
+            int y = 0, mo = 0, d = 0, h = 0, mi = 0, s = 0;
+            if (sscanf(line + 5, "%d-%d-%d %d:%d:%d", &y, &mo, &d, &h, &mi, &s) != 6 &&
+                sscanf(line + 5, "%d-%d-%dT%d:%d:%d", &y, &mo, &d, &h, &mi, &s) != 6) {
+                printf("@time bad format, want time=YYYY-MM-DD HH:MM:SS (UTC)\n");
+            } else {
+                esp_err_t err = muse_rtc_set_utc_fields(y, mo, d, h, mi, s);
+                char stamp[48] = "unknown";
+                (void)muse_rtc_stamp_str(stamp, sizeof(stamp));
+                printf("@time set %s: %s\n", esp_err_to_name(err), stamp);
+            }
+        } else {
+            char stamp[48] = "unknown";
+            bool ok = muse_rtc_stamp_str(stamp, sizeof(stamp));
+            printf("@time %s chip=%d\n", ok ? stamp : "unknown", (int)muse_rtc_present());
+        }
+        fflush(stdout);
+        return true;
+    }
     if (!strcmp(line, "batt")) {
         if (muse_board->power_debug) {
             muse_board->power_debug();
@@ -1034,41 +1199,41 @@ static bool console_command(char *line, bool whole)
         return true;
     }
     if (!strcmp(line, "imu")) {
-        muse_imu_tap_log_diag("console");
-        /* Why a tap did or did not wake the screen on battery, where the USB
-         * cable that hides the state cannot be attached: sleeps is how often
-         * the task slept; line_high, btn and touch how often each line was
-         * asserted when it came back (the button and the touch INT are active
-         * low, the IMU's line is active high); taps how many of those the poll
-         * turned into a wake; cause what the last light-sleep exit reported
-         * (0 = nothing slept, the wait was notified from inside - a USB host or
-         * a wake request; 4 = timer, the nap ran out; 7 = GPIO, a line did it). */
-        printf("@imu.wakes sleeps=%lu wgpio=%lu wtimer=%lu wother=%lu line_high=%lu btn=%lu touch=%lu "
-               "touch_wakes=%lu taps=%lu taps_awake=%lu knocks=%lu sampling=%d last_slept_ms=%lld "
+        muse_imu_log_diag("console");
+        /* Why a movement did or did not wake the screen on battery, where the
+         * USB cable that hides the state cannot be attached: sleeps is how often
+         * the task slept; line_high and btn how often each line was asserted
+         * when it came back (the button is active low, the IMU's line active
+         * high); motion how many motion events the poll turned into a wake;
+         * cause what the last light-sleep exit reported (0 = nothing slept, the
+         * wait was notified from inside - a USB host or a wake request;
+         * 4 = timer, the nap ran out; 7 = GPIO, a line did it). */
+        printf("@imu.wakes sleeps=%lu wgpio=%lu wtimer=%lu wother=%lu line_high=%lu btn=%lu "
+               "motion=%lu motion_awake=%lu ignored=%lu parked=%d false_wakes=%d "
+               "suppressed=%d last_slept_ms=%lld "
                "last_tick_ms=%lld int1=%d btn_level=%d touch_level=%d touch_armed=%d cause=%d "
                "btn_irqs=%u\n",
                (unsigned long)s_stat_sleeps, (unsigned long)s_stat_wgpio,
                (unsigned long)s_stat_wtimer, (unsigned long)s_stat_wother,
-               (unsigned long)s_stat_line_high,
-               (unsigned long)s_stat_wake_btn, (unsigned long)s_stat_wake_touch,
-               (unsigned long)s_stat_touch_wakes,
-               (unsigned long)s_stat_taps, (unsigned long)s_stat_taps_awake,
-               (unsigned long)s_stat_knocks, (int)s_knock_on, (long long)s_stat_slept_ms,
+               (unsigned long)s_stat_line_high, (unsigned long)s_stat_wake_btn,
+               (unsigned long)s_stat_motion, (unsigned long)s_stat_motion_awake,
+               (unsigned long)s_stat_ignored,
+               (int)s_parked, s_false_wakes, (int)s_wake_suppressed,
+               (long long)s_stat_slept_ms,
                (long long)s_stat_tick_ms, s_stat_int1, s_stat_btn_level, s_stat_touch_level,
                s_stat_touch_armed,
                muse_gpio_wake_cause(), muse_gpio_button_irqs());
         fflush(stdout);
-        muse_imu_tap_diary_log("console");
         return true;
     }
     if (!strcmp(line, "imu.check")) {
-        muse_imu_tap_check(true);
-        muse_imu_tap_log_diag("console check");
+        muse_imu_check(true);
+        muse_imu_log_diag("console check");
         return true;
     }
     if (!strcmp(line, "imu.rearm")) {
-        muse_imu_tap_rearm();
-        muse_imu_tap_log_diag("console rearm");
+        muse_imu_rearm();
+        muse_imu_log_diag("console rearm");
         return true;
     }
     if (!strcmp(line, "tp")) {
@@ -1156,51 +1321,27 @@ static bool console_command(char *line, bool whole)
         fflush(stdout);
         return true;
     }
-    if (!strncmp(line, "fifowatch=", 10)) {
-        /* Live look at what the chip's FIFO carries while somebody taps the
-         * case: the fastest way to know whether this route sees a knock at all,
-         * without a battery run. */
-        int secs = atoi(line + 10);
+    if (!strncmp(line, "imuwatch=", 9)) {
+        /* Bench aid for pick-up-to-wake: prints each motion event the chip
+         * latches and the acceleration that came with it, so the threshold in
+         * CONFIG_MUSE_IMU_WAKE_MG can be settled without a battery run. */
+        int secs = atoi(line + 9);
         if (secs <= 0 || secs > 60) {
             secs = 15;
         }
-        int best = 0;
-        printf("@fifowatch %ds, tap the case now\n", secs);
+        printf("@imuwatch %ds, move the gadget now\n", secs);
         fflush(stdout);
+        int events = 0;
         int64_t until = esp_timer_get_time() / 1000 + (int64_t)secs * 1000;
         while (esp_timer_get_time() / 1000 < until) {
-            int peak = muse_imu_tap_fifo_peak_mg();
-            if (peak > best) {
-                best = peak;
-            }
-            if (peak > 0) {
-                printf("@fifowatch peak=%d best=%d\n", peak, best);
+            if (muse_imu_moved()) {
+                events++;
+                printf("@imuwatch motion=%d bump=%d mg\n", events, muse_imu_bump_mg());
                 fflush(stdout);
             }
-            vTaskDelay(pdMS_TO_TICKS(100));
+            vTaskDelay(pdMS_TO_TICKS(50));
         }
-        printf("@fifowatch done best=%d mg\n", best);
-        fflush(stdout);
-        return true;
-    }
-    if (!strcmp(line, "fifo")) {
-        /* One-shot read of the chip's buffered samples: what the knock poll
-         * sees, and how much of it there is. */
-        printf("@fifo peak=%d mg\n", muse_imu_tap_fifo_peak_mg());
-        fflush(stdout);
-        muse_imu_tap_diary_log("fifo");
-        return true;
-    }
-    if (!strncmp(line, "knock=", 6)) {
-        /* Software knock detection costs sleep time: with it off the waits go
-         * back to 1 s / 10 s and only the IMU's own engine can wake the screen. */
-        s_knock_on = line[6] == '1';
-        if (s_knock_on) {
-            printf("@knock sampling=1 (asleep wait %d ms), poll %d ms\n",
-                   ASLEEP_WAIT_MS, IMU_TAP_POLL_SLEEP_MS);
-        } else {
-            printf("@knock sampling=0 (asleep wait 1 s / 10 s), poll %d ms\n", IMU_TAP_POLL_MS);
-        }
+        printf("@imuwatch done events=%d\n", events);
         fflush(stdout);
         return true;
     }

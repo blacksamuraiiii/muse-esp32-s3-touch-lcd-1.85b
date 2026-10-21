@@ -32,6 +32,7 @@
 #include "muse_audio.h"
 #include "muse_board.h"
 #include "muse_chat.h"
+#include "muse_imu.h"
 #include "muse_input.h"
 #include "muse_mem.h"
 #include "muse_settings.h"
@@ -41,6 +42,26 @@
 static const char *TAG = "muse_voice";
 
 #define MAX_SECS 15
+/* Energy gate. An accidental touch on the mic icon records silence, and sending
+ * it costs a round trip and gets an answer to nothing.
+ *
+ * The threshold is relative to the room, not a fixed number. A fixed -45 dBFS
+ * was the first attempt and it let everything through: the default microphone
+ * gain is 30 dB, which puts this microphone's noise floor around -50 dBFS in a
+ * quiet room, so a table brushing the panel cleared the bar on its own. What
+ * the gate measures instead is the pre-roll - the 320 ms captured before the
+ * press, i.e. the room with no finger on it - and speech has to stand
+ * GATE_MARGIN_DB above that.
+ *
+ * Loudness alone still cannot tell a word from a knock: a table thump is
+ * briefly louder than speech. So the gate also counts how many 20 ms chunks
+ * clear the threshold, and asks for GATE_VOICED_CHUNKS of them. A knock is one
+ * or two; a syllable is five or more. */
+#define GATE_MARGIN_DB 12.0f        /* how far above the room a chunk has to be */
+#define GATE_MIN_DBFS (-45.0f)      /* ...but never easier than this, whatever the room */
+#define GATE_MAX_DBFS (-20.0f)      /* ...and never harder, or a noisy room eats a quiet voice */
+#define GATE_NOISE_DEFAULT (-50.0f) /* no pre-roll to measure (barge-in): assume this */
+#define GATE_VOICED_CHUNKS 5        /* 100 ms above the threshold: a syllable, not a knock */
 #define TAIL_FRAMES (MUSE_AUDIO_RATE * 12 / 100)   /* capture lag + poll interval, stops before the release click */
 #define MAX_FRAMES (MUSE_AUDIO_RATE * MAX_SECS)
 /* 1 s: presses shorter than this are taps, not speech (user-set 2026-10-16;
@@ -190,12 +211,29 @@ typedef struct {
     size_t frames;
     int peak, clipped;
     float floor_db;
+    float loud_db;       /* loudest 20 ms chunk: what the log reports */
+    float gate_db;       /* what a chunk has to beat to count as voice */
+    int voiced;          /* 20 ms chunks that did */
     float tail_db[25];   /* the last 0.5 s, to see where speech ends and the release click lands */
     size_t chunks;
 } rec_stats_t;
 
-/* Adds one captured chunk (up to MUSE_AUDIO_CHUNK frames) to the stats. */
-static void keep(rec_stats_t *st, const int16_t *pcm, size_t n)
+/* Speech has to stand GATE_MARGIN_DB above the room, between the two clamps. */
+static float gate_thresh(float room_db)
+{
+    float t = room_db + GATE_MARGIN_DB;
+    if (t < GATE_MIN_DBFS) {
+        t = GATE_MIN_DBFS;
+    }
+    if (t > GATE_MAX_DBFS) {
+        t = GATE_MAX_DBFS;
+    }
+    return t;
+}
+
+/* Adds one captured chunk (up to MUSE_AUDIO_CHUNK frames) to the stats and
+ * returns its level, so the gate can count it without a second pass. */
+static float keep(rec_stats_t *st, const int16_t *pcm, size_t n)
 {
     for (size_t i = 0; i < n; i++) {
         int v = abs(pcm[i]);
@@ -207,8 +245,11 @@ static void keep(rec_stats_t *st, const int16_t *pcm, size_t n)
     if (n == MUSE_AUDIO_CHUNK) {
         float db = muse_audio_dbfs(pcm, n);
         st->floor_db = db < st->floor_db ? db : st->floor_db;
+        st->loud_db = db > st->loud_db ? db : st->loud_db;
         st->tail_db[st->chunks++ % 25] = db;
+        return db;
     }
+    return -100.0f;
 }
 
 /* Gives Hatch what it has room for of the note being recorded. */
@@ -233,7 +274,13 @@ static void go_live(void)
 /* One chunk of speech: into the stats, and on to Hatch, by way of the kept note if there is one. */
 static void take(rec_stats_t *st, const int16_t *pcm)
 {
-    keep(st, pcm, MUSE_AUDIO_CHUNK);
+    float db = keep(st, pcm, MUSE_AUDIO_CHUNK);
+    /* gate_db stays 0 while the pre-roll is being collected, so none of the
+     * audio from before the press can count as voice - it is the room the
+     * threshold is measured against, not evidence. */
+    if (db >= st->gate_db) {
+        st->voiced++;
+    }
     if (!s_rec) {
         if (s_live) {
             muse_hatch_turn_audio(pcm, MUSE_AUDIO_CHUNK);
@@ -259,14 +306,20 @@ static bool record(bool barge_in, size_t *held, char *why, size_t cap)
     muse_state_set_progress(0);
     s_rec_n = s_sent = 0;
     s_live = s_tried = false;
-    if (!s_rec || (muse_hatch_ready() && !s_held_count)) {
+    *held = 0;   /* the aborts below return before the length is known */
+    /* With a buffer to hold the take (HOLD_NOTES), the turn is opened only once
+     * the gate has seen something worth sending, so a false touch uploads
+     * nothing at all. Without one there is nowhere to keep the pre-roll while
+     * the gate decides: stream from the first chunk as before and let the check
+     * at the end of the take do the work. */
+    if (!s_rec) {
         go_live();
     }
     muse_state_set_caption(s_live ? "LISTENING..." : "RECORDING...");
     bool heard = false, ok = true;
     bool gave_up = false;   /* Hatch failed this note: it's kept, and goes later */
     char text[96];
-    rec_stats_t st = { 0 };
+    rec_stats_t st = { .loud_db = -100.0f };
 
     size_t n = 0;
     if (barge_in) {
@@ -282,11 +335,32 @@ static bool record(bool barge_in, size_t *held, char *why, size_t cap)
         }
     }
     size_t pre = n;
+    /* The room, measured over the pre-roll. Barge-in has none: the capture
+     * before the press was the speaker's own tail, not the room, so it assumes
+     * a quiet one rather than deriving a threshold from a reply. */
+    float room_db = pre ? st.floor_db : GATE_NOISE_DEFAULT;
+    st.gate_db = gate_thresh(room_db);
+    ESP_LOGI(TAG, "gate: room %.1f dBFS, threshold %.1f dBFS (gain %d dB)",
+             room_db, st.gate_db, muse_settings_mic_gain());
     bool released = false;
     size_t stop_at = MAX_FRAMES;
     while (n + MUSE_AUDIO_CHUNK <= stop_at) {
         if (muse_audio_read(s_chunk, MUSE_AUDIO_CHUNK) != ESP_OK) {
             break;
+        }
+        /* Turned face down mid-note: the press was the table, not a person, and
+         * the take is abandoned rather than left to the release that may never
+         * come (the screen is off by now, so the touch controller stops
+         * reporting). Checked before the chunk is taken so none of it is
+         * streamed. */
+        if (muse_imu_face_down()) {
+            ESP_LOGI(TAG, "face down: dropping the note");
+            muse_state_set_level(0);
+            if (s_tried) {
+                muse_hatch_turn_cancel();
+            }
+            strlcpy(why, "FACE DOWN", cap);
+            return false;
         }
         muse_state_set_level(muse_audio_level(s_chunk, MUSE_AUDIO_CHUNK));
         take(&st, s_chunk);
@@ -311,8 +385,14 @@ static bool record(bool barge_in, size_t *held, char *why, size_t cap)
         }
         n += MUSE_AUDIO_CHUNK;
         bool tick = n % (MUSE_AUDIO_CHUNK * 5) == 0;
-        if (tick && s_rec && !s_live && !gave_up && !s_held_count && muse_hatch_ready()) {
-            ESP_LOGI(TAG, "Muse in reach: streaming the note so far");
+        /* The gate, and Hatch coming within reach mid-note, are the same
+         * question: is there a turn to stream yet. Opening it only once enough
+         * chunks have cleared the threshold is what keeps a false touch from
+         * uploading anything at all. */
+        if (!s_live && !gave_up && !s_held_count && muse_hatch_ready()
+            && st.voiced >= GATE_VOICED_CHUNKS) {
+            ESP_LOGI(TAG, "gate open: %d chunks over %.1f dBFS, streaming the note so far",
+                     st.voiced, st.gate_db);
             go_live();
         }
         muse_state_set_progress((float)n / MAX_FRAMES);
@@ -342,6 +422,22 @@ static bool record(bool barge_in, size_t *held, char *why, size_t cap)
     ESP_LOGI(TAG, "recorded %.2fs%s: rms %.1f dBFS, peak %.1f dBFS, floor %.1f dBFS, %d clipped, gain %d dB",
              (double)n / MUSE_AUDIO_RATE, released ? "" : " (max)", rms_db < -100.0f ? -100.0f : rms_db,
              20.0 * log10((st.peak + 1) / 32768.0), st.floor_db, st.clipped, muse_settings_mic_gain());
+
+    if (st.voiced < GATE_VOICED_CHUNKS) {
+        /* Not enough of the take stood above the room: an accidental touch, a
+         * knock, or a cough, not a note. The turn is cancelled before it is
+         * ended, so nothing is delivered - which matters on the builds that
+         * stream from the first chunk, where the gate could not hold the audio
+         * back. */
+        ESP_LOGI(TAG, "take is not speech (room %.1f, threshold %.1f, loudest %.1f dBFS, "
+                      "%d/%d voiced chunks): not sending",
+                 room_db, st.gate_db, st.loud_db, st.voiced, GATE_VOICED_CHUNKS);
+        if (s_tried) {
+            muse_hatch_turn_cancel();
+        }
+        strlcpy(why, "TOO QUIET", cap);
+        return false;
+    }
     return ok;
 }
 
@@ -364,6 +460,17 @@ static bool hatch_reply(bool *delivered)
     int64_t t0 = esp_timer_get_time();
     *delivered = false;
     for (;;) {
+        /* Turned face down: dismiss the reply. This is not "interrupted by a
+         * new press" - returning true there would leave the voice task waiting
+         * for a press that never comes - so the turn ends and the flow goes
+         * idle. Checked first, because it is the one input that arrives while
+         * the reply is being read. */
+        if (muse_imu_face_down()) {
+            ESP_LOGI(TAG, "face down: stopping the reply");
+            muse_hatch_turn_cancel();
+            muse_state_set_level(0);
+            return false;
+        }
         muse_hatch_ev_t ev;
         while ((ev = muse_hatch_turn_event(text, sizeof(text))) != MUSE_HATCH_EV_NONE) {
             switch (ev) {

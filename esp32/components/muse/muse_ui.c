@@ -41,6 +41,7 @@
 #include "muse_mem.h"
 #include "muse_menu.h"
 #include "muse_pixel.h"
+#include "muse_rtc.h"
 #include "muse_settings.h"
 #include "muse_settings_ui.h"
 #include "muse_state.h"
@@ -133,6 +134,8 @@ static lv_obj_t *s_bar;     /* compact layout's stand-in for the ring */
 static lv_obj_t *s_state_lbl;
 static lv_obj_t *s_name_lbl;    /* this gadget's own name, to tell it from the next one */
 static lv_obj_t *s_power_lbl;
+static lv_obj_t *s_clock_lbl;   /* "HH:MM", first in the status row */
+static float s_next_clock_update;
 static lv_obj_t *s_caption_lbl;
 static lv_obj_t *s_reply_lbl;   /* full layout: the reply's page while answering */
 static lv_obj_t *s_meter[METER_SEGS];
@@ -994,6 +997,10 @@ static void build_screen(void)
     lv_obj_set_flex_align(status, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_set_style_pad_column(status, s_small ? 4 : 8, 0);
     lv_obj_align(status, LV_ALIGN_TOP_MID, 0, muse_board->rim_controls ? 40 : s_small ? 1 : 20 + s_dy);
+    /* The clock leads the row: it is the one item whose width changes every
+     * minute, and flex keeps the icons beside it. Empty until there is a time
+     * worth showing, which is how a board without an RTC says so. */
+    s_clock_lbl = make_label(status, &lv_font_unscii_8, COLOR_DIM);
     s_wifi_icon = make_label(status, &lv_font_montserrat_14, COLOR_DIM);
     s_ble_icon = make_label(status, &lv_font_montserrat_14, COLOR_DIM);
     s_power_lbl = make_label(status, &lv_font_unscii_8, COLOR_DIM);
@@ -1489,6 +1496,23 @@ static void set_meter_visible(bool visible)
     s_shown_lit = -1;
 }
 
+/* Once a second is enough for a minute-resolution clock, and it keeps the
+ * label redraw off every frame. */
+static void update_clock(float now)
+{
+    if (s_clock_lbl == NULL || now < s_next_clock_update) {
+        return;
+    }
+    s_next_clock_update = now + 1.0f;
+    char buf[8];
+    if (!muse_rtc_clock_str(buf, sizeof(buf))) {
+        buf[0] = '\0';
+    }
+    if (strcmp(buf, lv_label_get_text(s_clock_lbl)) != 0) {
+        lv_label_set_text(s_clock_lbl, buf);
+    }
+}
+
 static void update_power(float now)
 {
     if (now < s_next_power_update) {
@@ -1614,6 +1638,7 @@ static void update_status(muse_mode_t mode, float now)
             lv_obj_add_flag(answer >= 0 ? s_caption_lbl : s_reply_lbl, LV_OBJ_FLAG_HIDDEN);
         }
     }
+    update_clock(now);
     update_power(now);
 }
 

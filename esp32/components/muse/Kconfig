@@ -152,6 +152,31 @@ menu "Muse"
         default "ai_passport" if MUSE_BOARD_AI_PASSPORT
         default "none"
 
+    # The 1.85B ships with two ST77916 panel revisions, told apart by reading
+    # register 0x04 at boot (00 7F 7F 7F = v1, anything else = v2). A third
+    # revision would read something the probe has never seen, so the choice is
+    # also overridable by hand: pick a table, reflash, and the panel comes up
+    # without editing the board file on a workbench with a bad screen.
+    choice MUSE_LCD185B_INIT
+        prompt "ST77916 init table (Waveshare 1.85B)"
+        depends on MUSE_BOARD_WAVESHARE_S3_TOUCH_LCD_185B
+        default MUSE_LCD185B_INIT_AUTO
+        help
+            AUTO runs the 0x04 probe and picks v1 or v2, the flow the vendor BSP
+            uses. Force one only when a panel revision stops matching the probe:
+            v1 and v2 are this board's two known tables, echoear is the same
+            360x360 ST77916 sequence the OSTB EchoEar-2ST port uses, kept as a
+            third candidate to try before suspecting the hardware.
+        config MUSE_LCD185B_INIT_AUTO
+            bool "Probe 0x04 and choose (default)"
+        config MUSE_LCD185B_INIT_V1
+            bool "Force v1"
+        config MUSE_LCD185B_INIT_V2
+            bool "Force v2"
+        config MUSE_LCD185B_INIT_ECHOEAR
+            bool "Force the EchoEar-2ST table"
+    endchoice
+
     # The Muse tools' serial port: the console UART behind the board's USB
     # bridge, where the chip's own USB Serial/JTAG isn't wired to a connector
     # (the Watcher's USB-C goes to a CH342) or the chip has none.
@@ -294,6 +319,74 @@ menu "Muse"
             128 KB of speech, 2 s of mic backlog and 1 s of decoded audio
             (about 220 KB), which still covers a push-to-talk turn. Board
             overlays with 2 MB of PSRAM turn it on.
+
+    # ---------------------------------------------------------------- clock
+    # The PCF85063A on the 1.85B keeps UTC; what is shown is local time, and
+    # the conversion is the C library's, driven by this POSIX TZ string.
+    # "CST-8" is China Standard Time (UTC+8, no DST). A POSIX TZ names the
+    # zone by the offset you add to UTC to get local time, hence the sign.
+    config MUSE_TIMEZONE
+        string "POSIX TZ for the clock on screen"
+        default "CST-8"
+        help
+            Used by localtime_r() for the clock in the status line. Examples:
+            "CST-8" (China), "JST-9" (Japan), "UTC0", "CET-1CEST,M3.5.0,M10.5.0/3"
+            (central Europe with DST). Only boards with an RTC show a clock.
+
+    # The RTC is the only source of time on a board that boots offline; once
+    # Wi-Fi is up, SNTP corrects it and the corrected value is written back.
+    config MUSE_NTP_SERVER
+        string "NTP server used to set the RTC"
+        default "ntp.aliyun.com"
+        help
+            Reached over SNTP as soon as Wi-Fi associates. "pool.ntp.org"
+            works everywhere; the default is the one that answers fastest
+            from mainland China.
+
+    # ------------------------------------------------------------ IMU gestures
+    # Wake-on-motion: the QMI8658A raises INT1 when acceleration changes by
+    # this much, and that line wakes the light sleep. Lower is easier to
+    # trigger (a knock on the desk counts); higher needs a real lift. The
+    # threshold register is 8 bits at 1 mg per step, so 255 is the ceiling.
+    config MUSE_IMU_WAKE_MG
+        int "Pick-up-to-wake acceleration threshold (milli-g)"
+        range 80 255
+        default 200
+        help
+            200 mg is the chip vendor's default and fires on desk vibration;
+            the upper end of the range needs a deliberate lift. The engine's
+            blanking time keeps one movement from raising the line twice.
+            ">imuwatch=15" in the console prints each event with the
+            acceleration that caused it, which is how to settle this on the
+            bench.
+
+    # Lift-to-wake posture gate: how far gravity has to have turned away from
+    # the posture the device was left in. A vector angle, not a pitch, so no
+    # assumption about how the part is rotated on the PCB is involved. 30 deg is
+    # "picked up and turned towards a face"; below that a device carried flat
+    # never lights. Raised to 55 deg automatically after three idle wakes, which
+    # is what a bag full of wobble looks like.
+    config MUSE_IMU_WAKE_ANGLE_DEG
+        int "Lift-to-wake posture change (degrees)"
+        range 15 90
+        default 30
+        help
+            Measured against the posture recorded when the screen went dark, so
+            it survives being put down in any orientation. A screen lit by a
+            lift nobody touches goes back to sleep after 6 s (2.5 s once
+            suppressed), and three of those in a row raise the gate to 55 deg
+            until someone actually touches the device.
+
+    # Face-down mute: the sign of the Z axis that means "screen towards the
+    # table". Flip this if a `>imu` read shows the opposite sign lying flat.
+    config MUSE_IMU_FACE_DOWN_POSITIVE
+        bool "The Z axis reads positive with the screen facing down"
+        default n
+        help
+            The board mounts the IMU flat behind the panel, so one of the two
+            Z signs means screen-down. Which one depends on how the part was
+            rotated; the boot log prints the resting vector so this can be
+            settled on the bench in one read.
 
     config MUSE_TOUCH_IRQ_PULSE_WIDEN
         bool "Widen the CST816S IRQ pulse (register 0xED = 0x14)"

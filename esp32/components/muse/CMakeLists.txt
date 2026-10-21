@@ -28,6 +28,11 @@ if(CONFIG_MUSE_ENABLED)
         "muse_console.c"
         "muse_state.c"
         "muse_battery.c"
+        "muse_rtc.c"
+        # Waveshare's PCF85063A driver, unmodified. Built in here rather than as
+        # its own component so the dependency set stays unchanged and the build
+        # works offline - see third_party/README.md.
+        "third_party/pcf85063a/pcf85063a.c"
         "muse_ui.c"
         "muse_audio.c"
         "muse_pmu.c"
@@ -39,7 +44,7 @@ if(CONFIG_MUSE_ENABLED)
         "muse_settings_ui.c"
         "muse_text.c"
         "muse_tts.c"
-        "muse_imu_tap.c"
+        "muse_imu.c"
         "muse_audio_play.c"
         "muse_keypad.c"
         "muse_lv_mem.c"
