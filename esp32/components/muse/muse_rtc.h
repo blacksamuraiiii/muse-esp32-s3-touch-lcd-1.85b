@@ -18,6 +18,7 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 #include <time.h>
 
 #include "driver/i2c_master.h"
@@ -45,13 +46,17 @@ extern "C" {
  *  - A write is bracketed by STOP: the datasheet wants the counters held while
  *    04h-0Ah is replaced, or a carry can tear the value.
  *
- * The alarm registers are deliberately unused: the board's RTC_INT (GPIO6) is
- * not wired as a wake source here, and nothing in the UI schedules a wake.
+ * The alarm registers are deliberately left unarmed: nothing in the UI schedules
+ * a wake yet. What is wired is the line and the mask - RTC_INT (GPIO6) folds
+ * into the deep-sleep wake mask in the board's power_off() as soon as
+ * muse_rtc_wake_armed() says an alarm is pending - so the version that starts
+ * scheduling wakes only has to fill in the register side below.
  */
 
 #define MUSE_RTC_ADDR 0x51
-/* RTC_INT on the Waveshare ESP32-S3-Touch-LCD-1.85B (open drain, active low).
- * Not armed today; kept here because it is the one pin an alarm would use. */
+/* RTC_INT on the Waveshare ESP32-S3-Touch-LCD-1.85B (open drain, active low,
+ * needs a pull-up in the RTC domain). It joins BOOT on the deep-sleep wake
+ * mask; the alarm that would raise it is not implemented yet. */
 #define MUSE_RTC_INT_GPIO 6
 
 /* Probe 0x51, start the clock in 24-hour mode, clear any latched alarm state.
@@ -89,6 +94,25 @@ void muse_time_start(void);
 bool muse_rtc_clock_str(char *buf, size_t len);
 /* "YYYY-MM-DD HH:MM:SS <zone>" in local time, for the console. */
 bool muse_rtc_stamp_str(char *buf, size_t len);
+
+/*
+ * The alarm, reserved for a scheduled wake - the register side is not written
+ * yet, so these are a stable seam rather than a feature:
+ *
+ *  - muse_rtc_arm_wakeup_in() validates its argument, logs the refusal and
+ *    returns ESP_ERR_NOT_SUPPORTED. Nothing is armed.
+ *  - muse_rtc_wake_armed() is what the board's power_off() asks before folding
+ *    MUSE_RTC_INT_GPIO into the ext1 deep-sleep mask. It is false until an
+ *    alarm is really armed, so deep-sleep behaviour is unchanged by the mask
+ *    being ext1 now.
+ *  - After a real alarm the waker must call muse_rtc_disarm(): AF stays set
+ *    until cleared, and a set AF with AIE=1 holds INT low - the chip would then
+ *    re-wake the instant it slept.
+ */
+esp_err_t muse_rtc_arm_wakeup_in(uint32_t in_seconds);
+esp_err_t muse_rtc_disarm(void);
+bool muse_rtc_alarm_pending(void);
+bool muse_rtc_wake_armed(void);
 
 #ifdef __cplusplus
 }

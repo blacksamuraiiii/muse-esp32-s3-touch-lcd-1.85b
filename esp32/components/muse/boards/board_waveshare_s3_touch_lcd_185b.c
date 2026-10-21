@@ -1338,7 +1338,19 @@ static esp_err_t power_off(void)
     while (gpio_get_level(TALK_GPIO) == 0) {
         vTaskDelay(pdMS_TO_TICKS(20));
     }
-    ESP_RETURN_ON_ERROR(esp_sleep_enable_ext0_wakeup(TALK_GPIO, 0), TAG, "wake button");
+    /* ext1, not ext0, so the RTC alarm can share the deep-sleep mask with the
+     * button. Both lines are active low, and the RTC_INT bit is only added when
+     * an alarm is actually armed - with none armed the mask is the single BOOT
+     * bit ext0 used to watch, so button behaviour is unchanged. */
+    uint64_t wake_mask = BIT64(TALK_GPIO);
+    if (muse_rtc_wake_armed()) {
+        /* Open drain, and the RTC domain has no digital pull-up. */
+        rtc_gpio_pullup_en(MUSE_RTC_INT_GPIO);
+        rtc_gpio_pulldown_dis(MUSE_RTC_INT_GPIO);
+        wake_mask |= BIT64(MUSE_RTC_INT_GPIO);
+    }
+    ESP_RETURN_ON_ERROR(esp_sleep_enable_ext1_wakeup_io(wake_mask, ESP_EXT1_WAKEUP_ANY_LOW),
+                        TAG, "wake button");
     esp_deep_sleep_start();
     return ESP_FAIL;
 }
