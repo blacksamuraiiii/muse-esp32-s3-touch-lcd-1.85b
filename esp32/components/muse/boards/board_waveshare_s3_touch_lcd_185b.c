@@ -70,11 +70,19 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
+#if CONFIG_MUSE_LCD185B_INIT_ECHOEAR
+/* The third ST77916 360x360 table, borrowed from the OSTB EchoEar-2ST port
+ * (xiaozhi's esp-vocat sequence, MIT - the notice stays in that header). Only
+ * compiled when forced from menuconfig, so an AUTO build carries no copy. */
+#include "ostb_echoear_display_init.h"
+#endif
+
 #include "muse_audio.h"
 #include "muse_board.h"
-#include "muse_imu_tap.h"
+#include "muse_imu.h"
 #include "muse_lcd_bands.h"
 #include "muse_mem.h"
+#include "muse_rtc.h"
 #include "muse_ui.h"
 
 static const char *TAG = "board";
@@ -312,6 +320,11 @@ static const st77916_lcd_init_cmd_t s_init_version_1[] = {
     {0xD9, (uint8_t []){0x33}, 1, 0},
     {0xF3, (uint8_t []){0x01}, 1, 0},
     {0xF0, (uint8_t []){0x00}, 1, 0},
+    /* TEON. Inert on this board: no TE pin in the map above and
+     * tear_avoid_mode = NONE, so nothing reads the signal. Kept because it is
+     * part of the vendor's fixed Sitronix tail (F0/00 -> 35/00 -> 21/00 -> 11
+     * -> 29) and sits in the correct place, before DISPON. Dropping it would
+     * only make this table byte-identical to the official 1.85C's. */
     {0x35, (uint8_t []){0x00}, 1, 0},
     {0x21, (uint8_t []){0x00}, 0, 0},
     {0x11, (uint8_t []){0x00}, 0, 120},
@@ -500,7 +513,7 @@ static const st77916_lcd_init_cmd_t s_init_version_2[] = {
     {0xD9, (uint8_t []){0xAA}, 1, 0},
     {0xF3, (uint8_t []){0x01}, 1, 0},
     {0xF0, (uint8_t []){0x00}, 1, 0},
-    {0x35, (uint8_t []){0x00}, 1, 0},
+    {0x35, (uint8_t []){0x00}, 1, 0},   /* TEON, inert - see s_init_version_1 */
     {0x21, (uint8_t []){0x00}, 1, 0},
     {0x11, (uint8_t []){0x00}, 1, 120},
     {0x29, (uint8_t []){0x00}, 1, 0},
@@ -587,6 +600,9 @@ static esp_err_t init(void)
      * together when the bus itself stops working, which is what a battery
      * session can leave behind (muse_board.h has the recovery). */
     muse_i2c_register(s_i2c, I2C_SDA, I2C_SCL);
+    /* The clock at 0x51. Graceful when the chip is absent: the board then runs
+     * on the system clock alone and shows no time until SNTP has run. */
+    (void)muse_rtc_init(s_i2c);
     /* Hand the gauge its model. bq27220_create() checks what the chip already
      * stores and writes only when it differs, so this lands once and then logs
      * "Skip battery profile update" on later boots. That write is what fixes the
@@ -615,19 +631,20 @@ static esp_err_t init(void)
         .scl_speed_hz = 100000,
     };
     ESP_RETURN_ON_ERROR(i2c_master_bus_add_device(s_i2c, &bq_cfg, &s_bq), TAG, "bq27220 device");
-    /* QMI8658A at 0x6B, for tap-to-wake only (muse_imu_tap.c). A board whose
-     * IMU doesn't answer still runs: the screen just never wakes on a tap. */
+    /* QMI8658A at 0x6B: picking the gadget up wakes the screen, and turning it
+     * face down mutes playback (muse_imu.c). A board whose IMU doesn't answer
+     * still runs - the screen then only wakes on the button. */
     const i2c_device_config_t imu_cfg = {
         .dev_addr_length = I2C_ADDR_BIT_LEN_7,
         .device_address = QMI8658_ADDR,
         .scl_speed_hz = 400000,
     };
     if (i2c_master_bus_add_device(s_i2c, &imu_cfg, &s_imu) == ESP_OK) {
-        esp_err_t err = muse_imu_tap_init(s_imu);
+        esp_err_t err = muse_imu_init(s_imu);
         if (err != ESP_OK) {
-            ESP_LOGW(TAG, "tap-to-wake off: %s", esp_err_to_name(err));
-        } else if ((err = muse_gpio_wake_line_add(MUSE_IMU_TAP_GPIO, true)) != ESP_OK) {
-            ESP_LOGW(TAG, "tap line not armed: %s", esp_err_to_name(err));
+            ESP_LOGW(TAG, "pick-up-to-wake off: %s", esp_err_to_name(err));
+        } else if ((err = muse_gpio_wake_line_add(MUSE_IMU_INT_GPIO, true)) != ESP_OK) {
+            ESP_LOGW(TAG, "IMU wake line not armed: %s", esp_err_to_name(err));
         }
     } else {
         ESP_LOGW(TAG, "no IMU device handle");
@@ -706,18 +723,6 @@ static void touch_report_config(void)
     }
 }
 
-/* The CST816S holds INT low after a touch until the host reads the touch
- * registers; while the display is paused nothing else does, so the line would
- * still be low when the next sleep is armed - and a line already at its armed
- * level wakes the chip the moment it sleeps. Reading here releases it. */
-static esp_err_t touch_drain(void)
-{
-    if (!s_tp) {
-        return ESP_ERR_INVALID_STATE;
-    }
-    return esp_lcd_touch_read_data(s_tp);
-}
-
 /* ST77916 windows must be even-aligned: QSPI carries two pixels per beat and
  * the driver's draw_bitmap() writes the window as given. Same callback the
  * official 1.75C/1.85C boards install. */
@@ -790,19 +795,35 @@ static lv_display_t *display_start(lv_indev_t **touch)
     }
     const st77916_lcd_init_cmd_t *init_cmds = s_init_version_2;
     size_t init_cmds_size = sizeof(s_init_version_2) / sizeof(s_init_version_2[0]);
+    const char *init_label = "v2";
     if (probe_err == ESP_OK && version[0] == 0x00 && version[1] == 0x7F &&
         version[2] == 0x7F && version[3] == 0x7F) {
         init_cmds = s_init_version_1;
         init_cmds_size = sizeof(s_init_version_1) / sizeof(s_init_version_1[0]);
+        init_label = "v1";
     }
+    /* Kconfig override: a third panel revision would read a 0x04 value this
+     * probe has never seen, and neither known table would fit. Forcing one
+     * (menuconfig > Muse > ST77916 init table) turns "garbled screen, no spare
+     * board" into a one-line change and a reflash. AUTO keeps the probe. */
+#if CONFIG_MUSE_LCD185B_INIT_V1
+    init_cmds = s_init_version_1;
+    init_cmds_size = sizeof(s_init_version_1) / sizeof(s_init_version_1[0]);
+    init_label = "v1 (forced)";
+#elif CONFIG_MUSE_LCD185B_INIT_V2
+    init_label = "v2 (forced)";
+#elif CONFIG_MUSE_LCD185B_INIT_ECHOEAR
+    init_cmds = echoear_init_cmds;
+    init_cmds_size = sizeof(echoear_init_cmds) / sizeof(echoear_init_cmds[0]);
+    init_label = "echoear (forced)";
+#endif
     if (probe_err != ESP_OK) {
         ESP_LOGW(TAG, "panel revision unknown (probe %s, readback %02X %02X %02X %02X): "
-                      "assuming the v2 init table", esp_err_to_name(probe_err),
-                 version[0], version[1], version[2], version[3]);
+                      "using init table %s", esp_err_to_name(probe_err),
+                 version[0], version[1], version[2], version[3], init_label);
     } else {
         ESP_LOGI(TAG, "ST77916 reg 0x%02X = %02X %02X %02X %02X -> init table %s", ST77916_REG_VERSION,
-                 version[0], version[1], version[2], version[3],
-                 init_cmds == s_init_version_1 ? "v1" : "v2");
+                 version[0], version[1], version[2], version[3], init_label);
     }
     esp_lcd_panel_io_del(io);
 
@@ -887,33 +908,14 @@ static lv_display_t *display_start(lv_indev_t **touch)
     const esp_lv_adapter_touch_config_t lv_tp_cfg = ESP_LV_ADAPTER_TOUCH_DEFAULT_CONFIG(disp, tp);
     *touch = esp_lv_adapter_register_touch(&lv_tp_cfg);
     s_touch_indev = *touch;   /* poll_buttons() reads its state for hold-to-talk */
-    /* A tap on the glass is how this board is woken by hand (the IMU's own
-     * engine stays silent on battery). The CST816S drives INT **active low** -
-     * that is what the driver configures GPIO_INTR_NEGEDGE for (muse_board.h's
-     * `levels.interrupt = 0`) - so the line idles high and a touch pulls it low
-     * until the controller is read. The wake level is therefore LOW. Armed for
-     * HIGH the line satisfies the wake condition the whole time it is idle, and
-     * the chip then refuses to stay in light sleep ("sleep_rejects" climbs).
-     * The line is also what the input task reads to turn a touch into a wake:
-     * while the screen is dark on battery the display is paused, and with it
-     * the LVGL task that owns on_cover_event(). */
-    if (muse_gpio_wake_line_add_wake_only(TP_INT, false) != ESP_OK) {
-        ESP_LOGW(TAG, "touch INT is not a wake line: taps will not wake the screen on battery");
-    } else {
-        muse_gpio_wake_line_mark_touch(TP_INT);
-        /* Take the pin's interrupt for the armed window: the adapter's touch
-         * input stops it while the display is paused, and IDF only wakes light
-         * sleep from a GPIO whose interrupt is enabled. The driver triggers on
-         * the falling edge (levels.interrupt = 0); that type goes back on
-         * disarm, so the level-armed wake does not leave the pin interrupting
-         * by level once we are awake again. */
-        if (muse_gpio_wake_line_take_intr(TP_INT, GPIO_INTR_NEGEDGE) != ESP_OK) {
-            ESP_LOGW(TAG, "touch INT interrupt not taken: taps may not wake the chip");
-        }
-        if (muse_gpio_wake_line_set_drain(TP_INT, touch_drain) != ESP_OK) {
-            ESP_LOGW(TAG, "touch INT drain not set: a held INT would relight the screen at once");
-        }
-    }
+    /* The touch line is deliberately NOT a wake source. A hand resting near the
+     * glass, a stray pulse from the controller and a screen that never stayed
+     * dark were all traced back to it, and the same touches produced empty
+     * voice notes. The screen now wakes on the BOOT button or on being picked
+     * up (the IMU's motion line), and the touch panel only reports while the
+     * display is running. To bring it back, register TP_INT with
+     * muse_gpio_wake_line_add_wake_only(TP_INT, false) here and the input
+     * task's check_touch_line() picks it up again unchanged. */
     if (!*touch || esp_lv_adapter_start() != ESP_OK) {
         return NULL;
     }
@@ -966,7 +968,25 @@ static void display_pause(bool pause)
 
 /* ES8311 out and ES7210 in on one duplex I2S bus. The ES7210's second
  * channel carries the speaker reference (xiaozhi uses it for echo
- * cancelling); Muse takes slot 0 (MIC1). */
+ * cancelling); Muse takes slot 0 (MIC1).
+ *
+ * Deliberate differences from the official 1.85C (same panel, same codecs),
+ * checked line by line - do not "align" them without reading this:
+ *
+ *  - I2S_NUM_0 here, I2S_NUM_1 there. The S3's two ports are equivalent; this
+ *    board took the port from board_vn_s3_183.c, which devices/AGENTS.md names
+ *    as this port's audio reference, and 1.3 shipped on it.
+ *  - use_mclk = true here, false there. This board wires MCLK to GPIO2, so the
+ *    codec can run off it instead of deriving a clock from BCLK. 1.85C drives
+ *    the same pin but tells the codec to ignore it; both lock, this one has
+ *    the lower jitter.
+ *  - hw_gain {5.0, 3.3} here, unset there. That pair is the library default,
+ *    not a measurement: esp_codec_dev_vol.c:54-59 substitutes 5.0 V for
+ *    pa_voltage when it is 0, so 1.85C's zeroed struct and this explicit one
+ *    produce the same volume curve. Spelling it out keeps the assumption
+ *    visible; it is NOT this board's PA rail (that one still needs measuring
+ *    before anyone tunes the volume map).
+ */
 static esp_err_t audio_init(esp_codec_dev_handle_t *spk, esp_codec_dev_handle_t *mic)
 {
     i2s_chan_handle_t tx, rx;
@@ -1019,6 +1039,12 @@ static esp_err_t audio_init(esp_codec_dev_handle_t *spk, esp_codec_dev_handle_t 
     esp_codec_dev_cfg_t in_cfg = { .dev_type = ESP_CODEC_DEV_TYPE_IN, .codec_if = adc, .data_if = data_if };
     *spk = esp_codec_dev_new(&out_cfg);
     *mic = esp_codec_dev_new(&in_cfg);
+    /* One line that makes the audio path auditable from the boot log alone:
+     * the first thing a "no sound" report needs is how this build is wired,
+     * compared against the 1.85C's I2S1 / mclk=derived / no hw_gain. */
+    ESP_LOGI(TAG, "audio: ES8311 spk + ES7210 mic, I2S%d %d Hz, mclk=external GPIO%d, "
+                  "pa=GPIO%d, hw_gain=%.1f/%.1f V, mic slot 0",
+             (int)I2S_NUM_0, (int)MUSE_AUDIO_RATE, (int)I2S_MCLK, (int)PA_EN, 5.0f, 3.3f);
     return *spk && *mic ? ESP_OK : ESP_FAIL;
 }
 
@@ -1121,6 +1147,53 @@ static int pct_from_mv(int mv)
     return 0;
 }
 
+/* 7-bit addresses for i2c_master_probe(). The vendor docs print the 8-bit
+ * forms (0x30 / 0x80); the codec handles elsewhere in this file take those,
+ * because audio_codec_new_i2c_ctrl() wants the shifted address. */
+#define ES8311_ADDR7 0x18
+#define ES7210_ADDR7 0x40
+
+/* Both codecs share the bus with the gauge. An I2C bus reset only resets the
+ * ESP32's own peripheral - the slaves keep their registers - so a recovery
+ * normally leaves audio alone, which is why this does nothing most of the time.
+ * What a reset cannot fix is a slave whose state machine latched mid-transfer:
+ * it stops answering and every later volume or gain write fails silently, with
+ * the UI still showing "speaking". So once per recovery, probe both and say
+ * which one went quiet; if one did, re-open the audio path - esp_codec_dev_open
+ * rewrites the whole register set - rather than leaving a dead speaker until
+ * the next reboot.
+ *
+ * Only re-opens when a codec is already not answering: a live take is lost by
+ * then anyway, and doing it on a healthy bus would cut a recording short.
+ * Called from read_power(), which the input task runs periodically. */
+static void check_codecs_after_recovery(void)
+{
+    static unsigned seen;
+    const unsigned recovers = muse_i2c_recovers();
+    if (recovers == seen) {
+        return;
+    }
+    seen = recovers;
+    const bool spk = i2c_master_probe(s_i2c, ES8311_ADDR7, 20) == ESP_OK;
+    const bool mic = i2c_master_probe(s_i2c, ES7210_ADDR7, 20) == ESP_OK;
+    ESP_LOGW(TAG, "after bus reset #%u: ES8311 %s, ES7210 %s", recovers,
+             spk ? "answers" : "SILENT", mic ? "answers" : "SILENT");
+    if (spk && mic) {
+        return;
+    }
+    /* Asleep, the voice task has both codecs closed on purpose; reopening here
+     * would power them back up behind its back. Waking re-opens them anyway. */
+    if (muse_state_asleep()) {
+        ESP_LOGW(TAG, "codec re-open deferred: asleep");
+        return;
+    }
+    muse_audio_power(false);
+    muse_audio_power(true);
+    ESP_LOGW(TAG, "audio re-opened after bus reset #%u: ES8311 %s, ES7210 %s", recovers,
+             i2c_master_probe(s_i2c, ES8311_ADDR7, 20) == ESP_OK ? "answers" : "SILENT",
+             i2c_master_probe(s_i2c, ES7210_ADDR7, 20) == ESP_OK ? "answers" : "SILENT");
+}
+
 /* BQ27220 fuel gauge. Addresses from the TRM's Table 2-1 (Standard Commands),
  * cross-checked against esp-iot-solution's bq27220 driver:
  *   Voltage 0x08 (mV), BatteryStatus 0x0A, Current 0x0C (mA, + = charging),
@@ -1131,6 +1204,7 @@ static int pct_from_mv(int mv)
  * percentage is what pinned the gauge at 100% (1947 clamped to 100). */
 static esp_err_t read_power(muse_power_t *out)
 {
+    check_codecs_after_recovery();
     if (i2c_master_probe(s_i2c, BQ27220_ADDR, 20) != ESP_OK) {
         /* The pad levels go in the line: a bus that is held low by a slave and
          * one whose pads lost their pull-ups look the same from here. */
