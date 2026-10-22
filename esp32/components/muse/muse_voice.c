@@ -32,7 +32,6 @@
 #include "muse_audio.h"
 #include "muse_board.h"
 #include "muse_chat.h"
-#include "muse_imu.h"
 #include "muse_input.h"
 #include "muse_mem.h"
 #include "muse_settings.h"
@@ -62,6 +61,14 @@ static const char *TAG = "muse_voice";
 #define GATE_MAX_DBFS (-20.0f)      /* ...and never harder, or a noisy room eats a quiet voice */
 #define GATE_NOISE_DEFAULT (-50.0f) /* no pre-roll to measure (barge-in): assume this */
 #define GATE_VOICED_CHUNKS 5        /* 100 ms above the threshold: a syllable, not a knock */
+/* A whole take whose loudest sample never reached this is not speech at all: a
+ * finger on the glass, the case shifting in a pocket, a table thump through the
+ * shell. The chunk gate above judges each 20 ms against the room, which a quiet
+ * room makes easy to pass; this one judges the take against the microphone's
+ * full scale and is the last thing between "held the button by accident" and a
+ * voice note in the app. Kconfig, not a constant: the right value depends on
+ * this board's mic gain and how far the mouth is. */
+#define MIN_PEAK_DBFS ((float)CONFIG_MUSE_VOICE_MIN_PEAK_DBFS)
 #define TAIL_FRAMES (MUSE_AUDIO_RATE * 12 / 100)   /* capture lag + poll interval, stops before the release click */
 #define MAX_FRAMES (MUSE_AUDIO_RATE * MAX_SECS)
 /* 1 s: presses shorter than this are taps, not speech (user-set 2026-10-16;
@@ -348,20 +355,6 @@ static bool record(bool barge_in, size_t *held, char *why, size_t cap)
         if (muse_audio_read(s_chunk, MUSE_AUDIO_CHUNK) != ESP_OK) {
             break;
         }
-        /* Turned face down mid-note: the press was the table, not a person, and
-         * the take is abandoned rather than left to the release that may never
-         * come (the screen is off by now, so the touch controller stops
-         * reporting). Checked before the chunk is taken so none of it is
-         * streamed. */
-        if (muse_imu_face_down()) {
-            ESP_LOGI(TAG, "face down: dropping the note");
-            muse_state_set_level(0);
-            if (s_tried) {
-                muse_hatch_turn_cancel();
-            }
-            strlcpy(why, "FACE DOWN", cap);
-            return false;
-        }
         muse_state_set_level(muse_audio_level(s_chunk, MUSE_AUDIO_CHUNK));
         take(&st, s_chunk);
         /* Live transcript as the caption. A failure stops the streaming; the
@@ -419,9 +412,24 @@ static bool record(bool barge_in, size_t *held, char *why, size_t cap)
     }
     ESP_LOGI(TAG, "end levels:%s", tail);
     float rms_db = st.frames ? 10.0f * log10f((float)(st.acc / st.frames / (32768.0 * 32768.0)) + 1e-10f) : -100.0f;
+    const float peak_db = 20.0f * log10f((st.peak + 1) / 32768.0f);
     ESP_LOGI(TAG, "recorded %.2fs%s: rms %.1f dBFS, peak %.1f dBFS, floor %.1f dBFS, %d clipped, gain %d dB",
              (double)n / MUSE_AUDIO_RATE, released ? "" : " (max)", rms_db < -100.0f ? -100.0f : rms_db,
-             20.0 * log10((st.peak + 1) / 32768.0), st.floor_db, st.clipped, muse_settings_mic_gain());
+             peak_db, st.floor_db, st.clipped, muse_settings_mic_gain());
+
+    if (peak_db < MIN_PEAK_DBFS) {
+        /* Nothing in the take ever got close to the threshold, so there is no
+         * speech in it to lose: the same shape as the gate below, one level up.
+         * Checked first because it is the cheaper verdict to argue with - the
+         * peak is a property of the whole take, not of a window inside it. */
+        ESP_LOGI(TAG, "take never rose above %.0f dBFS (peak %.1f): not sending",
+                 (double)MIN_PEAK_DBFS, peak_db);
+        if (s_tried) {
+            muse_hatch_turn_cancel();
+        }
+        strlcpy(why, "TOO QUIET", cap);
+        return false;
+    }
 
     if (st.voiced < GATE_VOICED_CHUNKS) {
         /* Not enough of the take stood above the room: an accidental touch, a
@@ -460,17 +468,6 @@ static bool hatch_reply(bool *delivered)
     int64_t t0 = esp_timer_get_time();
     *delivered = false;
     for (;;) {
-        /* Turned face down: dismiss the reply. This is not "interrupted by a
-         * new press" - returning true there would leave the voice task waiting
-         * for a press that never comes - so the turn ends and the flow goes
-         * idle. Checked first, because it is the one input that arrives while
-         * the reply is being read. */
-        if (muse_imu_face_down()) {
-            ESP_LOGI(TAG, "face down: stopping the reply");
-            muse_hatch_turn_cancel();
-            muse_state_set_level(0);
-            return false;
-        }
         muse_hatch_ev_t ev;
         while ((ev = muse_hatch_turn_event(text, sizeof(text))) != MUSE_HATCH_EV_NONE) {
             switch (ev) {

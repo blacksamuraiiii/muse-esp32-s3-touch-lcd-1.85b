@@ -39,6 +39,10 @@ static struct {
     uint16_t sleep_s;
     bool wifi_on;
     bool ble_on;
+    /* The daily alarm, local time. Off arms no wake source at all. */
+    uint8_t alarm_h;
+    uint8_t alarm_m;
+    bool alarm_on;
     char ssid[MUSE_SSID_MAX + 1];
     char pass[MUSE_PASS_MAX + 1];
     char host[MUSE_HOST_MAX + 1];
@@ -51,6 +55,8 @@ static struct {
     .brightness = 100,
     .sleep_s = 120,
     .wifi_on = true,
+    .alarm_h = 7,
+    .alarm_m = 0,
     .host = DEFAULT_HOST,
 };
 
@@ -127,6 +133,11 @@ esp_err_t muse_settings_init(void)
     if (nvs_get_u8(s_nvs, "ble_on", &b) == ESP_OK) {
         s.ble_on = b;
     }
+    load_u8("alarm_h", &s.alarm_h);
+    load_u8("alarm_m", &s.alarm_m);
+    if (nvs_get_u8(s_nvs, "alarm_on", &b) == ESP_OK) {
+        s.alarm_on = b;
+    }
     load_str("ssid", s.ssid, sizeof(s.ssid));
     load_str("pass", s.pass, sizeof(s.pass));
     load_str("host", s.host, sizeof(s.host));
@@ -136,9 +147,12 @@ esp_err_t muse_settings_init(void)
     s.volume = clampi(s.volume, 0, 100);
     s.mic_gain = clampi(s.mic_gain, 0, MUSE_MIC_GAIN_MAX);
     s.brightness = clampi(s.brightness, 10, 100);
-    ESP_LOGI(TAG, "vol %d%s, mic %d dB, bright %d, sleep %ds, wifi %s (%s), ble %s, muse %s",
+    s.alarm_h = clampi(s.alarm_h, 0, 23);
+    s.alarm_m = clampi(s.alarm_m, 0, 59);
+    ESP_LOGI(TAG, "vol %d%s, mic %d dB, bright %d, sleep %ds, wifi %s (%s), ble %s, alarm %02d:%02d %s, muse %s",
              s.volume, s.speaker_on ? "" : " (speaker off)", s.mic_gain, s.brightness, s.sleep_s, s.wifi_on ? "on" : "off",
-             "network saved by Link", s.ble_on ? "on" : "off", s.token[0] ? "token set" : "no token");
+             "network saved by Link", s.ble_on ? "on" : "off", s.alarm_h, s.alarm_m, s.alarm_on ? "on" : "off",
+             s.token[0] ? "token set" : "no token");
     return ESP_OK;
 }
 
@@ -152,6 +166,9 @@ bool muse_settings_speaker_on(void) { return s.speaker_on; }
 int muse_settings_mic_gain(void) { return s.mic_gain; }
 int muse_settings_brightness(void) { return s.brightness; }
 int muse_settings_sleep_s(void) { return s.sleep_s; }
+bool muse_settings_alarm_on(void) { return s.alarm_on; }
+int muse_settings_alarm_hour(void) { return s.alarm_h; }
+int muse_settings_alarm_min(void) { return s.alarm_m; }
 bool muse_settings_wifi_on(void) { return s.wifi_on; }
 bool muse_settings_ble_on(void) { return s.ble_on; }
 
@@ -225,6 +242,29 @@ void muse_settings_set_sleep_s(int secs)
     nvs_set_u16(s_nvs, "sleep_s", s.sleep_s);
     nvs_commit(s_nvs);
     notify(MUSE_SETTING_SLEEP);
+}
+
+/* The three alarm setters all notify: the input task owns the arm/disarm, and
+ * it has to hear about every one of them (a new time needs a new arm). */
+void muse_settings_set_alarm_on(bool on)
+{
+    s.alarm_on = on;
+    save_u8("alarm_on", on);
+    notify(MUSE_SETTING_ALARM);
+}
+
+void muse_settings_set_alarm_hour(int hour)
+{
+    s.alarm_h = (uint8_t)clampi(hour, 0, 23);
+    save_u8("alarm_h", s.alarm_h);
+    notify(MUSE_SETTING_ALARM);
+}
+
+void muse_settings_set_alarm_min(int min)
+{
+    s.alarm_m = (uint8_t)clampi(min, 0, 59);
+    save_u8("alarm_m", s.alarm_m);
+    notify(MUSE_SETTING_ALARM);
 }
 
 void muse_settings_set_wifi_on(bool on)

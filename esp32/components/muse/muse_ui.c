@@ -988,21 +988,44 @@ static void build_screen(void)
     }
     build_button_icons(face);
 
-    /* Status line: connectivity icons + power. */
+    /* Status line: three segments across the top - connectivity on the left, the
+     * clock in the middle, power on the right. On a round panel the row is given
+     * a width well inside the safe chord at its own height (the chord at this
+     * y is ~96 px either side of centre; 35 % of the diameter is 63 px, which
+     * leaves the icons off the glass's curve) and SPACE_BETWEEN does the rest,
+     * so each item keeps its place while the clock's width changes every minute.
+     * Other shapes keep the row content-sized and centred, which is what they
+     * had before. */
     lv_obj_t *status = lv_obj_create(face);
     lv_obj_remove_style_all(status);
     lv_obj_remove_flag(status, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_size(status, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
     lv_obj_set_flex_flow(status, LV_FLEX_FLOW_ROW);
-    lv_obj_set_flex_align(status, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_set_style_pad_column(status, s_small ? 4 : 8, 0);
+    const bool spread = muse_board->round && !s_small;
+    if (spread) {
+        lv_obj_set_size(status, s_w * 35 / 100, LV_SIZE_CONTENT);
+        lv_obj_set_flex_align(status, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER,
+                              LV_FLEX_ALIGN_CENTER);
+    } else {
+        lv_obj_set_size(status, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+        lv_obj_set_flex_align(status, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER,
+                              LV_FLEX_ALIGN_CENTER);
+    }
     lv_obj_align(status, LV_ALIGN_TOP_MID, 0, muse_board->rim_controls ? 40 : s_small ? 1 : 20 + s_dy);
-    /* The clock leads the row: it is the one item whose width changes every
-     * minute, and flex keeps the icons beside it. Empty until there is a time
-     * worth showing, which is how a board without an RTC says so. */
+    /* Left segment: the two connectivity icons, which come and go on their own
+     * and must not shift the clock when one of them does. */
+    lv_obj_t *conn = lv_obj_create(status);
+    lv_obj_remove_style_all(conn);
+    lv_obj_remove_flag(conn, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_size(conn, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(conn, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(conn, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_column(conn, s_small ? 4 : 8, 0);
+    s_wifi_icon = make_label(conn, &lv_font_montserrat_14, COLOR_DIM);
+    s_ble_icon = make_label(conn, &lv_font_montserrat_14, COLOR_DIM);
+    /* Middle: the clock. Empty until there is a time worth showing, which is
+     * how a board without an RTC says so. */
     s_clock_lbl = make_label(status, &lv_font_unscii_8, COLOR_DIM);
-    s_wifi_icon = make_label(status, &lv_font_montserrat_14, COLOR_DIM);
-    s_ble_icon = make_label(status, &lv_font_montserrat_14, COLOR_DIM);
     s_power_lbl = make_label(status, &lv_font_unscii_8, COLOR_DIM);
 
     /* The compact layout leaves the state to the avatar and the caption,
@@ -1523,13 +1546,12 @@ static void update_power(float now)
     muse_power_t p = muse_state_power();
     char buf[32];
     if (p.battery_pct < 0) {
-        strlcpy(buf, p.usb ? (s_small ? "USB" : "USB POWER") : "", sizeof(buf));
-    } else if (s_small) {
-        snprintf(buf, sizeof(buf), "%s%d%%", p.charging ? "+" : "", p.battery_pct);
-    } else if (p.charging) {
-        snprintf(buf, sizeof(buf), "CHARGING %d%%", p.battery_pct);
+        strlcpy(buf, p.usb ? "USB" : "", sizeof(buf));
     } else {
-        snprintf(buf, sizeof(buf), "BATTERY %d%%", p.battery_pct);
+        /* "85%" / "+85%": the segment is a third of the top row now, and the
+         * words BATTERY and CHARGING cost more width than the number they
+         * introduced. A leading + is the whole of "charging". */
+        snprintf(buf, sizeof(buf), "%s%d%%", p.charging ? "+" : "", p.battery_pct);
     }
     if (strcmp(buf, lv_label_get_text(s_power_lbl)) != 0) {
         lv_label_set_text(s_power_lbl, buf);

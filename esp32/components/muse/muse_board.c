@@ -115,7 +115,7 @@ static esp_err_t button_init(muse_gpio_button_t *b, gpio_num_t gpio, bool active
     return gpio_intr_disable(gpio);
 }
 
-static esp_err_t wake_line_add(gpio_num_t gpio, int level, bool own_intr)
+static esp_err_t wake_line_add(gpio_num_t gpio, int level, bool own_intr, bool pull_up)
 {
     if (s_wake_line_n == WAKE_LINES_MAX) {
         return ESP_ERR_NO_MEM;
@@ -123,13 +123,14 @@ static esp_err_t wake_line_add(gpio_num_t gpio, int level, bool own_intr)
     if (own_intr) {
         /* Ours to drive: the line belongs to a part that does not interrupt on
          * its own (the IMU), so the handler here is what tells the input task
-         * the sleep is over. The pull-down keeps the pin defined while that
-         * part is still in high-Z. */
+         * the sleep is over. The pull keeps the pin defined while that part is
+         * still in high-Z; `pull_up` is for an open-drain output such as the
+         * RTC's INT, where a pull-down would hold the line asserted. */
         const gpio_config_t io = {
             .pin_bit_mask = 1ULL << gpio,
             .mode = GPIO_MODE_INPUT,
-            .pull_up_en = GPIO_PULLUP_DISABLE,
-            .pull_down_en = GPIO_PULLDOWN_ENABLE,
+            .pull_up_en = pull_up ? GPIO_PULLUP_ENABLE : GPIO_PULLUP_DISABLE,
+            .pull_down_en = pull_up ? GPIO_PULLDOWN_DISABLE : GPIO_PULLDOWN_ENABLE,
         };
         ESP_RETURN_ON_ERROR(gpio_config(&io), TAG, "wake gpio %d", gpio);
         ESP_RETURN_ON_ERROR(ensure_isr_service(), TAG, "gpio isr");
@@ -162,7 +163,15 @@ static esp_err_t wake_line_add(gpio_num_t gpio, int level, bool own_intr)
 
 esp_err_t muse_gpio_wake_line_add(gpio_num_t gpio, bool wake_high)
 {
-    return wake_line_add(gpio, wake_high ? 1 : 0, true);
+    return wake_line_add(gpio, wake_high ? 1 : 0, true, false);
+}
+
+/* Same, for a line that idles high through an external pull-up (the RTC's INT
+ * is open drain): the pin gets the internal pull-up instead of the pull-down
+ * wake_line_add() uses for a part in high-Z. */
+esp_err_t muse_gpio_wake_line_add_pullup(gpio_num_t gpio, bool wake_high)
+{
+    return wake_line_add(gpio, wake_high ? 1 : 0, true, true);
 }
 
 /* For a part whose own driver owns the pin and its interrupt - the touch
@@ -171,7 +180,7 @@ esp_err_t muse_gpio_wake_line_add(gpio_num_t gpio, bool wake_high)
  * handler then does the notifying. */
 esp_err_t muse_gpio_wake_line_add_wake_only(gpio_num_t gpio, bool wake_high)
 {
-    return wake_line_add(gpio, wake_high ? 1 : 0, false);
+    return wake_line_add(gpio, wake_high ? 1 : 0, false, false);
 }
 
 static int wake_line_index(gpio_num_t gpio)

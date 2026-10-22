@@ -45,6 +45,7 @@ typedef enum {
     MUSE_SETTING_WIFI,          /* on/off or credentials */
     MUSE_SETTING_BLE,
     MUSE_SETTING_HATCH,
+    MUSE_SETTING_ALARM,         /* hour/minute/on: the input task re-arms on it */
 } muse_setting_t;
 
 typedef void (*muse_setting_cb_t)(muse_setting_t what);
@@ -57,6 +58,10 @@ bool muse_settings_speaker_on(void);    /* off: replies are shown, not played */
 int muse_settings_mic_gain(void);       /* dB, 0..MUSE_MIC_GAIN_MAX */
 int muse_settings_brightness(void);     /* 10..100 */
 int muse_settings_sleep_s(void);        /* 0 = never */
+/* The alarm, in local time. Off means no wake source is armed at all. */
+bool muse_settings_alarm_on(void);
+int muse_settings_alarm_hour(void);     /* 0..23 */
+int muse_settings_alarm_min(void);      /* 0..59 */
 bool muse_settings_wifi_on(void);
 bool muse_settings_ble_on(void);
 
@@ -71,6 +76,9 @@ void muse_settings_set_speaker_on(bool on);
 void muse_settings_set_mic_gain(int db);
 void muse_settings_set_brightness(int pct);
 void muse_settings_set_sleep_s(int secs);
+void muse_settings_set_alarm_on(bool on);
+void muse_settings_set_alarm_hour(int hour);
+void muse_settings_set_alarm_min(int min);
 void muse_settings_set_wifi_on(bool on);
 void muse_settings_set_ble_on(bool on);
 /* A network name is remembered first among the saved ones and joined now;
