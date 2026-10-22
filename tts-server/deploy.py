@@ -41,6 +41,8 @@ def env_file_text():
     """The .env to place on the host: only what the service needs."""
     wanted = ("AZURE_SPEECH_KEY", "AZURE_SPEECH_REGION", "TTS_VOICE",
               "TTS_FORCE_VOICE", "AZURE_SPEECH_STYLE", "AZURE_SPEECH_FORMAT",
+              # prosody: the board sends no rate, so this is the voice speed
+              "TTS_RATE", "TTS_PITCH",
               # latency knobs and the BADPACKET regression hook
               "TTS_STREAM_HEAD", "TTS_SEND_BYTES", "TTS_AZURE_POOL",
               "TTS_TEST_HOOKS", "TTS_FORCE_BAD")

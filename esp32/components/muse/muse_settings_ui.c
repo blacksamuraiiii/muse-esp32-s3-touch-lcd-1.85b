@@ -60,7 +60,8 @@ typedef void (*text_done_cb_t)(const char *text);
 static int s_text_scale = 466;
 static lv_obj_t *s_tile;
 static lv_obj_t *s_current;
-static lv_obj_t *s_home, *s_wifi, *s_hatch, *s_ble, *s_sound, *s_sleep, *s_battery, *s_power, *s_text;
+static lv_obj_t *s_home, *s_wifi, *s_hatch, *s_ble, *s_sound, *s_sleep, *s_battery, *s_power, *s_text,
+    *s_alarm;
 
 /*
  * Only home is kept. A sub-page is built when it opens and deleted on the way
@@ -74,7 +75,10 @@ typedef struct {
 
 /* Home values. */
 static lv_obj_t *s_home_wifi, *s_home_hatch, *s_home_ble, *s_home_sound, *s_home_sleep, *s_home_battery, *s_about,
-    *s_home_update;
+    *s_home_update, *s_home_alarm;
+
+/* Alarm page. */
+static lv_obj_t *s_alarm_sw, *s_alarm_hour_val, *s_alarm_min_val, *s_alarm_hint;
 
 /* Wi-Fi page. */
 static lv_obj_t *s_wifi_sw, *s_wifi_status, *s_wifi_saved, *s_wifi_scan_btn, *s_wifi_scan_lbl, *s_wifi_list;
@@ -1150,6 +1154,62 @@ static void tick_sleep(void)
     }
 }
 
+/* ---------- Alarm ---------- */
+
+/* Which half of a row was tapped: left goes down, right goes up (the SLEEP
+ * page pattern - tap, no slider). */
+static int tap_direction(lv_event_t *e)
+{
+    lv_obj_t *obj = lv_event_get_target(e);
+    lv_area_t a;
+    lv_point_t p;
+    lv_obj_get_coords(obj, &a);
+    lv_indev_get_point(lv_indev_active(), &p);
+    return p.x < (a.x1 + a.x2) / 2 ? -1 : 1;
+}
+
+static void on_alarm_sw(lv_event_t *e)
+{
+    muse_settings_set_alarm_on(lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED));
+}
+
+static void on_alarm_hour(lv_event_t *e)
+{
+    muse_settings_set_alarm_hour((muse_settings_alarm_hour() + tap_direction(e) + 24) % 24);
+}
+
+static void on_alarm_min(lv_event_t *e)
+{
+    muse_settings_set_alarm_min((muse_settings_alarm_min() + 5 * tap_direction(e) + 60) % 60);
+}
+
+static void build_alarm_page(lv_obj_t *tile)
+{
+    lv_obj_t *list;
+    s_alarm = page(tile, "ALARM", true, &list);
+    s_alarm_sw = switch_row(list, "Alarm", muse_settings_alarm_on(), on_alarm_sw);
+    row(list, NULL, "Hour", &s_alarm_hour_val, on_alarm_hour, NULL);
+    row(list, NULL, "Minute", &s_alarm_min_val, on_alarm_min, NULL);
+    s_alarm_hint = note(list, "");
+    note(list, "Tap the left half of a row to go down, the right to go up. The clock chip keeps the "
+               "time, so the alarm rings with the screen off, and after it is stopped it is set for "
+               "the same time tomorrow.");
+}
+
+static void tick_alarm(void)
+{
+    if (s_alarm_sw == NULL) {
+        return;
+    }
+    set_val(s_alarm_hour_val, "%02d", muse_settings_alarm_hour());
+    set_val(s_alarm_min_val, "%02d", muse_settings_alarm_min());
+    const bool on = muse_settings_alarm_on();
+    if (on != lv_obj_has_state(s_alarm_sw, LV_STATE_CHECKED)) {
+        lv_obj_set_state(s_alarm_sw, LV_STATE_CHECKED, on);
+    }
+    set_text(s_alarm_hint, muse_input_alarm_ringing() ? "Ringing now - any key stops it" : "");
+}
+
 /* ---------- Battery ---------- */
 
 static void on_battery_reset(lv_event_t *e)
@@ -1332,6 +1392,7 @@ static const page_t HATCH = { &s_hatch, build_hatch_page };
 static const page_t BLE = { &s_ble, build_ble_page };
 static const page_t SOUND = { &s_sound, build_sound_page };
 static const page_t SLEEP = { &s_sleep, build_sleep_page };
+static const page_t ALARM = { &s_alarm, build_alarm_page };
 static const page_t BATTERY = { &s_battery, build_battery_page };
 static const page_t POWER = { &s_power, build_power_page };
 static const page_t UPDATE = { &s_update, build_update_page };
@@ -1345,6 +1406,7 @@ static void build_home(lv_obj_t *tile)
     row(list, LV_SYMBOL_BLUETOOTH, "Bluetooth", &s_home_ble, on_nav, (void *)&BLE);
     row(list, LV_SYMBOL_VOLUME_MAX, "Sound", &s_home_sound, on_nav, (void *)&SOUND);
     row(list, LV_SYMBOL_EYE_CLOSE, "Sleep", &s_home_sleep, on_nav, (void *)&SLEEP);
+    row(list, LV_SYMBOL_BELL, "Alarm", &s_home_alarm, on_nav, (void *)&ALARM);
     row(list, LV_SYMBOL_BATTERY_FULL, "Battery", &s_home_battery, on_nav, (void *)&BATTERY);
     /* Only when Link registered an updater (see muse_link.h): other boards and
      * builds without OTA keep the plain list. */
@@ -1378,6 +1440,14 @@ static void tick_home(void)
         set_text(s_home_sound, "Muted");
     }
     set_text(s_home_sleep, sleep_name(muse_settings_sleep_s()));
+    if (muse_settings_alarm_on()) {
+        char alarm[16];
+        snprintf(alarm, sizeof(alarm), "%02d:%02d", muse_settings_alarm_hour(),
+                 muse_settings_alarm_min());
+        set_text(s_home_alarm, alarm);
+    } else {
+        set_text(s_home_alarm, "Off");
+    }
 
     muse_power_t p = muse_state_power();
     char buf[96];
@@ -1434,6 +1504,8 @@ void muse_settings_ui_tick(bool visible)
         tick_sound();
     } else if (s_current == s_sleep) {
         tick_sleep();
+    } else if (s_current == s_alarm) {
+        tick_alarm();
     } else if (s_current == s_battery) {
         tick_battery();
     } else if (s_current == s_update) {

@@ -135,6 +135,11 @@ typedef struct {
     /* Called every 10 ms from the input task (50 ms while the display is
      * paused, unless wait_buttons is set); returns MUSE_BTN_* edges. */
     unsigned (*poll_buttons)(void);
+    /* Optional: is the board's own button down right now? poll_buttons() folds
+     * a touch hold into the same TALK_PRESS edge, so a caller that must tell a
+     * finger on the glass from a finger on the bezel (the alarm ring) asks
+     * here. NULL: no such distinction. */
+    bool (*talk_down)(void);
     /* Display paused: returns once a button changes (waking the chip from
      * light sleep), the task is notified or timeout_ms passes, so the
      * buttons needn't be polled. NULL: polled. */
@@ -181,6 +186,11 @@ void muse_gpio_buttons_wait(muse_gpio_button_t *const *b, int n, int timeout_ms)
  * takes when the event happens. Registered at board init, armed and disarmed
  * around muse_gpio_buttons_wait(), and the wait returns when it fires. */
 esp_err_t muse_gpio_wake_line_add(gpio_num_t gpio, bool wake_high);
+
+/* Same, for a line an open-drain part idles high through an external pull-up -
+ * the RTC's INT. The pin gets the internal pull-up; the plain add() would pull
+ * it down and hold the line asserted. */
+esp_err_t muse_gpio_wake_line_add_pullup(gpio_num_t gpio, bool wake_high);
 
 /* Same, for a line another driver already interrupts on: the pin is armed as a
  * light-sleep wake source, and its interrupt is left alone (see muse_board.c). */
