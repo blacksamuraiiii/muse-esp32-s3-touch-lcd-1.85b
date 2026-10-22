@@ -44,3 +44,4 @@ virtual-avatar/maomao/
 # by tools/muse/board.sh so it survives deleting the build directory; never
 # committed, because it holds addresses and possibly credentials.
 esp32/devices/sdkconfig.local
+esp32/*.ps1 is a local build helper
