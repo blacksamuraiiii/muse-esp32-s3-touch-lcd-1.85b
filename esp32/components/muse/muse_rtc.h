@@ -39,24 +39,29 @@ extern "C" {
  *    comes from localtime_r() with CONFIG_MUSE_TIMEZONE.
  *  - Validity. The chip sets Seconds.OS (bit 7) when its oscillator stopped -
  *    first power-on, or a dead backup cell - and the counters mean nothing
- *    until a write clears it. The component masks that bit off; this does not.
- *  - Year. The chip stores two BCD digits and has no century; they are 2000+yy
- *    here. (The component adds YEAR_OFFSET = 1970 instead, which round-trips
- *    through itself but leaves 2056 in the chip.)
+ *    until a write clears it. The component masks that bit off, so the one byte
+ *    it lives in is read here; the rest of the snapshot comes from the
+ *    component's own pcf85063a_get_time_date().
+ *  - Year. The component adds YEAR_OFFSET = 1970 to the stored two digits, so
+ *    its datetime already carries the real year; the 2000..2099 sanity window
+ *    is applied here.
  *  - A write is bracketed by STOP: the datasheet wants the counters held while
- *    04h-0Ah is replaced, or a carry can tear the value.
+ *    04h-0Ah is replaced, or a carry can tear the value. The component has no
+ *    bracketed setter, so Control_1 is poked around pcf85063a_set_time_date().
  *
- * The alarm registers are deliberately left unarmed: nothing in the UI schedules
- * a wake yet. What is wired is the line and the mask - RTC_INT (GPIO6) folds
- * into the deep-sleep wake mask in the board's power_off() as soon as
- * muse_rtc_wake_armed() says an alarm is pending - so the version that starts
- * scheduling wakes only has to fill in the register side below.
+ * The alarm is implemented on top of the driver's own alarm API: seconds,
+ * minutes and hours are compared and day/weekday are masked out, so one arm
+ * fires once, at the next time those three fields match (the input task arms it
+ * again after every ring - that is what makes it a daily alarm). The line is
+ * the board's: RTC_INT (GPIO6) folds into the deep-sleep wake mask in the
+ * board's power_off() while muse_rtc_wake_armed() is true, and it is a light-
+ * sleep GPIO wake source as well.
  */
 
 #define MUSE_RTC_ADDR 0x51
 /* RTC_INT on the Waveshare ESP32-S3-Touch-LCD-1.85B (open drain, active low,
- * needs a pull-up in the RTC domain). It joins BOOT on the deep-sleep wake
- * mask; the alarm that would raise it is not implemented yet. */
+ * needs a pull-up). It joins BOOT on the deep-sleep wake mask when an alarm is
+ * armed, and wakes light sleep through the wake-line table. */
 #define MUSE_RTC_INT_GPIO 6
 
 /* Probe 0x51, start the clock in 24-hour mode, clear any latched alarm state.
@@ -95,19 +100,23 @@ bool muse_rtc_clock_str(char *buf, size_t len);
 /* "YYYY-MM-DD HH:MM:SS <zone>" in local time, for the console. */
 bool muse_rtc_stamp_str(char *buf, size_t len);
 
+/* System clock when it holds a real time, the chip otherwise. False when there
+ * is neither. */
+bool muse_rtc_now(time_t *out);
+
 /*
- * The alarm, reserved for a scheduled wake - the register side is not written
- * yet, so these are a stable seam rather than a feature:
+ * The alarm - one arm, one ring, then the caller re-arms:
  *
- *  - muse_rtc_arm_wakeup_in() validates its argument, logs the refusal and
- *    returns ESP_ERR_NOT_SUPPORTED. Nothing is armed.
+ *  - muse_rtc_arm_wakeup_in(sec) compares the target's seconds, minutes and
+ *    hours (UTC, as the chip counts) and enables the interrupt. 2..86399 s.
  *  - muse_rtc_wake_armed() is what the board's power_off() asks before folding
- *    MUSE_RTC_INT_GPIO into the ext1 deep-sleep mask. It is false until an
- *    alarm is really armed, so deep-sleep behaviour is unchanged by the mask
- *    being ext1 now.
- *  - After a real alarm the waker must call muse_rtc_disarm(): AF stays set
- *    until cleared, and a set AF with AIE=1 holds INT low - the chip would then
- *    re-wake the instant it slept.
+ *    MUSE_RTC_INT_GPIO into the ext1 deep-sleep mask, and what the light-sleep
+ *    wake line is armed on.
+ *  - muse_rtc_alarm_pending() reads AF: true from the moment the chip fired
+ *    until something clears it.
+ *  - After a ring the waker calls muse_rtc_disarm(): AF stays set until it is
+ *    cleared, and a set AF holds INT low - the chip would then re-wake the
+ *    instant it slept.
  */
 esp_err_t muse_rtc_arm_wakeup_in(uint32_t in_seconds);
 esp_err_t muse_rtc_disarm(void);

@@ -44,7 +44,6 @@ if(CONFIG_MUSE_ENABLED)
         "muse_settings_ui.c"
         "muse_text.c"
         "muse_tts.c"
-        "muse_imu.c"
         "muse_audio_play.c"
         "muse_keypad.c"
         "muse_lv_mem.c"

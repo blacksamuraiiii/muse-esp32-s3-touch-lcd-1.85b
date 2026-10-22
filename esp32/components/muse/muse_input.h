@@ -71,3 +71,11 @@ void muse_input_touch_talk(bool pressed);
 
 /* Plays the goodbye animation and powers off (from the input task). */
 void muse_input_request_power_off(void);
+
+/*
+ * The daily alarm lives in the input task (it owns the buttons, the sleep paths
+ * and the RTC arm). Settings call this after any change; the boot and the wake
+ * handling call it too.
+ */
+void muse_input_alarm_sync(void);
+bool muse_input_alarm_ringing(void);

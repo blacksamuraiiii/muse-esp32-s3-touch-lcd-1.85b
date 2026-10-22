@@ -79,7 +79,6 @@
 
 #include "muse_audio.h"
 #include "muse_board.h"
-#include "muse_imu.h"
 #include "muse_lcd_bands.h"
 #include "muse_mem.h"
 #include "muse_rtc.h"
@@ -110,7 +109,7 @@ static const char *TAG = "board";
 #define TP_RST GPIO_NUM_1
 #define TP_INT GPIO_NUM_4
 
-#define I2C_SDA GPIO_NUM_11    /* touch, ES8311, ES7210, BQ27220, IMU, RTC */
+#define I2C_SDA GPIO_NUM_11    /* touch, ES8311, ES7210, BQ27220, RTC */
 #define I2C_SCL GPIO_NUM_10
 
 #define I2S_MCLK GPIO_NUM_2
@@ -121,7 +120,6 @@ static const char *TAG = "board";
 #define PA_EN GPIO_NUM_9       /* amp on while HIGH */
 
 #define BQ27220_ADDR 0x55      /* fuel gauge, 7-bit */
-#define QMI8658_ADDR 0x6B      /* IMU, 7-bit; SDO tied low on this board */
 
 #define TALK_GPIO GPIO_NUM_0   /* BOOT; the PWR key is hardware-only */
 
@@ -520,10 +518,8 @@ static const st77916_lcd_init_cmd_t s_init_version_2[] = {
 };
 
 static i2c_bus_handle_t s_i2c_bus;     /* espressif/i2c_bus: the one bus owner */
-static i2c_master_bus_handle_t s_i2c;  /* its inner handle: touch, IMU, PMU */
+static i2c_master_bus_handle_t s_i2c;  /* its inner handle: touch, PMU */
 static bq27220_handle_t s_gauge;       /* espressif/bq27220 fuel gauge */
-static i2c_master_dev_handle_t s_bq;   /* BQ27220 fuel gauge, added to s_i2c */
-static i2c_master_dev_handle_t s_imu;  /* QMI8658A: tap-to-wake only */
 static esp_lcd_panel_handle_t s_panel;
 static esp_lcd_panel_io_handle_t s_tp_io;   /* CST816S register access */
 static esp_lcd_panel_io_handle_t s_panel_io; /* kept for SLPIN/SLPOUT */
@@ -582,7 +578,7 @@ static esp_err_t init(void)
 {
     /* The fuel gauge is espressif/bq27220, which drives its own device through
      * espressif/i2c_bus: that component creates the bus, and everything else on
-     * it - touch, IMU, PMU - takes the inner i2c_master handle. One owner, one
+     * it - touch, RTC, PMU - takes the inner i2c_master handle. One owner, one
      * bus, no second install on the same port. */
     const i2c_config_t i2c_cfg = {
         .mode = I2C_MODE_MASTER,
@@ -603,6 +599,16 @@ static esp_err_t init(void)
     /* The clock at 0x51. Graceful when the chip is absent: the board then runs
      * on the system clock alone and shows no time until SNTP has run. */
     (void)muse_rtc_init(s_i2c);
+    /* Light sleep: the RTC's INT is a GPIO wake source too, so an armed alarm
+     * ends a nap as well as a deep sleep. Registered once here - the table is
+     * fixed at boot, and the line only asserts while the chip has an alarm
+     * enabled, so a standing registration costs nothing while it is off. Open
+     * drain, so this is the pull-up variant of add(): the plain one pulls the
+     * pin down and would hold INT asserted. */
+    esp_err_t rtc_line = muse_gpio_wake_line_add_pullup(MUSE_RTC_INT_GPIO, false);
+    if (rtc_line != ESP_OK) {
+        ESP_LOGW(TAG, "RTC alarm wake line: %s", esp_err_to_name(rtc_line));
+    }
     /* Hand the gauge its model. bq27220_create() checks what the chip already
      * stores and writes only when it differs, so this lands once and then logs
      * "Skip battery profile update" on later boots. That write is what fixes the
@@ -623,32 +629,15 @@ static esp_err_t init(void)
     if (s_gauge == NULL) {
         ESP_LOGW(TAG, "gauge model not written: bq27220_create failed");
     }
-    /* i2c_master_transmit_receive() takes a device handle, not a bus handle:
-     * register the fuel gauge as one device on the shared bus. */
-    const i2c_device_config_t bq_cfg = {
-        .dev_addr_length = I2C_ADDR_BIT_LEN_7,
-        .device_address = BQ27220_ADDR,
-        .scl_speed_hz = 100000,
-    };
-    ESP_RETURN_ON_ERROR(i2c_master_bus_add_device(s_i2c, &bq_cfg, &s_bq), TAG, "bq27220 device");
-    /* QMI8658A at 0x6B: picking the gadget up wakes the screen, and turning it
-     * face down mutes playback (muse_imu.c). A board whose IMU doesn't answer
-     * still runs - the screen then only wakes on the button. */
-    const i2c_device_config_t imu_cfg = {
-        .dev_addr_length = I2C_ADDR_BIT_LEN_7,
-        .device_address = QMI8658_ADDR,
-        .scl_speed_hz = 400000,
-    };
-    if (i2c_master_bus_add_device(s_i2c, &imu_cfg, &s_imu) == ESP_OK) {
-        esp_err_t err = muse_imu_init(s_imu);
-        if (err != ESP_OK) {
-            ESP_LOGW(TAG, "pick-up-to-wake off: %s", esp_err_to_name(err));
-        } else if ((err = muse_gpio_wake_line_add(MUSE_IMU_INT_GPIO, true)) != ESP_OK) {
-            ESP_LOGW(TAG, "IMU wake line not armed: %s", esp_err_to_name(err));
-        }
-    } else {
-        ESP_LOGW(TAG, "no IMU device handle");
-    }
+    /* No separate device handle for the gauge any more: the component owns its
+     * own on this bus, and read_power() only needs i2c_master_probe() to tell
+     * "present" from "gone". The hand-rolled register path that needed one went
+     * with the voltage fallback (1.4, docs/20261022-1.4正式版待办.md §4). */
+    /* No IMU: the QMI8658A at 0x6B is fitted and answers, but nothing in 1.4
+     * drives it. Pick-up-to-wake, the posture gate, face-down mute and the tap
+     * engine were removed with their wake line (docs/20261022-1.4正式版待办.md
+     * §1), which also retires GPIO8 as a light-sleep source: the only wake line
+     * left on this board is BOOT. */
     esp_err_t err = muse_gpio_button_init(&s_talk, TALK_GPIO);
     if (err == ESP_OK) {
         /* BOOT is usually held while flashing or resetting, and button_init()
@@ -660,15 +649,42 @@ static esp_err_t init(void)
     return err;
 }
 
+/* CST816S register 0xFE, DisAutoSleep: 0x01 = never idle down (the controller
+ * scans continuously), 0x00 = let it sleep between touches. The one write this
+ * board makes to the controller, and it follows the screen - awake while the
+ * panel is on so a tap on the settings list lands on the first try, asleep while
+ * the panel is dark so the part stops drawing its 1.6~2.5 mA dynamic current.
+ *
+ * That 2 mA was the whole reason the touch wake line had to go: keeping the
+ * controller responsive for a light-sleep wake meant leaving auto-sleep off
+ * around the clock, which cost ~48 mAh/day out of a 500 mAh pack. With the line
+ * gone (docs/20261022-1.4正式版待办.md §2) the controller is allowed to sleep
+ * and the price is one swallowed touch after the screen goes dark - it wakes the
+ * chip without reporting coordinates, which on a BOOT-first device is nothing. */
+static void touch_autosleep(bool allow)
+{
+    if (s_tp_io == NULL) {
+        return;
+    }
+    const uint8_t want = allow ? 0x00 : 0x01;
+    uint8_t cur = 0xFF;
+    const bool read_ok = esp_lcd_panel_io_rx_param(s_tp_io, 0xFE, &cur, 1) == ESP_OK;
+    if (read_ok && cur == want) {
+        return;   /* already in the state the screen asks for */
+    }
+    const esp_err_t err = esp_lcd_panel_io_tx_param(s_tp_io, 0xFE, &want, 1);
+    ESP_LOGI(TAG, "touch: DisAutoSleep 0x%02X -> 0x%02X (%s, %s)", cur, want,
+             allow ? "sleep allowed" : "kept awake", esp_err_to_name(err));
+}
+
 /* The CST816S reports a touch as a *low pulse* on IRQ rather than a held level.
  * The touch chip's own IRQ settings, read-only, logged for the record:
- * 0xA7 chip id, 0xED IrqPluseWidth (the low pulse a touch makes - the thing a
- * light-sleep wake has to catch), 0xFA IrqCtl, 0xFE DisAutoSleep. An earlier
- * round *wrote* 0xEE here on the assumption it was IrqPluseWidth: the vendor
- * SDK's register table is shifted by one in places and 0xEE is not that
- * register. The write cost a night of the chip waking the screen as soon as it
- * went dark, so the settings are read, never poked, until a datasheet settles
- * their meaning. */
+ * 0xA7 chip id, 0xED IrqPluseWidth (the low pulse a touch makes), 0xFA IrqCtl,
+ * 0xFE DisAutoSleep. An earlier round *wrote* 0xEE here on the assumption it
+ * was IrqPluseWidth: the vendor SDK's register table is shifted by one in
+ * places and 0xEE is not that register. The write cost a night of the chip
+ * waking the screen as soon as it went dark, so these are read, never poked,
+ * until a datasheet settles their meaning - 0xFE is the one exception above. */
 static void touch_report_config(void)
 {
     static const struct {
@@ -688,39 +704,11 @@ static void touch_report_config(void)
             ESP_LOGW(TAG, "touch: 0x%02X %s not readable", regs[i].reg, regs[i].name);
         }
     }
-    /* A tap on the glass is a short low pulse - shorter than the level the
-     * chip's low-power wake sampler can catch, which is why a *held* finger
-     * wakes the board and a tap does not. IrqPluseWidth (0xED, per the CST816S
-     * register manual) stretches that pulse; the unit is not documented in the
-     * tables available here, so this is a middle setting, read back so the boot
-     * log carries what the chip ended up with. Held touches behave as before.
-     * The register is not in the public tables, so it is behind a Kconfig
-     * switch: it is on because a tap did not wake the board without it. */
-#if CONFIG_MUSE_TOUCH_IRQ_PULSE_WIDEN
-    uint8_t width = 0;
-    const uint8_t widen = 0x14;
-    if (esp_lcd_panel_io_rx_param(s_tp_io, 0xED, &width, 1) == ESP_OK) {
-        esp_err_t err = esp_lcd_panel_io_tx_param(s_tp_io, 0xED, &widen, 1);
-        uint8_t after = 0;
-        (void)esp_lcd_panel_io_rx_param(s_tp_io, 0xED, &after, 1);
-        ESP_LOGI(TAG, "touch: IrqPluseWidth 0x%02X -> 0x%02X (%s)", width, after,
-                 esp_err_to_name(err));
-    }
-#endif
-    /* Auto-sleep lets the controller stop sampling between touches, and the
-     * first touch after a long pause then only wakes it without reporting
-     * coordinates. The INT line is one of this board's light-sleep wake lines,
-     * so the controller has to stay responsive: turn auto-sleep off and log
-     * what the chip says. */
-    uint8_t autosleep = 0;
-    if (esp_lcd_panel_io_rx_param(s_tp_io, 0xFE, &autosleep, 1) == ESP_OK && autosleep != 0x01) {
-        const uint8_t off = 0x01;
-        esp_err_t err = esp_lcd_panel_io_tx_param(s_tp_io, 0xFE, &off, 1);
-        uint8_t after = 0;
-        (void)esp_lcd_panel_io_rx_param(s_tp_io, 0xFE, &after, 1);
-        ESP_LOGI(TAG, "touch: DisAutoSleep 0x%02X -> 0x%02X (%s)", autosleep, after,
-                 esp_err_to_name(err));
-    }
+    /* Auto-sleep (0xFE DisAutoSleep): 0x01 keeps the controller scanning all the
+     * time, 0x00 lets it idle down between touches. It follows the screen, see
+     * touch_autosleep() - here the panel is on, so the controller stays awake
+     * and the first tap in the settings list lands. */
+    touch_autosleep(false);
 }
 
 /* ST77916 windows must be even-aligned: QSPI carries two pixels per beat and
@@ -908,14 +896,16 @@ static lv_display_t *display_start(lv_indev_t **touch)
     const esp_lv_adapter_touch_config_t lv_tp_cfg = ESP_LV_ADAPTER_TOUCH_DEFAULT_CONFIG(disp, tp);
     *touch = esp_lv_adapter_register_touch(&lv_tp_cfg);
     s_touch_indev = *touch;   /* poll_buttons() reads its state for hold-to-talk */
-    /* The touch line is deliberately NOT a wake source. A hand resting near the
-     * glass, a stray pulse from the controller and a screen that never stayed
-     * dark were all traced back to it, and the same touches produced empty
-     * voice notes. The screen now wakes on the BOOT button or on being picked
-     * up (the IMU's motion line), and the touch panel only reports while the
-     * display is running. To bring it back, register TP_INT with
-     * muse_gpio_wake_line_add_wake_only(TP_INT, false) here and the input
-     * task's check_touch_line() picks it up again unchanged. */
+    /* The touch line is deliberately NOT a wake source, and 1.4 makes that
+     * final: a hand resting near the glass, a stray pulse from the controller
+     * and a screen that never stayed dark were all traced back to it, and the
+     * same touches produced empty voice notes. The price was worse than that -
+     * a wake line needs the controller responsive, which meant auto-sleep off
+     * around the clock at 1.6~2.5 mA (touch_autosleep). The screen wakes on
+     * BOOT alone, and the touch panel only reports while the display runs. To
+     * bring it back, register TP_INT with muse_gpio_wake_line_add_wake_only()
+     * here and the input task's check_touch_line() picks it up unchanged - but
+     * then touch_autosleep(true) has to stop, or the line will not fire. */
     if (!*touch || esp_lv_adapter_start() != ESP_OK) {
         return NULL;
     }
@@ -955,6 +945,25 @@ static void panel_sleep(bool sleep)
 {
     muse_lcd_bands_run(send_panel_sleep, &sleep);
     vTaskDelay(pdMS_TO_TICKS(120));   /* SLPIN/SLPOUT settle, as 1.75C/1.85C do */
+    /* The controller idles down with the panel and comes back with it: this is
+     * the ~2 mA the touch wake line used to cost (touch_autosleep). Runs on the
+     * UI task, the same one that owns the touch driver's reads. */
+    touch_autosleep(sleep);
+    if (!sleep) {
+        /* Coming back, the CST816S answers the first transaction with garbage
+         * (the "panel_io_i2c_*: i2c transaction failed" / 0xC0 readbacks in the
+         * log) and pulses its INT on the way up. The adapter reads that pulse
+         * as a finger, and a press left set in the indev shows up later as a
+         * hold-to-talk - which started a conversation over the alarm ring.
+         * Drain the controller and drop whatever press the indev is holding. */
+        if (s_tp_io != NULL) {
+            uint8_t status = 0;
+            (void)esp_lcd_panel_io_rx_param(s_tp_io, 0x01, &status, 1);   /* status: clears INT */
+        }
+        if (s_touch_indev != NULL) {
+            lv_indev_reset(s_touch_indev, NULL);
+        }
+    }
 }
 
 static void display_pause(bool pause)
@@ -1104,47 +1113,20 @@ static unsigned poll_buttons(void)
     return ev;
 }
 
+/* The bezel button only - the glass is the adapter's business. The alarm ring
+ * wants the difference: this one stops it at once, a touch press has to outlast
+ * the panel's own wake noise first (muse_input.c, ALARM_TOUCH_GRACE_US). */
+static bool talk_down(void)
+{
+    /* The debounced state, not the raw level: the pin is the BOOT strap and
+     * glitches low for a sample now and then (one such glitch stopped a ring),
+     * while s_talk.pressed only changes after DEBOUNCE_SAMPLES polls. */
+    return s_talk.pressed;
+}
+
 static void wait_buttons(int timeout_ms)
 {
     muse_gpio_buttons_wait((muse_gpio_button_t *const[]){ &s_talk }, 1, timeout_ms);
-}
-
-static esp_err_t bq27220_read_word(uint8_t reg, uint16_t *out)
-{
-    uint8_t data[2];
-    esp_err_t err = i2c_master_transmit_receive(s_bq, &reg, 1, data, 2, 50);
-    muse_i2c_report(err == ESP_OK);
-    ESP_RETURN_ON_ERROR(err, TAG, "bq27220 read");
-    *out = (uint16_t)data[0] | ((uint16_t)data[1] << 8);
-    return ESP_OK;
-}
-
-/* Single-cell Li-ion, open-circuit volts to percent: the last-resort fallback
- * for a gauge that answers out of range (see read_power). A cell under load
- * reads a few tens of mV low, so the bottom of the curve is deliberately a
- * little generous: the estimate errs towards "not empty yet". */
-static int pct_from_mv(int mv)
-{
-    static const struct {
-        uint16_t mv;
-        uint8_t pct;
-    } curve[] = {
-        { 4200, 100 }, { 4150, 95 }, { 4100, 90 }, { 4050, 85 }, { 4000, 80 },
-        { 3950, 74 },  { 3900, 68 }, { 3850, 62 }, { 3800, 56 }, { 3750, 50 },
-        { 3700, 42 },  { 3650, 34 }, { 3600, 26 }, { 3550, 19 }, { 3500, 13 },
-        { 3450, 8 },   { 3400, 5 },  { 3350, 3 },  { 3300, 1 },  { 3200, 0 },
-    };
-    if (mv >= curve[0].mv) {
-        return 100;
-    }
-    for (size_t i = 1; i < sizeof(curve) / sizeof(curve[0]); i++) {
-        if (mv >= curve[i].mv) {
-            int span_mv = curve[i - 1].mv - curve[i].mv;
-            int span_pct = curve[i - 1].pct - curve[i].pct;
-            return curve[i].pct + (mv - curve[i].mv) * span_pct / span_mv;
-        }
-    }
-    return 0;
 }
 
 /* 7-bit addresses for i2c_master_probe(). The vendor docs print the 8-bit
@@ -1194,14 +1176,12 @@ static void check_codecs_after_recovery(void)
              i2c_master_probe(s_i2c, ES7210_ADDR7, 20) == ESP_OK ? "answers" : "SILENT");
 }
 
-/* BQ27220 fuel gauge. Addresses from the TRM's Table 2-1 (Standard Commands),
- * cross-checked against esp-iot-solution's bq27220 driver:
- *   Voltage 0x08 (mV), BatteryStatus 0x0A, Current 0x0C (mA, + = charging),
- *   RemainingCapacity 0x10, FullChargeCapacity 0x12, AverageCurrent 0x14,
- *   TimeToFull 0x18 (min), CycleCount 0x2A, StateOfCharge 0x2C (%),
- *   StateOfHealth 0x2E (%), InternalTemperature 0x28 (0.1 K).
- * 0x1C is StandbyTimeToEmpty, not the state of charge: reading it as a
- * percentage is what pinned the gauge at 100% (1947 clamped to 100). */
+/* BQ27220 fuel gauge, read entirely through espressif/bq27220's getters. The
+ * component owns the register map, the CEDV model and the byte order; the only
+ * thing this file still decides is what a reading means for the UI. Its model is
+ * written from this pack's capacity at init (s_cedv), so the percentage is the
+ * gauge's computation, not a voltage estimate: a gauge that answers out of range
+ * is reported as unknown (-1) rather than papered over with millivolts. */
 static esp_err_t read_power(muse_power_t *out)
 {
     check_codecs_after_recovery();
@@ -1215,101 +1195,73 @@ static esp_err_t read_power(muse_power_t *out)
         return ESP_ERR_NOT_FOUND;
     }
     muse_i2c_report(true);
-    /* The gauge's own numbers, from espressif/bq27220. Its model is written from
-     * this pack's capacity at init (s_cedv), so the percentage is the gauge's
-     * computation, not a voltage estimate: a gauge that answers out of range is
-     * reported as unknown (-1) rather than papered over with millivolts. */
-    uint16_t soc = 0, mv = 0, status = 0;
-    if (s_gauge != NULL) {
-        soc = bq27220_get_state_of_charge(s_gauge);
-        mv = bq27220_get_voltage(s_gauge);
-        /* The component's getters swallow the transfer error and return 0, and
-         * no real cell reads 0 mV: both zero means the bus, not the battery.
-         * Report it so the caller keeps the last valid reading instead of
-         * showing 0%. */
-        if (soc == 0 && mv == 0) {
-            muse_i2c_report(false);
-            ESP_LOGW(TAG, "gauge read 0 mV / 0%%: bus glitch, keeping the last value");
-            return ESP_ERR_INVALID_RESPONSE;
-        }
-        battery_status_t bs;
-        if (bq27220_get_battery_status(s_gauge, &bs) == ESP_OK) {
-            status = bs.full;
-        }
-    } else {
-        /* Component handle missing (profile write failed): the same standard
-         * commands, read straight off the bus, so the UI still has numbers. */
-        ESP_RETURN_ON_ERROR(bq27220_read_word(0x2c, &soc), TAG, "state of charge");
-        ESP_RETURN_ON_ERROR(bq27220_read_word(0x08, &mv), TAG, "voltage");
-        if (bq27220_read_word(0x0a, &status) != ESP_OK) {
-            status = 0;
-        }
+    if (s_gauge == NULL) {
+        /* bq27220_create() failed at init, so there is no model and no honest
+         * percentage. Report nothing rather than a voltage guess - the same rule
+         * the 0 mV case below follows. */
+        ESP_LOGW(TAG, "gauge handle missing: battery unknown");
+        return ESP_ERR_INVALID_STATE;
     }
-    /* The gauge is the source of truth - its model is written from this pack's
-     * capacity at init (s_cedv). The cell-voltage curve stays only as a
-     * last-resort fallback for when the gauge gives nothing usable (out of
-     * range, or its handle is missing), never as an override of the gauge. */
-    int pct = soc <= 100 ? (int)soc : -1;
-    if (pct < 0) {
-        pct = pct_from_mv((int)mv);
-        static bool warned;
-        if (!warned) {
-            warned = true;
-            ESP_LOGW(TAG, "gauge reads %u, not a percentage: falling back to %d mV (~%d%%)",
-                     soc, (int)mv, pct);
-        }
+    const uint16_t soc = bq27220_get_state_of_charge(s_gauge);
+    const uint16_t mv = bq27220_get_voltage(s_gauge);
+    /* The component's getters swallow the transfer error and return 0, and no
+     * real cell reads 0 mV: both zero means the bus, not the battery. Report it
+     * so the caller keeps the last valid reading instead of showing 0%. */
+    if (soc == 0 && mv == 0) {
+        muse_i2c_report(false);
+        ESP_LOGW(TAG, "gauge read 0 mV / 0%%: bus glitch, keeping the last value");
+        return ESP_ERR_INVALID_RESPONSE;
     }
-    out->battery_pct = pct;
+    battery_status_t bs;
+    if (bq27220_get_battery_status(s_gauge, &bs) != ESP_OK) {
+        bs.full = 0;   /* unknown: read as "not charging" below, which is the
+                        * safe direction - a charger that is there will be seen
+                        * on the next poll. */
+    }
+    out->battery_pct = soc <= 100 ? (int)soc : -1;
     out->battery_mv = (int)mv;
     /* BatteryStatus bit0 is DSG: clear while the charger is pushing current in. */
-    out->charging = (status & 0x0001) == 0;
+    out->charging = !bs.DSG;
     out->usb = usb_serial_jtag_is_connected();
     return ESP_OK;
 }
 
-/* Every standard command that fits in one word, 0x08..0x2E, named from the
- * TRM so the dump reads without a datasheet at hand. Printed raw as well: a
- * value that does not fit its name is the fastest way to spot a wrong address. */
+/* Every reading the component exposes, named and unit-tagged so the dump reads
+ * without a datasheet at hand. It used to walk the TRM's standard-command table
+ * by hand (bq27220_read_word, since deleted): the three rows with no getter -
+ * StandbyTimeToEmpty, MaxLoadTimeToEmpty, RawCoulombCount - went with it, they
+ * were diagnostics nobody acted on. */
 static void dump_gauge(void)
 {
-    static const struct {
-        uint8_t reg;
-        const char *name;
-        const char *unit;
-    } regs[] = {
-        { 0x08, "Voltage", "mV" },
-        { 0x0a, "BatteryStatus", "bits" },
-        { 0x0c, "Current", "mA +chg" },
-        { 0x10, "RemainingCapacity", "mAh" },
-        { 0x12, "FullChargeCapacity", "mAh" },
-        { 0x14, "AverageCurrent", "mA" },
-        { 0x16, "TimeToEmpty", "min" },
-        { 0x18, "TimeToFull", "min" },
-        { 0x1a, "StandbyCurrent", "mA" },
-        { 0x1c, "StandbyTimeToEmpty", "min" },
-        { 0x1e, "MaxLoadCurrent", "mA" },
-        { 0x20, "MaxLoadTimeToEmpty", "min" },
-        { 0x22, "RawCoulombCount", "count" },
-        { 0x24, "AveragePower", "mW" },
-        { 0x28, "InternalTemperature", "0.1 K" },
-        { 0x2a, "CycleCount", "cycles" },
-        { 0x2c, "StateOfCharge", "%" },
-        { 0x2e, "StateOfHealth", "%" },
-    };
-    ESP_LOGI(TAG, "BQ27220 standard commands (TRM Table 2-1):");
-    for (size_t i = 0; i < sizeof(regs) / sizeof(regs[0]); i++) {
-        uint16_t v = 0;
-        if (bq27220_read_word(regs[i].reg, &v) != ESP_OK) {
-            ESP_LOGW(TAG, "  0x%02x %-20s no answer", regs[i].reg, regs[i].name);
-            continue;
-        }
-        ESP_LOGI(TAG, "  0x%02x %-20s %6d (0x%04x) %s", regs[i].reg, regs[i].name,
-                 (int16_t)v, v, regs[i].unit);
+    if (s_gauge == NULL) {
+        ESP_LOGW(TAG, "BQ27220: no handle (bq27220_create failed at init)");
+        return;
     }
-    uint16_t dcap = 0;
-    if (bq27220_read_word(0x3c, &dcap) == ESP_OK) {
-        ESP_LOGI(TAG, "  0x3c %-20s %6u        mAh", "DesignCapacity", dcap);
-    }
+    battery_status_t bs = { 0 };
+    (void)bq27220_get_battery_status(s_gauge, &bs);
+    ESP_LOGI(TAG, "BQ27220 via espressif/bq27220:");
+    ESP_LOGI(TAG, "  Voltage              %5u mV", bq27220_get_voltage(s_gauge));
+    ESP_LOGI(TAG, "  Current              %5d mA (+ charging)", bq27220_get_current(s_gauge));
+    ESP_LOGI(TAG, "  AverageCurrent       %5d mA", bq27220_get_avgcurrent(s_gauge));
+    ESP_LOGI(TAG, "  AveragePower         %5d mW", bq27220_get_average_power(s_gauge));
+    ESP_LOGI(TAG, "  RemainingCapacity    %5u mAh", bq27220_get_remaining_capacity(s_gauge));
+    ESP_LOGI(TAG, "  FullChargeCapacity   %5u mAh", bq27220_get_full_charge_capacity(s_gauge));
+    ESP_LOGI(TAG, "  DesignCapacity       %5u mAh", bq27220_get_design_capacity(s_gauge));
+    ESP_LOGI(TAG, "  StateOfCharge        %5u %%", bq27220_get_state_of_charge(s_gauge));
+    ESP_LOGI(TAG, "  StateOfHealth        %5u %%", bq27220_get_state_of_health(s_gauge));
+    ESP_LOGI(TAG, "  CycleCount           %5u", bq27220_get_cycle_count(s_gauge));
+    ESP_LOGI(TAG, "  InternalTemperature  %5u 0.1K (%d.%d C)",
+             bq27220_get_temperature(s_gauge),
+             (int)(bq27220_get_temperature(s_gauge) / 10 - 273),
+             (int)(bq27220_get_temperature(s_gauge) % 10));
+    ESP_LOGI(TAG, "  TimeToEmpty          %5u min", bq27220_get_time_to_empty(s_gauge));
+    ESP_LOGI(TAG, "  TimeToFull           %5u min", bq27220_get_time_to_full(s_gauge));
+    ESP_LOGI(TAG, "  StandbyCurrent       %5d mA", bq27220_get_standby_current(s_gauge));
+    ESP_LOGI(TAG, "  MaxLoadCurrent       %5d mA", bq27220_get_maxload_current(s_gauge));
+    ESP_LOGI(TAG, "  BatteryStatus        0x%04X: DSG=%d FC=%d TCA=%d TDA=%d BATTPRES=%d "
+                  "CHGINH=%d SLEEP=%d OTC=%d OTD=%d",
+             bs.full, (int)bs.DSG, (int)bs.FC, (int)bs.TCA, (int)bs.TDA, (int)bs.BATTPRES,
+             (int)bs.CHGINH, (int)bs.SLEEP, (int)bs.OTC, (int)bs.OTD);
 }
 
 
@@ -1347,7 +1299,11 @@ static esp_err_t power_off(void)
         /* Open drain, and the RTC domain has no digital pull-up. */
         rtc_gpio_pullup_en(MUSE_RTC_INT_GPIO);
         rtc_gpio_pulldown_dis(MUSE_RTC_INT_GPIO);
+        ESP_LOGI(TAG, "deep sleep: alarm armed, GPIO%d level %d", (int)MUSE_RTC_INT_GPIO,
+                 gpio_get_level(MUSE_RTC_INT_GPIO));
         wake_mask |= BIT64(MUSE_RTC_INT_GPIO);
+    } else {
+        ESP_LOGI(TAG, "deep sleep: no alarm armed, BOOT only");
     }
     ESP_RETURN_ON_ERROR(esp_sleep_enable_ext1_wakeup_io(wake_mask, ESP_EXT1_WAKEUP_ANY_LOW),
                         TAG, "wake button");
@@ -1360,9 +1316,10 @@ static const muse_board_t s_board = {
     .width = LCD_H_RES,
     .height = LCD_V_RES,
     .round = true,
-    /* Touch INT, BOOT and the IMU's INT1 all interrupt a light sleep, so with
-     * no knock polling to do there is nothing for a 1 s rest wait to notice:
-     * the pause can wait as long as a Wi-Fi nap does (P1-4 in the code review). */
+    /* BOOT is the only wake line left (1.4 dropped the IMU's GPIO8 and the
+     * touch panel's GPIO4), and it interrupts a light sleep, so there is
+     * nothing for a 1 s rest wait to notice: the pause can wait as long as a
+     * Wi-Fi nap does (P1-4 in the code review). */
     .wake_lines_reliable = true,
     .touch = true,
     .diagonal_in = 1.85f,
@@ -1390,6 +1347,7 @@ static const muse_board_t s_board = {
     .set_mic_gain = set_mic_gain,
     .mic_slot = 0,              /* MIC1; slot 1 is the speaker reference */
     .poll_buttons = poll_buttons,
+    .talk_down = talk_down,
     .wait_buttons = wait_buttons,
     .read_power = read_power,
     .power_debug = dump_gauge,

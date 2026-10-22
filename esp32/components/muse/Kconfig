@@ -279,6 +279,26 @@ menu "Muse"
             own voice; lower it if the start of speech gets clipped. 0
             disables the discard.
 
+    config MUSE_VOICE_MIN_PEAK_DBFS
+        int "Quietest peak a voice note may have (dBFS)"
+        depends on MUSE_ENABLED
+        range -90 -10
+        default -40
+        help
+            A take whose loudest sample never reached this is dropped instead
+            of sent: a finger on the glass, the case shifting in a pocket, a
+            table thump through the shell. The per-chunk gate already compares
+            each 20 ms against the room, and a quiet room makes that easy to
+            pass; this compares the whole take against the microphone's full
+            scale, which is what separates "held the button by accident" from
+            a real note.
+
+            -40 dBFS is a starting point for speech at arm's length with this
+            board's default mic gain. If real notes get dropped, raise it
+            (towards -50); if knocks still get through, lower it (towards
+            -30). The log line "recorded ... peak ... dBFS" prints the number
+            to compare against.
+
     config MUSE_STATIC_BUFFERS_IN_PSRAM
         bool "Keep the avatar's and audio's static buffers in PSRAM"
         depends on MUSE_ENABLED && SPIRAM_ALLOW_BSS_SEG_EXTERNAL_MEMORY
@@ -343,61 +363,9 @@ menu "Muse"
             works everywhere; the default is the one that answers fastest
             from mainland China.
 
-    # ------------------------------------------------------------ IMU gestures
-    # Wake-on-motion: the QMI8658A raises INT1 when acceleration changes by
-    # this much, and that line wakes the light sleep. Lower is easier to
-    # trigger (a knock on the desk counts); higher needs a real lift. The
-    # threshold register is 8 bits at 1 mg per step, so 255 is the ceiling.
-    config MUSE_IMU_WAKE_MG
-        int "Pick-up-to-wake acceleration threshold (milli-g)"
-        range 80 255
-        default 200
-        help
-            200 mg is the chip vendor's default and fires on desk vibration;
-            the upper end of the range needs a deliberate lift. The engine's
-            blanking time keeps one movement from raising the line twice.
-            ">imuwatch=15" in the console prints each event with the
-            acceleration that caused it, which is how to settle this on the
-            bench.
-
-    # Lift-to-wake posture gate: how far gravity has to have turned away from
-    # the posture the device was left in. A vector angle, not a pitch, so no
-    # assumption about how the part is rotated on the PCB is involved. 30 deg is
-    # "picked up and turned towards a face"; below that a device carried flat
-    # never lights. Raised to 55 deg automatically after three idle wakes, which
-    # is what a bag full of wobble looks like.
-    config MUSE_IMU_WAKE_ANGLE_DEG
-        int "Lift-to-wake posture change (degrees)"
-        range 15 90
-        default 30
-        help
-            Measured against the posture recorded when the screen went dark, so
-            it survives being put down in any orientation. A screen lit by a
-            lift nobody touches goes back to sleep after 6 s (2.5 s once
-            suppressed), and three of those in a row raise the gate to 55 deg
-            until someone actually touches the device.
-
-    # Face-down mute: the sign of the Z axis that means "screen towards the
-    # table". Flip this if a `>imu` read shows the opposite sign lying flat.
-    config MUSE_IMU_FACE_DOWN_POSITIVE
-        bool "The Z axis reads positive with the screen facing down"
-        default n
-        help
-            The board mounts the IMU flat behind the panel, so one of the two
-            Z signs means screen-down. Which one depends on how the part was
-            rotated; the boot log prints the resting vector so this can be
-            settled on the bench in one read.
-
-    config MUSE_TOUCH_IRQ_PULSE_WIDEN
-        bool "Widen the CST816S IRQ pulse (register 0xED = 0x14)"
-        depends on MUSE_BOARD_WAVESHARE_S3_TOUCH_LCD_185B
-        default y
-        help
-            A tap on the glass makes a low pulse shorter than the controller's
-            low-power wake sampler can catch, which is why a held finger woke
-            this board but a tap did not. Writing 0x14 to the CST816S's
-            IrqPluseWidth stretches the pulse so a tap wakes the chip too. The
-            register is not in the public CST816S tables, so this switch exists
-            to turn the write off if a future part disagrees.
+    # 1.4: no IMU options. The QMI8658A is still fitted on this board but
+    # nothing drives it - pick-up-to-wake, the posture gate, face-down mute and
+    # the tap engine were all removed (docs/20261022-1.4正式版待办.md §1). The
+    # touch wake pulse switch went with the touch wake line (§2).
 
 endmenu

@@ -15,11 +15,11 @@
  */
 
 /*
- * The clock. Waveshare's pcf85063a component owns the device handle and the
- * I2C transport; this file is the layer a device needs on top of it - UTC in
- * and out, the OS/validity check, the STOP-bracketed write, and the SNTP side
- * that gives the chip something real to keep. See muse_rtc.h for why the
- * component's own time getter is not used for the date.
+ * The clock. Waveshare's pcf85063a component owns the device handle, the I2C
+ * transport and the BCD datetime conversion; this file is the layer a device
+ * needs on top of it - UTC in and out, the OS/validity check, the STOP-bracketed
+ * write, and the SNTP side that gives the chip something real to keep. See
+ * muse_rtc.h for which parts of the register map are still touched by hand.
  */
 
 #include "muse_rtc.h"
@@ -52,23 +52,11 @@ static bool s_sntp_started;
 static volatile bool s_synced;
 static bool s_wake_armed;      /* an alarm is pending: fold RTC_INT into the mask */
 
-/* ------------------------------------------------------------ BCD and dates */
+/* ------------------------------------------------------------ dates and epoch */
 
-static int bcd_to_bin(uint8_t b)
-{
-    int hi = b >> 4, lo = b & 0x0f;
-    if (hi > 9 || lo > 9) {
-        return -1;
-    }
-    return hi * 10 + lo;
-}
-
-static uint8_t bin_to_bcd(int v)
-{
-    return (uint8_t)(((v / 10) << 4) | (v % 10));
-}
-
-/* Howard Hinnant's civil-date algorithm; days relative to 1970-01-01. */
+/* Howard Hinnant's civil-date algorithm; days relative to 1970-01-01. Still
+ * needed on top of the driver: the chip stores a weekday counter, not a date,
+ * and the system clock speaks Unix seconds. */
 static int64_t days_from_civil(int y, unsigned m, unsigned d)
 {
     y -= m <= 2;
@@ -84,6 +72,13 @@ static int64_t tm_to_unix(const struct tm *tm)
     int64_t days = days_from_civil(tm->tm_year + 1900, (unsigned)tm->tm_mon + 1,
                                    (unsigned)tm->tm_mday);
     return days * 86400 + tm->tm_hour * 3600 + tm->tm_min * 60 + tm->tm_sec;
+}
+
+/* Sunday = 0, which is what the chip's weekday register counts. */
+static uint8_t weekday_of(int year, int month, int day)
+{
+    const int64_t days = days_from_civil(year, (unsigned)month, (unsigned)day);
+    return (uint8_t)(((days + 4) % 7 + 7) % 7);   /* 1970-01-01 was a Thursday */
 }
 
 /* ------------------------------------------------------------------- the chip */
@@ -152,40 +147,47 @@ bool muse_rtc_get(struct tm *out)
     if (!s_present || out == NULL) {
         return false;
     }
-    /* 04h-0Ah in one transaction: the datasheet requires it so a carry cannot
-     * tear the read, and it is the only way to see Seconds.OS in the same
-     * snapshot as the counters it invalidates. */
-    uint8_t r[7];
-    if (rd(PCF85063A_RTC_SECOND_ADDR, r, 7) != ESP_OK) {
+    /* Seconds.OS is the one thing the driver's getter cannot report: it masks
+     * bit 7 off. The datasheet wants 04h-0Ah read in one transaction so a carry
+     * cannot tear the value, and the OS bit lives in that same first byte, so it
+     * is read on its own here and the rest through the driver. A second read of
+     * 04h costs one byte and can only ever see a *later* state, never an older
+     * one, so the OS verdict is conservative in the right direction. */
+    uint8_t sec = 0;
+    if (rd(PCF85063A_RTC_SECOND_ADDR, &sec, 1) != ESP_OK) {
         s_valid = false;
         return false;
     }
-    if (r[0] & 0x80) {
+    if (sec & 0x80) {
         /* Oscillator stopped: first power-on, or the backup cell is flat. The
          * counters are frozen at whatever they held and mean nothing. */
         s_valid = false;
         return false;
     }
-    int sec = bcd_to_bin(r[0] & 0x7f);
-    int min = bcd_to_bin(r[1] & 0x7f);
-    int hour = bcd_to_bin(r[2] & 0x3f);
-    int day = bcd_to_bin(r[3] & 0x3f);
-    int mon = bcd_to_bin(r[5] & 0x1f);
-    int year = bcd_to_bin(r[6]);
-    if (sec < 0 || sec > 59 || min < 0 || min > 59 || hour < 0 || hour > 23 ||
-        day < 1 || day > 31 || mon < 1 || mon > 12 || year < 0) {
+    pcf85063a_datetime_t dt;
+    memset(&dt, 0, sizeof(dt));
+    if (pcf85063a_get_time_date(&s_dev, &dt) != ESP_OK) {
+        s_valid = false;
+        return false;
+    }
+    /* The chip keeps no century: year is BCD + YEAR_OFFSET (1970). Anything
+     * outside this century is a register that came back wrong, not a date. */
+    if (dt.year < 2000 || dt.year > 2099 || dt.month < 1 || dt.month > 12 ||
+        dt.day < 1 || dt.day > 31 || dt.hour > 23 || dt.min > 59 || dt.sec > 59) {
         s_valid = false;
         return false;
     }
     memset(out, 0, sizeof(*out));
-    out->tm_sec = sec;
-    out->tm_min = min;
-    out->tm_hour = hour;
-    out->tm_mday = day;
-    out->tm_mon = mon - 1;
-    out->tm_year = 100 + year;   /* the chip has no century: 2000 + yy */
-    int64_t days = days_from_civil(2000 + year, (unsigned)mon, (unsigned)day);
-    out->tm_wday = (int)(((days + 4) % 7 + 7) % 7);   /* 1970-01-01 was a Thursday */
+    out->tm_sec = dt.sec;
+    out->tm_min = dt.min;
+    out->tm_hour = dt.hour;
+    out->tm_mday = dt.day;
+    out->tm_mon = dt.month - 1;
+    out->tm_year = dt.year - 1900;
+    /* Recomputed rather than taken from dt.dotw: the chip's weekday is a plain
+     * counter that a STOP-bracketed write can leave a day off, while the date
+     * itself is what everything downstream trusts. */
+    out->tm_wday = weekday_of(dt.year, dt.month, dt.day);
     out->tm_isdst = 0;
     s_valid = true;
     return true;
@@ -201,32 +203,33 @@ esp_err_t muse_rtc_set(const struct tm *utc)
         utc->tm_min < 0 || utc->tm_min > 59 || utc->tm_sec < 0 || utc->tm_sec > 59) {
         return ESP_ERR_INVALID_ARG;
     }
+    const int year = utc->tm_year + 1900;
+    const pcf85063a_datetime_t dt = {
+        .year = (uint16_t)year,
+        .month = (uint8_t)(utc->tm_mon + 1),
+        .day = (uint8_t)utc->tm_mday,
+        .dotw = weekday_of(year, utc->tm_mon + 1, utc->tm_mday),
+        .hour = (uint8_t)utc->tm_hour,
+        .min = (uint8_t)utc->tm_min,
+        .sec = (uint8_t)utc->tm_sec,
+    };
     /* STOP while the seven counters are replaced, then release: the first tick
      * lands 0.5-1.0 s after the release, which is the accuracy the chip offers
-     * to a host that sets it this way. */
+     * to a host that sets it this way. The driver has no bracketed write of its
+     * own, so the two Control_1 accesses stay here - the only register pokes
+     * left in this file, and they are the documented way to do it. */
     uint8_t c1 = 0;
     if (rd(PCF85063A_RTC_CTRL_1_ADDR, &c1, 1) != ESP_OK) {
         return ESP_FAIL;
     }
-    uint8_t stopped = c1 | PCF85063A_RTC_CTRL_1_STOP;
+    const uint8_t stopped = c1 | PCF85063A_RTC_CTRL_1_STOP;
     esp_err_t err = wr(PCF85063A_RTC_CTRL_1_ADDR, &stopped, 1);
     if (err != ESP_OK) {
         return err;
     }
-    int64_t days = days_from_civil(utc->tm_year + 1900, (unsigned)utc->tm_mon + 1,
-                                   (unsigned)utc->tm_mday);
-    uint8_t w[7] = {
-        bin_to_bcd(utc->tm_sec),                    /* bit7 = 0 clears OS */
-        bin_to_bcd(utc->tm_min),
-        bin_to_bcd(utc->tm_hour),
-        bin_to_bcd(utc->tm_mday),
-        (uint8_t)(((days + 4) % 7 + 7) % 7),        /* Sunday = 0 */
-        bin_to_bcd(utc->tm_mon + 1),
-        bin_to_bcd((utc->tm_year + 1900) % 100),
-    };
-    err = wr(PCF85063A_RTC_SECOND_ADDR, w, sizeof(w));
-    uint8_t running = c1 & ~PCF85063A_RTC_CTRL_1_STOP;
-    esp_err_t rerr = wr(PCF85063A_RTC_CTRL_1_ADDR, &running, 1);
+    err = pcf85063a_set_time_date(&s_dev, dt);
+    const uint8_t running = c1 & (uint8_t)~PCF85063A_RTC_CTRL_1_STOP;
+    const esp_err_t rerr = wr(PCF85063A_RTC_CTRL_1_ADDR, &running, 1);
     if (err == ESP_OK) {
         err = rerr;
     }
@@ -378,6 +381,16 @@ static bool now_or_rtc(time_t *out)
     return true;
 }
 
+/* The system clock when it has a real time, the chip otherwise: the one answer
+ * a caller that has to compare "now" against an HH:MM needs. */
+bool muse_rtc_now(time_t *out)
+{
+    if (out == NULL) {
+        return false;
+    }
+    return now_or_rtc(out);
+}
+
 bool muse_rtc_clock_str(char *buf, size_t len)
 {
     time_t now;
@@ -392,33 +405,85 @@ bool muse_rtc_clock_str(char *buf, size_t len)
 
 /* ------------------------------------------------------------------ the alarm */
 /*
- * Reserved, not implemented. The deep-sleep side is already in place: the board
- * folds MUSE_RTC_INT_GPIO into the ext1 mask when muse_rtc_wake_armed() is true,
- * and these calls keep it false, so the mask stays the single BOOT bit it has
- * always been. A scheduled wake needs the register side only (Control_2 AIE/AF
- * and the 0x0B-0x0F match registers); the signatures and the call sites do not
- * have to change then.
+ * A one-shot "next time these three fields come round" alarm: the driver's
+ * pcf85063a_set_alarm() compares seconds, minutes and hours and masks day and
+ * weekday out, so the chip raises INT the next time HH:MM:SS matches. The
+ * caller arms it with the distance to the moment it wants - the input task
+ * recomputes that from the settings after every ring, which is what makes it a
+ * daily alarm. The chip counts UTC, so the target is converted with gmtime_r().
+ *
+ * AF is latched by the part: it stays set - and keeps INT low - until it is
+ * written back as 0. Arming clears it (pcf85063a_enable_alarm() writes CTRL_2
+ * with AF 0), and so does muse_rtc_disarm(), so a fired alarm never holds the
+ * line low into the next sleep.
  */
 esp_err_t muse_rtc_arm_wakeup_in(uint32_t in_seconds)
 {
     if (in_seconds < 2 || in_seconds > 86399) {
         return ESP_ERR_INVALID_ARG;
     }
-    /* Logged, never silent: a caller that expected a wake must find out. */
-    ESP_LOGW(TAG, "RTC alarm not implemented (%" PRIu32 " s ignored)", in_seconds);
-    s_wake_armed = false;
-    return ESP_ERR_NOT_SUPPORTED;
+    if (!s_present) {
+        return ESP_ERR_NOT_FOUND;
+    }
+    time_t now;
+    if (!now_or_rtc(&now)) {
+        return ESP_ERR_INVALID_STATE;   /* no time to count from yet */
+    }
+    const time_t target = now + (time_t)in_seconds;
+    struct tm utc;
+    gmtime_r(&target, &utc);
+    const pcf85063a_datetime_t dt = {
+        .year = (uint16_t)(utc.tm_year + 1900),
+        .month = (uint8_t)(utc.tm_mon + 1),
+        .day = (uint8_t)utc.tm_mday,
+        .dotw = weekday_of(utc.tm_year + 1900, utc.tm_mon + 1, utc.tm_mday),
+        .hour = (uint8_t)utc.tm_hour,
+        .min = (uint8_t)utc.tm_min,
+        .sec = (uint8_t)utc.tm_sec,
+    };
+    esp_err_t err = pcf85063a_set_alarm(&s_dev, dt);
+    if (err == ESP_OK) {
+        err = pcf85063a_enable_alarm(&s_dev);   /* AIE=1, AF cleared */
+    }
+    s_wake_armed = err == ESP_OK;
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "alarm armed for %02d:%02d:%02d UTC (%" PRIu32 " s)", utc.tm_hour,
+                 utc.tm_min, utc.tm_sec, in_seconds);
+    } else {
+        ESP_LOGW(TAG, "alarm arm failed: %s", esp_err_to_name(err));
+    }
+    return err;
 }
 
 esp_err_t muse_rtc_disarm(void)
 {
     s_wake_armed = false;
-    return ESP_OK;
+    if (!s_present) {
+        return ESP_OK;
+    }
+    /* AIE off and AF cleared: with AF left set the chip holds INT low and the
+     * next power_off() would wake on it the instant it slept. */
+    uint8_t c2 = 0;
+    if (rd(PCF85063A_RTC_CTRL_2_ADDR, &c2, 1) != ESP_OK) {
+        return ESP_FAIL;
+    }
+    const uint8_t nc2 = c2 & (uint8_t)~(PCF85063A_RTC_CTRL_2_AIE | PCF85063A_RTC_CTRL_2_AF);
+    if (nc2 == c2) {
+        return ESP_OK;
+    }
+    return wr(PCF85063A_RTC_CTRL_2_ADDR, &nc2, 1);
 }
 
 bool muse_rtc_alarm_pending(void)
 {
-    return false;
+    if (!s_present) {
+        return false;
+    }
+    uint8_t c2 = 0;
+    if (rd(PCF85063A_RTC_CTRL_2_ADDR, &c2, 1) != ESP_OK) {
+        return false;
+    }
+    return (c2 & PCF85063A_RTC_CTRL_2_AF) != 0;
 }
 
 bool muse_rtc_wake_armed(void)
