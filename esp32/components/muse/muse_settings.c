@@ -39,10 +39,14 @@ static struct {
     uint16_t sleep_s;
     bool wifi_on;
     bool ble_on;
-    /* The daily alarm, local time. Off arms no wake source at all. */
+    /* The alarm, local time. Off arms no wake source at all.
+     * alarm_days repeats it: bit0 = Sunday .. bit6 = Saturday, 0 = once (rings
+     * once, then turns itself off), 0x7F = every day. The default is every day
+     * so a device upgraded from before this existed keeps its old behaviour. */
     uint8_t alarm_h;
     uint8_t alarm_m;
     bool alarm_on;
+    uint8_t alarm_days;
     char ssid[MUSE_SSID_MAX + 1];
     char pass[MUSE_PASS_MAX + 1];
     char host[MUSE_HOST_MAX + 1];
@@ -57,6 +61,7 @@ static struct {
     .wifi_on = true,
     .alarm_h = 7,
     .alarm_m = 0,
+    .alarm_days = 0x7F,
     .host = DEFAULT_HOST,
 };
 
@@ -135,6 +140,7 @@ esp_err_t muse_settings_init(void)
     }
     load_u8("alarm_h", &s.alarm_h);
     load_u8("alarm_m", &s.alarm_m);
+    load_u8("alarm_days", &s.alarm_days);
     if (nvs_get_u8(s_nvs, "alarm_on", &b) == ESP_OK) {
         s.alarm_on = b;
     }
@@ -149,10 +155,11 @@ esp_err_t muse_settings_init(void)
     s.brightness = clampi(s.brightness, 10, 100);
     s.alarm_h = clampi(s.alarm_h, 0, 23);
     s.alarm_m = clampi(s.alarm_m, 0, 59);
-    ESP_LOGI(TAG, "vol %d%s, mic %d dB, bright %d, sleep %ds, wifi %s (%s), ble %s, alarm %02d:%02d %s, muse %s",
+    s.alarm_days &= 0x7F;
+    ESP_LOGI(TAG, "vol %d%s, mic %d dB, bright %d, sleep %ds, wifi %s (%s), ble %s, alarm %02d:%02d %s days 0x%02x, muse %s",
              s.volume, s.speaker_on ? "" : " (speaker off)", s.mic_gain, s.brightness, s.sleep_s, s.wifi_on ? "on" : "off",
              "network saved by Link", s.ble_on ? "on" : "off", s.alarm_h, s.alarm_m, s.alarm_on ? "on" : "off",
-             s.token[0] ? "token set" : "no token");
+             s.alarm_days, s.token[0] ? "token set" : "no token");
     return ESP_OK;
 }
 
@@ -169,6 +176,7 @@ int muse_settings_sleep_s(void) { return s.sleep_s; }
 bool muse_settings_alarm_on(void) { return s.alarm_on; }
 int muse_settings_alarm_hour(void) { return s.alarm_h; }
 int muse_settings_alarm_min(void) { return s.alarm_m; }
+int muse_settings_alarm_days(void) { return s.alarm_days; }
 bool muse_settings_wifi_on(void) { return s.wifi_on; }
 bool muse_settings_ble_on(void) { return s.ble_on; }
 
@@ -264,6 +272,15 @@ void muse_settings_set_alarm_min(int min)
 {
     s.alarm_m = (uint8_t)clampi(min, 0, 59);
     save_u8("alarm_m", s.alarm_m);
+    notify(MUSE_SETTING_ALARM);
+}
+
+/* The repeat mask: bit0 = Sunday .. bit6 = Saturday, 0 = once, 0x7F = daily.
+ * Notifies like the other alarm setters, even though only the arm changes. */
+void muse_settings_set_alarm_days(int days)
+{
+    s.alarm_days = (uint8_t)(days & 0x7F);
+    save_u8("alarm_days", s.alarm_days);
     notify(MUSE_SETTING_ALARM);
 }
 

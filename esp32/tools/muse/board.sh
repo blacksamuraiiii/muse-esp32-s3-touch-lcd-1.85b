@@ -22,6 +22,10 @@
 # MUSE_BENCH=1 adds devices/sdkconfig.muse-bench (screenshots) and builds and
 # flashes in build-muse-<profile>-bench/, so neither build's sdkconfig hides
 # the other's.
+# MUSE_BUILD=test adds devices/sdkconfig.muse-test and builds and flashes in
+# build-muse-<profile>-test/: the test build (telemetry, ptest, diagnostic
+# console commands, a FAT telemetry partition, a "-test" version suffix).
+# Without it the build is Release, the shipped build.
 # mosaico (Espressif ESP-Mosaico, ESP32-S31) builds with ESP-IDF master
 # (IDF_EXPORT_S31) and Espressif's esp-mosaico-utils (MOSAICO_UTILS), and
 # flashes through the board's Vibe Mode firmware with their mosaico.py: an
@@ -85,6 +89,14 @@ B=build-muse-$profile
 defaults="sdkconfig.defaults;devices/sdkconfig.muse;devices/sdkconfig.muse-$profile"
 if [ -n "${MUSE_BENCH:-}" ]; then
     B=$B-bench; defaults="$defaults;devices/sdkconfig.muse-bench"
+fi
+# MUSE_BUILD=test builds the test image (docs/20261023-待办.md §1): the
+# telemetry sampler, the diagnostic console commands, a FAT telemetry partition
+# and a "-test" version suffix. Its own build directory, because the partition
+# table differs and neither build's sdkconfig should hide the other's. Release
+# is the default, and it is what a shipping build uses.
+if [ "${MUSE_BUILD:-release}" = test ]; then
+    B=$B-test; defaults="$defaults;devices/sdkconfig.muse-test"
 fi
 [ -n "${iris:-}" ] && defaults="$defaults;devices/sdkconfig.muse-$profile-iris"
 # Local, machine-specific settings (the TTS endpoint, a Wi-Fi SSID, a static

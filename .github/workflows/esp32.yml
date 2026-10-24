@@ -21,13 +21,13 @@ on:
     # *every* changed file matches.
     paths-ignore:
       - '**/*.md'
-      - 'docs/**'
+      - 'notes/**'
       - 'LICENSE'
   push:
     branches: [main]
     paths-ignore:
       - '**/*.md'
-      - 'docs/**'
+      - 'notes/**'
       - 'LICENSE'
 
 permissions:

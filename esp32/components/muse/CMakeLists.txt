@@ -125,6 +125,16 @@ if(CONFIG_MUSE_ENABLED)
     if(CONFIG_MUSE_POWER_TEST)
         list(APPEND srcs "muse_power_test.c")
     endif()
+    # The night recorder: Test only, and only compiled when its switch is on
+    # (docs/20261023-测试版遥测设计.md §3.3). Its call sites are wrapped in the
+    # same switch, so a Release image has neither the code nor the calls.
+    if(CONFIG_MUSE_TELEMETRY)
+        list(APPEND srcs "muse_telemetry.c")
+    endif()
+    # Bench current-attribution command, Test only.
+    if(CONFIG_MUSE_BUILD_TEST)
+        list(APPEND srcs "muse_powcfg.c")
+    endif()
 elseif(CONFIG_HOMEHUB_VOICE)
     # The Voice PE board uses just the Hatch voice session; the project's main/
     # voice_muse_chat.c stands in for the Muse settings, Wi-Fi and Link hooks.
@@ -138,7 +148,13 @@ set(muse_priv_requires
     noise_core minimp3
     esp_lcd esp_adc esp_driver_i2s esp_driver_ledc esp_driver_spi esp_driver_uart esp_wifi
     esp_driver_pcnt efuse)
-list(APPEND muse_priv_requires camera)
+# FATFS and wear levelling carry the night recorder's CSV. Declared
+# unconditionally on purpose: wrapping this in if(CONFIG_MUSE_TELEMETRY) does
+# not work - the Kconfig value is not visible when idf_component_register
+# propagates include paths, so the header is not found even though the source
+# was added. The cost in a Release build is the two libraries' code (~20 KB of a
+# 4 MB slot); the recorder's own code is still compiled only under the switch.
+list(APPEND muse_priv_requires fatfs wear_levelling camera)
 
 idf_component_register(
     SRCS ${srcs}

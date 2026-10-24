@@ -41,6 +41,12 @@ typedef struct {
     int battery_mv;    /* 0 when the board can't measure it */
     bool charging;
     bool usb;
+    /* What the gauge's own coulomb counter and thermistor say, for the night
+     * recorder: average current in mA (negative while discharging) and pack
+     * temperature in 0.1 C. Both stay 0 on boards whose gauge reports neither;
+     * nothing on screen reads them. */
+    int battery_ma;
+    int battery_temp_c10;
 } muse_power_t;
 
 void muse_state_init(void);

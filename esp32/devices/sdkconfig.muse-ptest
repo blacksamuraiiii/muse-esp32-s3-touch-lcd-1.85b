@@ -1,0 +1,33 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# ptest: the Test build flavor PLUS the power-characterization firmware
+# (muse_power_test.c replaces app_main). Load last in the mtest overlay
+# chain: sdkconfig.defaults;devices/sdkconfig.muse;
+# devices/sdkconfig.muse-<board>;devices/sdkconfig.muse-test;
+# devices/sdkconfig.muse-ptest;devices/sdkconfig.local
+#
+# This file is the only thing that turns the diagnostic on. The board's own
+# overlay supplies PM_ENABLE/FREERTOS_USE_TICKLESS_IDLE, which the
+# MUSE_POWER_TEST Kconfig depends on; muse_build.h still refuses a Release
+# build with this set, so a mis-ordered chain fails instead of shipping.
+#
+# Bench use: this board has no usable UART0 pads on the bench, so the protocol
+# runs on the native USB port (CONFIG_MUSE_PTEST_IO_USB_SERIAL_JTAG below) and
+# the cable stays plugged into a real host. VBUS therefore does not drop when
+# the bench supply is cut - the board's own hook detects the host instead, and
+# dry-run mode is the way to rehearse a sweep without unplugging anything. See
+# components/muse/muse_power_test.h for the arm/status/results protocol.
+CONFIG_MUSE_POWER_TEST=y
+CONFIG_MUSE_PTEST_IO_USB_SERIAL_JTAG=y

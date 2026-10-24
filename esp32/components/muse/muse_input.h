@@ -79,3 +79,7 @@ void muse_input_request_power_off(void);
  */
 void muse_input_alarm_sync(void);
 bool muse_input_alarm_ringing(void);
+
+/* Bench only: keep the device awake so a battery sweep is not cut short by the
+ * idle power-off. No effect on user-facing behaviour when unset. */
+void muse_input_bench_hold(bool on);

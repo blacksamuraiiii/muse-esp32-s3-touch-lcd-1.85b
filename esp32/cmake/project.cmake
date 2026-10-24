@@ -39,5 +39,40 @@ if(MOSAICO_UTILS)
     )
 endif()
 
+# ---- build type -> version suffix -------------------------------------------
+# A Test image must never be mistaken for a release one, and the version is
+# baked into esp_app_desc during project(), so the suffix has to be decided
+# before that call. The build type lives in the sdkconfig defaults chain
+# (devices/sdkconfig.muse-test sets CONFIG_MUSE_BUILD_TEST=y), which CMake
+# cannot read as CONFIG_* this early - so parse those files instead. The last
+# file naming a build type wins, matching Kconfig's later-file precedence. The
+# result is then checked against the generated sdkconfig in validate_config.cmake,
+# so a build whose suffix and build type disagree fails instead of shipping quietly.
+set(GADGET_BUILD_TYPE "")
+foreach(GADGET_DEFAULTS_FILE IN LISTS SDKCONFIG_DEFAULTS)
+    if(IS_ABSOLUTE "${GADGET_DEFAULTS_FILE}")
+        set(GADGET_DEFAULTS_PATH "${GADGET_DEFAULTS_FILE}")
+    else()
+        set(GADGET_DEFAULTS_PATH "${GADGET_SOURCE_DIR}/${GADGET_DEFAULTS_FILE}")
+    endif()
+    if(EXISTS "${GADGET_DEFAULTS_PATH}")
+        file(STRINGS "${GADGET_DEFAULTS_PATH}" GADGET_BUILD_LINES
+             REGEX "^CONFIG_MUSE_BUILD_(TEST|RELEASE)=y")
+        foreach(GADGET_BUILD_LINE IN LISTS GADGET_BUILD_LINES)
+            if(GADGET_BUILD_LINE MATCHES "^CONFIG_MUSE_BUILD_TEST=y")
+                set(GADGET_BUILD_TYPE "test")
+            else()
+                set(GADGET_BUILD_TYPE "release")
+            endif()
+        endforeach()
+    endif()
+endforeach()
+if(GADGET_BUILD_TYPE STREQUAL "test" AND NOT DEFINED PROJECT_VER)
+    file(STRINGS "${GADGET_SOURCE_DIR}/version.txt" GADGET_VERSION)
+    if(GADGET_VERSION)
+        set(PROJECT_VER "${GADGET_VERSION}-test")
+    endif()
+endif()
+
 # ESP-IDF reads version.txt from the active project root unless PROJECT_VER is set.
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)

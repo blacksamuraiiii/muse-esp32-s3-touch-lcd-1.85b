@@ -118,3 +118,42 @@ if(CONFIG_HOMEHUB_PAIRING_EFUSE_AUTH)
             "Manufacturer pairing builds must use production epoch 1. ${GADGET_CONFIG_REGEN_HINT}")
     endif()
 endif()
+
+# Build type (docs/20261023-待办.md §1). It is one decision, but it
+# reaches the build through three files - the Kconfig choice, the partition
+# table and the version suffix - and an overlay that sets only some of them is
+# exactly the drift the single switch exists to prevent. Check them against
+# each other here rather than trusting the overlay to be complete.
+#
+# muse_build.h already fails the compile when a test facility is reopened
+# under Release; this catches the other direction: a Test build that would
+# still look, flash and update like a release one.
+if(CONFIG_MUSE_BUILD_TEST)
+    if(CONFIG_PARTITION_TABLE_CUSTOM AND
+       NOT CONFIG_PARTITION_TABLE_CUSTOM_FILENAME MATCHES "_test\\.csv$")
+        message(FATAL_ERROR
+            "Test build with partition table \"${CONFIG_PARTITION_TABLE_CUSTOM_FILENAME}\": "
+            "a Test image needs its *_test.csv table (the FAT telemetry partition lives there). "
+            "Set CONFIG_PARTITION_TABLE_CUSTOM_FILENAME in the Test overlay. ${GADGET_CONFIG_REGEN_HINT}")
+    endif()
+    if(DEFINED PROJECT_VER AND NOT PROJECT_VER MATCHES "-test$")
+        message(FATAL_ERROR
+            "Test build reporting version \"${PROJECT_VER}\": the version must carry the "
+            "-test suffix so a test image cannot be mistaken for a release one. "
+            "Build through tools/muse/board.sh (it passes the SDKCONFIG_DEFAULTS chain this "
+            "reads), or set PROJECT_VER by hand. ${GADGET_CONFIG_REGEN_HINT}")
+    endif()
+elseif(CONFIG_MUSE_BUILD_RELEASE)
+    if(CONFIG_PARTITION_TABLE_CUSTOM AND
+       CONFIG_PARTITION_TABLE_CUSTOM_FILENAME MATCHES "_test\\.csv$")
+        message(FATAL_ERROR
+            "Release build with partition table \"${CONFIG_PARTITION_TABLE_CUSTOM_FILENAME}\": "
+            "the Test table carries a FAT telemetry partition a release image must not have. "
+            "Drop CONFIG_MUSE_BUILD_TEST from the overlay or use the release table. ${GADGET_CONFIG_REGEN_HINT}")
+    endif()
+    if(DEFINED PROJECT_VER AND PROJECT_VER MATCHES "-test$")
+        message(FATAL_ERROR
+            "Release build version \"${PROJECT_VER}\": the -test suffix belongs to "
+            "the Test build type only. ${GADGET_CONFIG_REGEN_HINT}")
+    endif()
+endif()

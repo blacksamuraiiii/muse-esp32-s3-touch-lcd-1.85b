@@ -62,6 +62,7 @@ int muse_settings_sleep_s(void);        /* 0 = never */
 bool muse_settings_alarm_on(void);
 int muse_settings_alarm_hour(void);     /* 0..23 */
 int muse_settings_alarm_min(void);      /* 0..59 */
+int muse_settings_alarm_days(void);     /* bit0 Sun .. bit6 Sat; 0 once, 0x7F daily */
 bool muse_settings_wifi_on(void);
 bool muse_settings_ble_on(void);
 
@@ -79,6 +80,7 @@ void muse_settings_set_sleep_s(int secs);
 void muse_settings_set_alarm_on(bool on);
 void muse_settings_set_alarm_hour(int hour);
 void muse_settings_set_alarm_min(int min);
+void muse_settings_set_alarm_days(int days);
 void muse_settings_set_wifi_on(bool on);
 void muse_settings_set_ble_on(bool on);
 /* A network name is remembered first among the saved ones and joined now;
