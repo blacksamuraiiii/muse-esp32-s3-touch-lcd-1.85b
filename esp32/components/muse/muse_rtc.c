@@ -455,6 +455,76 @@ esp_err_t muse_rtc_arm_wakeup_in(uint32_t in_seconds)
     return err;
 }
 
+/* BCD for the alarm registers; the driver keeps its own converter private. */
+static uint8_t dec_to_bcd(uint8_t v)
+{
+    return (uint8_t)(((v / 10u) << 4) | (v % 10u));
+}
+
+/*
+ * A weekly arm: the same register block as the daily one, except the weekday
+ * register compares too (docs/20261023-待办.md §2.1). With AEN_W clear the chip
+ * pulls INT only when the time matches *and* its weekday counter equals the
+ * value written here - so a Tuesday alarm armed on Sunday stays quiet on Sunday
+ * and Monday, and the device does not have to wake up to find that out. That
+ * matters because deep sleep here is woken by ext1 or this one INT line and
+ * nothing else (muse_input.c disables the timer wakeup).
+ *
+ * The weekday written is the target's, in UTC: gmtime_r() of the target instant
+ * already carries it, so the caller never translates weekdays itself. The chip's
+ * weekday counter (0x08) is checked first and rewritten from the current date
+ * when the two disagree - only the time-set path writes it, so a clock that was
+ * corrected without a weekday write would otherwise ring on the wrong day.
+ */
+esp_err_t muse_rtc_arm_wakeup_weekly(uint32_t in_seconds)
+{
+    if (in_seconds < 2 || in_seconds > 7u * 86400u) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (!s_present) {
+        return ESP_ERR_NOT_FOUND;
+    }
+    time_t now;
+    if (!now_or_rtc(&now)) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    struct tm now_utc;
+    gmtime_r(&now, &now_utc);
+    const uint8_t date_wday = weekday_of(now_utc.tm_year + 1900, now_utc.tm_mon + 1,
+                                         now_utc.tm_mday);
+    uint8_t reg_wday = 0;
+    if (rd(PCF85063A_RTC_WDAY_ADDR, &reg_wday, 1) == ESP_OK && (reg_wday & 0x07u) != date_wday) {
+        const uint8_t fixed = dec_to_bcd(date_wday);
+        if (wr(PCF85063A_RTC_WDAY_ADDR, &fixed, 1) == ESP_OK) {
+            ESP_LOGW(TAG, "weekday register %u disagreed with the date (%u): rewritten",
+                     (unsigned)(reg_wday & 0x07u), (unsigned)date_wday);
+        }
+    }
+
+    const time_t target = now + (time_t)in_seconds;
+    struct tm utc;
+    gmtime_r(&target, &utc);
+    const uint8_t payload[5] = {
+        dec_to_bcd((uint8_t)utc.tm_sec),
+        dec_to_bcd((uint8_t)utc.tm_min),
+        dec_to_bcd((uint8_t)utc.tm_hour),
+        PCF85063A_RTC_ALARM,                 /* day of the month does not compare */
+        dec_to_bcd((uint8_t)utc.tm_wday),    /* the weekday does */
+    };
+    esp_err_t err = wr(PCF85063A_RTC_SECOND_ALARM, payload, sizeof(payload));
+    if (err == ESP_OK) {
+        err = pcf85063a_enable_alarm(&s_dev);   /* AIE=1, AF cleared */
+    }
+    s_wake_armed = err == ESP_OK;
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "weekly alarm armed for %02d:%02d:%02d UTC, weekday %u (%" PRIu32 " s)",
+                 utc.tm_hour, utc.tm_min, utc.tm_sec, (unsigned)utc.tm_wday, in_seconds);
+    } else {
+        ESP_LOGW(TAG, "weekly arm failed: %s", esp_err_to_name(err));
+    }
+    return err;
+}
+
 esp_err_t muse_rtc_disarm(void)
 {
     s_wake_armed = false;

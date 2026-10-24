@@ -1,7 +1,7 @@
 {
-  "version": "1.4b",
-  "url": "https://github.com/blacksamuraiiii/muse-esp32-s3-touch-lcd-1.85b/releases/download/v1.4b/muse-gadget.bin",
-  "sha256": "42e7bdc032214d22d48bb5bc1e7b25254f7c1ef52e15316e9940fc8864352b92",
+  "version": "1.4",
+  "url": "https://github.com/blacksamuraiiii/muse-esp32-s3-touch-lcd-1.85b/releases/download/v1.4/muse-gadget.bin",
+  "sha256": "1b3a9e8aac343d56b066c4d0ec216f6dec2a9801bcd76932a962b002d1623976",
   "size": 3084288,
-  "notes": "Muse 1.85B 1.4b 测试版：RTC 闹钟转正（设置页 ALARM 开关+时+分，每日重设；响铃亮屏+提示音，任意键停；深睡走 ext1(GPIO6)、浅睡走 GPIO6 唤醒线）；响铃期间长按不停触发语音对话；IMU 手势与触摸唤醒移除、能量过滤、顶栏三段式收窄、电量计迁移收尾。发版前待补测：深睡到点唤醒、60 秒自动停、电池下按键唤醒 3/3、OTA 直升与功耗对比。"
+  "notes": "Muse 1.85B 1.4 正式版：RTC 闹钟转正（设置页 ALARM 开关+时+分，周期四选一：仅一次/每天/工作日/周末，走 PCF85063A 星期闹铃寄存器；到点亮屏+提示音、任意键停止、仅一次响完自动关；修响 4 秒自停）；分钟步进 10；移除 IMU 手势与触摸唤醒，唤醒源收敛为 BOOT 键；电量计与 RTC 读写统一走下游库；顶栏三段式；录音峰值门。构建分型 Test/Release，正式版不含遥测与台架命令。OTA 可从 1.3 直升。"
 }

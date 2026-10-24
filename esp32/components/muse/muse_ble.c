@@ -15,6 +15,9 @@
  */
 
 #include "muse_ble.h"
+#if CONFIG_MUSE_BUILD_TEST
+#include "muse_powcfg.h"
+#endif
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -171,6 +174,12 @@ static void run_command(char *cmd)
         muse_settings_set_brightness(n);
     } else if (!strcmp(cmd, "sleep") && parse_int(v, 0, 3600, &n)) {
         muse_settings_set_sleep_s(n);
+#if CONFIG_MUSE_BUILD_TEST
+    } else if (!strcmp(cmd, "powcfg")) {
+        static char bench[56];
+        muse_powcfg_apply(v, bench, sizeof(bench));
+        res = bench;
+#endif
     } else {
         res = "error: unknown command or bad value";
     }

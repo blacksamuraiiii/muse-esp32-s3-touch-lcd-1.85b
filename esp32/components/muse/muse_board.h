@@ -25,6 +25,7 @@
 #include "esp_err.h"
 #include "lvgl.h"
 
+#include "muse_build.h"
 #include "muse_state.h"
 
 #ifdef __cplusplus
