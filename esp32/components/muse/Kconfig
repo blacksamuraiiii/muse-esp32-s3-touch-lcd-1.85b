@@ -152,6 +152,46 @@ menu "Muse"
         default "ai_passport" if MUSE_BOARD_AI_PASSPORT
         default "none"
 
+    # One switch for every test-only facility (docs/20261023-待办.md §1).
+    # Release is the default, so a build that forgets its overlay gets a clean
+    # release image instead of test code leaking into one; Test is opened only
+    # by an overlay (devices/sdkconfig.muse-test) and carries the night
+    # telemetry, ptest, >pmdump, the FAT test partition table and the "-test"
+    # version suffix. muse_build.h turns a hand-edited sdkconfig that reopens a
+    # facility under Release into a compile error, not a silent mixture.
+    choice MUSE_BUILD
+        prompt "Build type"
+        default MUSE_BUILD_RELEASE
+        help
+            Test is the build used on the bench: the night-telemetry sampler,
+            the ptest power-characterisation firmware, the diagnostic console
+            commands, a partition table with a FAT telemetry partition, and a
+            "-test" version suffix. It is flashed over USB and never pushed
+            through the release channel (its partition table differs, so OTA
+            cannot carry it either).
+
+            Release is the shipped build. It must contain none of the above.
+
+        config MUSE_BUILD_TEST
+            bool "Test (telemetry, ptest, bench commands)"
+
+        config MUSE_BUILD_RELEASE
+            bool "Release"
+    endchoice
+
+    # Internal detail of the Test build type, never exposed in menuconfig: the
+    # build type is what a person turns, this is what the sampler's call sites
+    # test. No "depends on MUSE_BUILD_TEST" on purpose - a depends would let
+    # Kconfig drop a hand-set value silently, and §1 wants that case to fail
+    # the build instead (muse_build.h).
+    config MUSE_TELEMETRY
+        bool
+        default y if MUSE_BUILD_TEST
+        help
+            The night-telemetry sampler: a 60 s CSV line plus event lines in a
+            FAT partition, read back with >telemetry.dump. Set by the Test
+            build type; do not turn it on in a Release build.
+
     # The 1.85B ships with two ST77916 panel revisions, told apart by reading
     # register 0x04 at boot (00 7F 7F 7F = v1, anything else = v2). A third
     # revision would read something the probe has never seen, so the choice is
@@ -216,9 +256,12 @@ menu "Muse"
 
     config MUSE_POWER_TEST
         bool "Isolated board BSP power-characterization firmware"
+        # Test only: this replaces app_main, so it can never sit beside the
+        # application in a release image (muse_build.h is the backstop).
+        depends on MUSE_BUILD_TEST
         # Boards implementing boards/muse_power_test_board.h; extend this list
         # only after the new board's diagnostic hooks and matrix pass tests.
-        depends on (MUSE_BOARD_SENSECAP_WATCHER) && PM_ENABLE && FREERTOS_USE_TICKLESS_IDLE
+        depends on (MUSE_BOARD_SENSECAP_WATCHER || MUSE_BOARD_WAVESHARE_S3_TOUCH_LCD_185B) && PM_ENABLE && FREERTOS_USE_TICKLESS_IDLE
         default n
         help
             DIAGNOSTIC ONLY: bypass Home Link and the Muse UI/voice application
@@ -228,6 +271,21 @@ menu "Muse"
             This characterizes isolated BSP loads, NOT production power.
             Optional camera support is not required and unsupported matrix
             features are explicitly skipped. Never enable in a release profile.
+
+    config MUSE_PTEST_IO_USB_SERIAL_JTAG
+        bool "ptest protocol on the native USB-Serial-JTAG port"
+        depends on MUSE_POWER_TEST
+        default n
+        help
+            For a board whose only cable is the native USB port, with no UART0
+            pads broken out: the protocol reads and writes the USB-Serial-JTAG
+            driver instead of the console UART. Without this the ptest firmware
+            is deaf on such a board - it would run, sweep and store results,
+            but no host command could ever start a run.
+
+            Everything else is unchanged: printf still goes to the console,
+            the protocol writer bypasses it either way, and the VBUS edge test
+            is the board's own hook.
 
     config MUSE_WATCHER_CAMERA
         bool "SenseCAP Watcher camera capture and live preview"

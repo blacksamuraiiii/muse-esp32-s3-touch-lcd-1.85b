@@ -109,6 +109,10 @@ bool muse_rtc_now(time_t *out);
  *
  *  - muse_rtc_arm_wakeup_in(sec) compares the target's seconds, minutes and
  *    hours (UTC, as the chip counts) and enables the interrupt. 2..86399 s.
+ *  - muse_rtc_arm_wakeup_weekly(sec) does the same but also compares the
+ *    weekday, so the chip only pulls INT on the target's day of the week.
+ *    That is what makes a weekly or weekdays-only alarm possible without
+ *    waking every night to ask "is today the day". 2 s..7 days.
  *  - muse_rtc_wake_armed() is what the board's power_off() asks before folding
  *    MUSE_RTC_INT_GPIO into the ext1 deep-sleep mask, and what the light-sleep
  *    wake line is armed on.
@@ -119,6 +123,7 @@ bool muse_rtc_now(time_t *out);
  *    instant it slept.
  */
 esp_err_t muse_rtc_arm_wakeup_in(uint32_t in_seconds);
+esp_err_t muse_rtc_arm_wakeup_weekly(uint32_t in_seconds);
 esp_err_t muse_rtc_disarm(void);
 bool muse_rtc_alarm_pending(void);
 bool muse_rtc_wake_armed(void);

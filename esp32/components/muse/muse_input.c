@@ -46,6 +46,7 @@
 #include "muse_menu.h"
 #include "muse_settings.h"
 #include "muse_state.h"
+#include "muse_telemetry.h"
 #include "muse_ui.h"
 #include "muse_voice.h"
 #include "muse_wifi.h"
@@ -85,6 +86,9 @@ static TaskHandle_t s_input;
 static bool s_talk_down;
 static bool s_cpu_low;      /* display stopped and the CPU allowed to sleep */
 static volatile bool s_power_off_requested;
+static volatile bool s_bench_hold;
+
+void muse_input_bench_hold(bool on) { s_bench_hold = on; }
 static bool s_cpu_pd;       /* muse_input_power_init() holds the CPU's retention memory */
 #if CONFIG_PM_ENABLE
 static esp_pm_lock_handle_t s_awake;   /* with s_cpu_pd: held whenever !s_cpu_low */
@@ -167,6 +171,11 @@ static void power_off(void)
     if (!muse_board->power_off) {
         return;   /* a physical switch powers it off */
     }
+    if (s_bench_hold) {
+        ESP_LOGW(TAG, "power-off blocked: bench sweep in progress");
+        muse_state_set_mode(MUSE_MODE_IDLE);
+        return;
+    }
     ESP_LOGI(TAG, "shutting down");
     muse_state_set_asleep(false);
     update_power();
@@ -174,6 +183,11 @@ static void power_off(void)
     muse_state_set_level(0);
     muse_state_set_mode(MUSE_MODE_OFF);
     muse_state_set_caption("GOODBYE!");
+    /* The last line before the lights go out: without it a night's recording
+     * ends in mid-air and "it stopped at 23:40" has no cause attached. */
+#if CONFIG_MUSE_TELEMETRY
+    muse_telemetry_event("shutdown", muse_rtc_wake_armed() ? "alarm armed" : "no alarm");
+#endif
     vTaskDelay(pdMS_TO_TICKS(GOODBYE_MS));
 #if CONFIG_PM_ENABLE
     /* Automatic light sleep leaves the timer armed, and a deep sleep would
@@ -230,6 +244,12 @@ static int64_t s_alarm_quiet_us;   /* talk edges ignored until this moment */
 static int64_t s_alarm_check_us;   /* last time the chip's flag was read */
 static time_t s_alarm_target;   /* local epoch the current arm is for; 0 unknown */
 
+/* Repeat masks name days the same way tm_wday and the chip's weekday counter
+ * do: bit0 Sunday .. bit6 Saturday. 0 is a once-only alarm, 0x7F every day. */
+#define ALARM_DAYS_DAILY 0x7F
+
+static const char *const WEEKDAY_NAMES[7] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
+
 static void alarm_arm_next(void)
 {
     if (!muse_rtc_present()) {
@@ -242,24 +262,60 @@ static void alarm_arm_next(void)
     }
     const int h = muse_settings_alarm_hour();
     const int m = muse_settings_alarm_min();
+    const uint8_t days = (uint8_t)muse_settings_alarm_days();
+    /* Once and every-day need no weekday test; anything else has to land on a
+     * day the mask names, so walk forward at most a week
+     * (docs/20261023-待办.md §2.1). mktime normalises the date and fills
+     * tm_wday, so the search and the weekday agree by construction. */
+    const bool filter = days != 0 && days != ALARM_DAYS_DAILY;
     struct tm at;
     localtime_r(&now, &at);
-    at.tm_hour = h;
-    at.tm_min = m;
-    at.tm_sec = 0;
-    at.tm_isdst = -1;
-    time_t target = mktime(&at);
-    if (target <= now) {
-        target += 86400;   /* today's time is gone: tomorrow's */
+    time_t target = 0;
+    for (int add = 0; add <= 7; add++) {
+        struct tm cand = at;
+        cand.tm_mday += add;
+        cand.tm_hour = h;
+        cand.tm_min = m;
+        cand.tm_sec = 0;
+        cand.tm_isdst = -1;
+        const time_t t = mktime(&cand);
+        if (t <= now + 1) {
+            continue;   /* today's time is already gone */
+        }
+        if (filter && !(days & (1u << cand.tm_wday))) {
+            continue;
+        }
+        target = t;
+        break;
+    }
+    if (target == 0) {
+        s_alarm_target = 0;
+        ESP_LOGW(TAG, "alarm %02d:%02d: no day of the mask within a week", h, m);
+        return;
     }
     long secs = (long)(target - now);
     if (secs < 2) {
         secs = 2;
     }
-    esp_err_t err = muse_rtc_arm_wakeup_in((uint32_t)secs);
+    /* A filtered alarm also compares the weekday in the chip, so a target days
+     * away arms exactly and the device stays asleep until that day. The same
+     * call covers the corner where tomorrow is a full 86400 s away, which the
+     * daily form refuses. */
+    const bool weekly = filter || secs > 86399;
+    esp_err_t err = weekly ? muse_rtc_arm_wakeup_weekly((uint32_t)secs)
+                           : muse_rtc_arm_wakeup_in((uint32_t)secs);
     if (err == ESP_OK) {
         s_alarm_target = target;
-        ESP_LOGI(TAG, "alarm %02d:%02d armed in %ld s", h, m, secs);
+        struct tm tt;
+        localtime_r(&target, &tt);
+        ESP_LOGI(TAG, "alarm %02d:%02d armed in %ld s (%s)", h, m, secs,
+                 days == 0 ? "once" : filter ? WEEKDAY_NAMES[tt.tm_wday] : "every day");
+#if CONFIG_MUSE_TELEMETRY
+        char detail[64];
+        snprintf(detail, sizeof(detail), "%02d:%02d in %lds mask=0x%02x %s", h, m, secs,
+                 (unsigned)days, WEEKDAY_NAMES[tt.tm_wday]);
+        muse_telemetry_event("alarm.arm", detail);
+#endif
     } else {
         s_alarm_target = 0;
         ESP_LOGW(TAG, "alarm %02d:%02d not armed: %s", h, m, esp_err_to_name(err));
@@ -290,6 +346,9 @@ static void alarm_start(const char *why)
     s_alarm_ring_us = esp_timer_get_time();
     s_alarm_chirp_us = s_alarm_ring_us;
     ESP_LOGI(TAG, "alarm ringing (%s)", why);
+#if CONFIG_MUSE_TELEMETRY
+    muse_telemetry_event("alarm.fire", why);
+#endif
     set_asleep(false, "alarm");
     muse_state_poke();
     muse_state_set_caption("ALARM %02d:%02d\nPRESS TO STOP", muse_settings_alarm_hour(),
@@ -305,8 +364,21 @@ static void alarm_stop(const char *why)
     s_alarm_ringing = false;
     s_alarm_quiet_us = esp_timer_get_time() + ALARM_QUIET_US;
     ESP_LOGI(TAG, "alarm stopped (%s)", why);
+#if CONFIG_MUSE_TELEMETRY
+    muse_telemetry_event("alarm.stop", why);
+#endif
     muse_state_set_caption("ALARM OFF");
-    alarm_arm_next();
+    if (muse_settings_alarm_days() == 0) {
+        /* A once-only alarm is exactly that: the ring is the whole of it, so
+         * turn it off instead of arming the same time again
+         * (docs/20261023-待办.md §2.1). Turning it off notifies, and the sync
+         * that runs from the listener disarms the chip. */
+        s_alarm_target = 0;
+        muse_settings_set_alarm_on(false);
+        ESP_LOGI(TAG, "once alarm finished: turned off");
+    } else {
+        alarm_arm_next();
+    }
 }
 
 bool muse_input_alarm_ringing(void)
@@ -745,6 +817,15 @@ static void input_task(void *arg)
     ESP_LOGI(TAG, "boot: reset=%d wake=0x%" PRIx32 " alarm_pending=%d",
              (int)esp_reset_reason(), (uint32_t)esp_sleep_get_wakeup_causes(),
              (int)muse_rtc_alarm_pending());
+#if CONFIG_MUSE_TELEMETRY
+    {
+        /* The line a night's recording is read against: what woke this boot. */
+        char why[64];
+        snprintf(why, sizeof(why), "reset=%d wake=0x%lx pending=%d", (int)esp_reset_reason(),
+                 (unsigned long)esp_sleep_get_wakeup_causes(), (int)muse_rtc_alarm_pending());
+        muse_telemetry_event("boot", why);
+    }
+#endif
     if (muse_settings_alarm_on() && muse_rtc_alarm_pending()) {
         alarm_start("boot");
     } else {
@@ -768,8 +849,14 @@ static void input_task(void *arg)
              * the ring started used to end it. §3.5: any key stops the ring. */
             const bool grace = now_us - s_alarm_ring_us < ALARM_TOUCH_GRACE_US;
             const bool talk = (ev & MUSE_BTN_TALK_PRESS) || (touch & MUSE_BTN_TALK_PRESS);
-            const bool bezel = (ev & (ALARM_STOP_BITS & ~MUSE_BTN_TALK_PRESS)) ||
-                               (muse_board->talk_down && muse_board->talk_down());
+            /* The live hardware read is the same talk button whose pulse the
+             * panel's wake-up produces, so it waits out the grace window as
+             * well. Without that a ring ended about four seconds in on the
+             * bench: the phantom pulse arrived as a held button, the edge test
+             * never saw it as an edge, and the "bezel counts at once" path took
+             * it anyway (measured 2026-10-23, 85B). */
+            const bool held = muse_board->talk_down && muse_board->talk_down();
+            const bool bezel = (ev & (ALARM_STOP_BITS & ~MUSE_BTN_TALK_PRESS)) || (held && !grace);
             if (bezel || (talk && !grace)) {
                 ESP_LOGI(TAG, "alarm stopped by key (ev=0x%x touch=0x%x grace=%d)", ev, touch,
                          (int)grace);
@@ -1049,6 +1136,74 @@ static bool console_command(char *line, bool whole)
         fflush(stdout);
         return true;
     }
+#if CONFIG_MUSE_BUILD_TEST
+    if (!strcmp(line, "pmdump")) {
+        /* Who is holding a power-management lock right now, and for how long
+         * each one has. This is the first thing to read when the chip will not
+         * stay in light sleep: a lock taken at boot and never released explains
+         * a REST state that never arrives, and nothing else on the device
+         * reports it. IDF's own dump, so there is no new code to trust
+         * (docs/20261023-测试版遥测设计.md §3.1). */
+        printf("@pmdump\n");
+        esp_pm_dump_locks(stdout);
+        fflush(stdout);
+        return true;
+    }
+#endif
+#if CONFIG_MUSE_TELEMETRY
+    if (!strncmp(line, "telemetry", 9)) {
+        /* ">telemetry" reports whether the recorder is up (and is the first
+         * thing to try when a night produced no file), ">telemetry.dump" walks
+         * the CSV out of the port for console.py to save, ">telemetry.stats"
+         * summarises it on the device, ">telemetry.clear" starts a fresh night. */
+        if (!strcmp(line, "telemetry.dump")) {
+            muse_telemetry_dump();
+        } else if (!strcmp(line, "telemetry.stats")) {
+            muse_telemetry_stats();
+        } else if (!strcmp(line, "telemetry.clear")) {
+            muse_telemetry_clear();
+        } else if (!strcmp(line, "telemetry")) {
+            printf("@telemetry active=%d\n", (int)muse_telemetry_active());
+        } else {
+            printf("@telemetry unknown command\n");
+        }
+        fflush(stdout);
+        return true;
+    }
+#endif
+#if CONFIG_MUSE_BUILD_TEST
+    if (!strncmp(line, "alarm", 5)) {
+        /* Bench hook, Test build only: ">alarm=HH:MM:mask" sets and arms it,
+         * ">alarm=off" turns it off, ">alarm" reports the state. The panel rows
+         * are the product path; this exists so the acceptance cases in
+         * docs/20261023-待办.md §2.4 can be run from a cable. Mask: bit0 Sunday
+         * .. bit6 Saturday, 0 once, 127 every day, 62 weekdays. */
+        if (line[5] == '=') {
+            const char *v = line + 6;
+            if (!strcmp(v, "off")) {
+                muse_settings_set_alarm_on(false);
+            } else {
+                int hh = 0, mm = 0, mask = 0;
+                if (sscanf(v, "%d:%d:%d", &hh, &mm, &mask) == 3 && hh >= 0 && hh <= 23 &&
+                    mm >= 0 && mm <= 59 && mask >= 0 && mask <= 0x7F) {
+                    muse_settings_set_alarm_hour(hh);
+                    muse_settings_set_alarm_min(mm);
+                    muse_settings_set_alarm_days(mask);
+                    muse_settings_set_alarm_on(true);
+                } else {
+                    printf("@alarm bad value, want HH:MM:mask (mask 0..127)\n");
+                    fflush(stdout);
+                    return true;
+                }
+            }
+        }
+        printf("@alarm %02d:%02d %s days 0x%02x ringing=%d\n", muse_settings_alarm_hour(),
+               muse_settings_alarm_min(), muse_settings_alarm_on() ? "on" : "off",
+               (unsigned)muse_settings_alarm_days(), (int)muse_input_alarm_ringing());
+        fflush(stdout);
+        return true;
+    }
+#endif
     if (!strcmp(line, "ota")) {
         /* The Update page needs a finger; this is the same call from a cable. */
         bool started = muse_link_ota_check();

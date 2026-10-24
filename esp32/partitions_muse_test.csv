@@ -1,0 +1,40 @@
+﻿# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Name,    Type, SubType, Offset,   Size,    Flags
+# The test table: partitions_muse.csv plus one FAT partition for the
+# night-telemetry sampler (docs/20261023-测试版遥测设计.md §3.2).
+#
+# Same geometry rules as partitions_muse.csv - the table sits at 0x10000, the
+# app slots are dual-OTA with rollback, NVS holds the Muse settings and BLE
+# bonds - so a test image differs from a release one by this last partition
+# and nothing else. That is deliberate: the telemetry partition is the *only*
+# layout change, which keeps "why did this build behave differently" answerable.
+#
+# 1 MB holds about 25 nights: a 60 s line is ~90 bytes, ~450 lines a night, so
+# ~40 KB a night plus event lines. FATFS + wear_levelling on top.
+#
+# 0x830000 is the first 64 KiB boundary after prod_bak ends at 0x822000. The
+# board has 16 MB, so the partition ends at 0x930000 with room to spare.
+#
+# A test image cannot be delivered by OTA: the partition table differs, so it
+# is flashed over USB (docs/20261023-待办.md §1).
+nvs,       data, nvs,     0x11000,  0xC000,
+otadata,   data, ota,     0x1D000,  0x2000,
+phy_init,  data, phy,     0x1F000,  0x1000,
+ota_0,     app,  ota_0,   0x20000,  4M,
+ota_1,     app,  ota_1,   0x420000, 4M,
+prod_data, data, 0x40,    0x820000, 0x1000,
+prod_bak,  data, 0x41,    0x821000, 0x1000,
+telemetry, data, fat,     0x830000, 1M,

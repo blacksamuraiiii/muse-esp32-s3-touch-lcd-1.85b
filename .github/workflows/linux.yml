@@ -19,13 +19,13 @@ on:
     # Docs-only changes don't need the Linux client tests either.
     paths-ignore:
       - '**/*.md'
-      - 'docs/**'
+      - 'notes/**'
       - 'LICENSE'
   push:
     branches: [main]
     paths-ignore:
       - '**/*.md'
-      - 'docs/**'
+      - 'notes/**'
       - 'LICENSE'
 
 permissions:

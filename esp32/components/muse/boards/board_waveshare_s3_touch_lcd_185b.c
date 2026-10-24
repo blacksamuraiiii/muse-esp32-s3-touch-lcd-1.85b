@@ -86,6 +86,107 @@
 
 static const char *TAG = "board";
 
+#if CONFIG_MUSE_POWER_TEST
+#include "boards/muse_power_test_board.h"
+#include <string.h>
+
+/* Board-owned descriptors: host tests compile this exact block as well.
+ * This board has NO expander and no switchable rails - LCD, touch, codecs,
+ * gauge, RTC and IMU all hang off always-on 3V3 - so the honest state axis
+ * is backlight duty, panel SLPIN, codec open/suspend, the amp enable
+ * (PA_EN GPIO9) and pad parking, not rail switching. Every entry below
+ * names what is really controllable; things this firmware cannot switch or
+ * that were never verified from a schematic are MUSE_PTEST_UNSUPPORTED with
+ * the reason in the note. Pin facts: Waveshare official docs for this board
+ * (same list as the file header). */
+#define STATE(id, note, load, mhz, bl, amp) { id, note, load, mhz, bl, amp, 0, 1000, MUSE_PTEST_CODEC_KEEP, "other", "" }
+static const muse_ptest_state_t s_matrix[] = {
+    STATE("baseline_pre", "radio-off, codecs uninitialized/closed, panel SLPIN + backlight 0 (no rails exist here), DFS + automatic light sleep", MUSE_PTEST_IDLE, 0, -1, false),
+    STATE("cpu_fixed_40_idle", "fixed CPU clock, idle (not a busy loop)", MUSE_PTEST_IDLE, 40, -1, false),
+    STATE("cpu_fixed_80_idle", "fixed CPU clock, idle", MUSE_PTEST_IDLE, 80, -1, false),
+    STATE("cpu_fixed_160_idle", "fixed CPU clock, idle", MUSE_PTEST_IDLE, 160, -1, false),
+    STATE("cpu_fixed_240_idle", "fixed CPU clock, idle", MUSE_PTEST_IDLE, 240, -1, false),
+    STATE("baseline_cpu_post", "paired DFS baseline after fixed clocks", MUSE_PTEST_IDLE, 0, -1, false),
+    STATE("lcd_black_bl_0", "ST77916 init + static black, backlight 0%, no LVGL/touch task; panel+touch sit on always-on 3V3 (nothing to rail off)", MUSE_PTEST_LCD, 80, 0, false),
+    STATE("lcd_black_bl_25", "static black, backlight 25%", MUSE_PTEST_LCD, 80, 25, false),
+    STATE("lcd_black_bl_50", "static black, backlight 50%", MUSE_PTEST_LCD, 80, 50, false),
+    STATE("lcd_black_bl_100", "static black, backlight 100%", MUSE_PTEST_LCD, 80, 100, false),
+    STATE("lcd_sleep_post", "paired: SLPIN + backlight 0 (panel charge pump off); CST816S left at its auto-sleep power-on default", MUSE_PTEST_IDLE, 80, -1, false),
+    STATE("codecs_closed_pre", "always-on codec rail, no initialized I2S yet or codecs closed; amp GPIO9 low", MUSE_PTEST_IDLE, 80, -1, false),
+    STATE("codecs_open_amp_off", "16kHz stereo-slot codecs open, I2S clocks on, no drain, PA_EN driven low", MUSE_PTEST_CODECS_IDLE, 80, -1, false),
+    STATE("codecs_open_amp_on", "same codecs and I2S, PA_EN high, no playback", MUSE_PTEST_CODECS_IDLE, 80, -1, true),
+    STATE("mic_capture_16k", "16kHz stereo I2S drained/discarded, ES7210 MIC1 slot 0, 0dB gain, amp off", MUSE_PTEST_MIC, 80, -1, false),
+    STATE("sine_1k_minus18dbfs", "1kHz sine -18dBFS peak, volume 25/100, 16kHz stereo slots, amp on", MUSE_PTEST_SINE, 80, -1, true),
+    STATE("codecs_closed_post", "paired baseline after codec close and I2S stop", MUSE_PTEST_IDLE, 80, -1, false),
+    STATE("battery_divider_unsupported", "skipped: no switchable battery-divider rail - this board gauges over I2C (BQ27220, always powered)", MUSE_PTEST_UNSUPPORTED, 80, -1, false),
+    STATE("gauge_sample_1hz", "BQ27220 gauge read over I2C once/second (this board's real battery-read path; no ADC divider exists)", MUSE_PTEST_ADC_SAMPLE, 80, -1, false),
+    STATE("gauge_off_post", "paired gauge-sample-off baseline", MUSE_PTEST_IDLE, 80, -1, false),
+    STATE("wifi_scanning", "unassociated active scans, no credentials/NVS; completed scans counted", MUSE_PTEST_WIFI_SCAN, 80, -1, false),
+    STATE("wifi_associated_idle", "skipped: no known AP credentials; never load production NVS", MUSE_PTEST_UNSUPPORTED, 80, -1, false),
+    STATE("ble_advertising", "skipped: standalone NimBLE lifecycle not characterized; controller never initialized", MUSE_PTEST_UNSUPPORTED, 80, -1, false),
+    STATE("imu_off_unsupported", "skipped: QMI8658 at 0x6B is always powered and nothing in this firmware drives it; no verified enable path", MUSE_PTEST_UNSUPPORTED, 80, -1, false),
+    STATE("deep_sleep_timer", "skipped: no deep sleep in the peripheral sweep; the sleep matrix owns the timer-deep rows", MUSE_PTEST_UNSUPPORTED, 0, -1, false),
+    STATE("baseline_post", "radio-off resting, panel SLPIN + backlight 0, amp low, codecs closed, DFS + automatic light sleep", MUSE_PTEST_IDLE, 0, -1, false),
+};
+#define MATRIX_COUNT (sizeof(s_matrix) / sizeof(s_matrix[0]))
+_Static_assert(MATRIX_COUNT * MUSE_PTEST_MAX_REPEATS <= MUSE_PTEST_MAX_RECORDS, "result capacity");
+
+#define SLEEP_STATE(id, note, knobs, codec, role, group, poll, load) \
+    { id, note, load, 0, -1, false, knobs, poll, codec, role, group }
+/* No rgb_low / unused_hiz rows: there is no RGB LED on this board, and no
+ * GPIO has been verified genuinely unconnected from the schematic, so
+ * floating a guessed "unused" pad list would be fabrication. No cpu_pd rows
+ * either: the board overlay keeps CONFIG_PM_POWER_DOWN_CPU_IN_LIGHT_SLEEP
+ * off (its retention state does not fit beside this board's PSRAM/WiFi
+ * budget), so a cpu_pd label would advertise a power-down that cannot
+ * happen. PULLS_OFF is kept with an explicit caveat: the production i2c_bus
+ * config enables internal pull-ups on SDA/SCL, but whether the board has
+ * external ones is unverified - if the bus dies the record fails honestly. */
+#define BEST_KNOBS (MUSE_PTEST_I2S_LOW | MUSE_PTEST_UART_HIZ | MUSE_PTEST_PULLS_OFF | MUSE_PTEST_GPIO_ISOLATE)
+static const muse_ptest_state_t s_sleep_matrix[] = {
+    SLEEP_STATE("cold_ref", "untouched codec and I2S state; cold means no audio constructor has run", 0, MUSE_PTEST_CODEC_COLD, "other", "", 1000, MUSE_PTEST_IDLE),
+    SLEEP_STATE("cold_i2s_low", "cold codec, I2S outputs low and DIN pulldown; reference for hiz", MUSE_PTEST_I2S_LOW, MUSE_PTEST_CODEC_COLD, "ref", "cold", 1000, MUSE_PTEST_IDLE),
+    SLEEP_STATE("cold_i2s_hiz", "cold codec, I2S pads floating", MUSE_PTEST_I2S_HIZ, MUSE_PTEST_CODEC_COLD, "variant", "cold", 1000, MUSE_PTEST_IDLE),
+    SLEEP_STATE("cold_i2s_low_b", "paired cold I2S-low reference", MUSE_PTEST_I2S_LOW, MUSE_PTEST_CODEC_COLD, "ref", "cold", 1000, MUSE_PTEST_IDLE),
+    SLEEP_STATE("codec_initialized", "audio constructors only, never stream-opened; I2S stopped", 0, MUSE_PTEST_CODEC_INITIALIZED, "other", "", 1000, MUSE_PTEST_IDLE),
+    SLEEP_STATE("codec_suspended", "16kHz codecs opened then closed; codec drivers' own shutdown writes; always-on codec rail", 0, MUSE_PTEST_CODEC_SUSPENDED, "other", "", 1000, MUSE_PTEST_IDLE),
+    SLEEP_STATE("warm_ref", "warm baseline_post policy; no parking knobs", 0, MUSE_PTEST_CODEC_KEEP, "ref", "warm", 1000, MUSE_PTEST_IDLE),
+    SLEEP_STATE("uart_hiz", "UART0 pads 43/44 floating only without VBUS; rerouted immediately on USB", MUSE_PTEST_UART_HIZ, MUSE_PTEST_CODEC_KEEP, "variant", "warm", 1000, MUSE_PTEST_IDLE),
+    SLEEP_STATE("warm_ref_2", "paired warm reference", 0, MUSE_PTEST_CODEC_KEEP, "ref", "warm", 1000, MUSE_PTEST_IDLE),
+    SLEEP_STATE("pulls_off", "internal pulls off I2C SDA/SCL (production enables both); external board pull-ups NOT schematic-verified - a dead bus fails the record honestly", MUSE_PTEST_PULLS_OFF, MUSE_PTEST_CODEC_KEEP, "variant", "warm", 1000, MUSE_PTEST_IDLE),
+    SLEEP_STATE("warm_ref_3", "paired warm reference", 0, MUSE_PTEST_CODEC_KEEP, "ref", "warm", 1000, MUSE_PTEST_IDLE),
+    SLEEP_STATE("gpio_isolate", "sleep-pad isolation; exempted to stay latched: I2S-low, backlight 0, PA_EN low, panel reset high", MUSE_PTEST_GPIO_ISOLATE, MUSE_PTEST_CODEC_KEEP, "variant", "warm", 1000, MUSE_PTEST_IDLE),
+    SLEEP_STATE("warm_ref_4", "paired warm reference", 0, MUSE_PTEST_CODEC_KEEP, "ref", "warm", 1000, MUSE_PTEST_IDLE),
+    SLEEP_STATE("best_combined", "all safe sleep knobs, I2S low", BEST_KNOBS, MUSE_PTEST_CODEC_KEEP, "variant", "warm", 1000, MUSE_PTEST_IDLE),
+    SLEEP_STATE("warm_ref_5", "paired warm reference", 0, MUSE_PTEST_CODEC_KEEP, "ref", "warm", 1000, MUSE_PTEST_IDLE),
+    SLEEP_STATE("best_combined_b", "repeat best-combined variant", BEST_KNOBS, MUSE_PTEST_CODEC_KEEP, "variant", "warm", 1000, MUSE_PTEST_IDLE),
+    SLEEP_STATE("best_poll_5s", "best-combined with five-second VBUS poll; boundary timers remain", BEST_KNOBS, MUSE_PTEST_CODEC_KEEP, "variant", "warm", 5000, MUSE_PTEST_IDLE),
+    SLEEP_STATE("warm_ref_6", "final paired warm reference for best-combined-b and five-second polling", 0, MUSE_PTEST_CODEC_KEEP, "ref", "warm", 1000, MUSE_PTEST_IDLE),
+    SLEEP_STATE("deep_sleep_timer", "timer-only reset, sleep-pad isolation; no held outputs", MUSE_PTEST_GPIO_ISOLATE, MUSE_PTEST_CODEC_SUSPENDED, "other", "", 0, MUSE_PTEST_DEEP_SLEEP),
+    SLEEP_STATE("deep_sleep_timer_held", "timer-only reset; I2S outputs, backlight(0) and PA_EN low held across deep sleep; LCD data/reset never held (strapping)", MUSE_PTEST_GPIO_ISOLATE | MUSE_PTEST_I2S_LOW | MUSE_PTEST_GPIO_HOLD, MUSE_PTEST_CODEC_SUSPENDED, "other", "", 0, MUSE_PTEST_DEEP_SLEEP),
+};
+#define SLEEP_MATRIX_COUNT (sizeof(s_sleep_matrix) / sizeof(s_sleep_matrix[0]))
+_Static_assert(SLEEP_MATRIX_COUNT <= MUSE_PTEST_MAX_RECORDS, "sleep result capacity");
+
+const char *muse_ptest_board_name(void) { return "Waveshare ESP32-S3-Touch-LCD-1.85B"; }
+
+const muse_ptest_state_t *muse_ptest_board_matrix(const char *name, size_t *count)
+{
+    if (count) { *count = 0; }
+    if (name && !strcmp(name, "peripheral")) {
+        if (count) { *count = MATRIX_COUNT; }
+        return s_matrix;
+    }
+    if (name && !strcmp(name, "sleep")) {
+        if (count) { *count = SLEEP_MATRIX_COUNT; }
+        return s_sleep_matrix;
+    }
+    return NULL;
+}
+/* End board-owned power-test descriptors. */
+#endif
+
+
 #define LCD_H_RES 360
 #define LCD_V_RES 360
 #define LCD_HOST SPI3_HOST
@@ -532,7 +633,7 @@ static muse_gpio_button_t s_talk;
  * voltage/temperature terms are the reference cell the component carries in
  * test_apps/main/bq27220_test.c (they describe cell chemistry, not pack size).
  * They are a sane starting model, not a GPCCEDV-calibrated one - see
- * docs/20261018待办.md. */
+ * notes/20261018待办.md. */
 static const parameter_cedv_t s_cedv = {
     .full_charge_cap = 500,
     .design_cap = 500,
@@ -632,10 +733,10 @@ static esp_err_t init(void)
     /* No separate device handle for the gauge any more: the component owns its
      * own on this bus, and read_power() only needs i2c_master_probe() to tell
      * "present" from "gone". The hand-rolled register path that needed one went
-     * with the voltage fallback (1.4, docs/20261022-1.4正式版待办.md §4). */
+     * with the voltage fallback (1.4, notes/20261022-1.4正式版待办.md §4). */
     /* No IMU: the QMI8658A at 0x6B is fitted and answers, but nothing in 1.4
      * drives it. Pick-up-to-wake, the posture gate, face-down mute and the tap
-     * engine were removed with their wake line (docs/20261022-1.4正式版待办.md
+     * engine were removed with their wake line (notes/20261022-1.4正式版待办.md
      * §1), which also retires GPIO8 as a light-sleep source: the only wake line
      * left on this board is BOOT. */
     esp_err_t err = muse_gpio_button_init(&s_talk, TALK_GPIO);
@@ -658,7 +759,7 @@ static esp_err_t init(void)
  * That 2 mA was the whole reason the touch wake line had to go: keeping the
  * controller responsive for a light-sleep wake meant leaving auto-sleep off
  * around the clock, which cost ~48 mAh/day out of a 500 mAh pack. With the line
- * gone (docs/20261022-1.4正式版待办.md §2) the controller is allowed to sleep
+ * gone (notes/20261022-1.4正式版待办.md §2) the controller is allowed to sleep
  * and the price is one swallowed touch after the screen goes dark - it wakes the
  * chip without reporting coordinates, which on a BOOT-first device is nothing. */
 static void touch_autosleep(bool allow)
@@ -975,6 +1076,13 @@ static void display_pause(bool pause)
     }
 }
 
+#if CONFIG_MUSE_POWER_TEST
+static int s_ptest_apply_step; /* 0 = none; last apply step attempted */
+static i2s_chan_handle_t s_ptest_tx, s_ptest_rx;
+static bool s_ptest_i2s_stopped;
+static const audio_codec_if_t *s_ptest_dac_if, *s_ptest_adc_if;
+#endif
+
 /* ES8311 out and ES7210 in on one duplex I2S bus. The ES7210's second
  * channel carries the speaker reference (xiaozhi uses it for echo
  * cancelling); Muse takes slot 0 (MIC1).
@@ -1002,6 +1110,13 @@ static esp_err_t audio_init(esp_codec_dev_handle_t *spk, esp_codec_dev_handle_t 
     i2s_chan_config_t chan_cfg = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_0, I2S_ROLE_MASTER);
     chan_cfg.auto_clear = true;
     ESP_RETURN_ON_ERROR(i2s_new_channel(&chan_cfg, &tx, &rx), TAG, "i2s channel");
+#if CONFIG_MUSE_POWER_TEST
+    /* Publish ownership BEFORE init/enable: partial TX/RX failures must still
+     * be tracked and stopped by the standalone diagnostic cleanup path. */
+    s_ptest_tx = tx;
+    s_ptest_rx = rx;
+    s_ptest_i2s_stopped = false;
+#endif
     const i2s_std_config_t std_cfg = {
         .clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(MUSE_AUDIO_RATE),
         .slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_STEREO),
@@ -1031,17 +1146,29 @@ static esp_err_t audio_init(esp_codec_dev_handle_t *spk, esp_codec_dev_handle_t 
         .ctrl_if = dac_ctrl,
         .gpio_if = gpio_if,
         .codec_mode = ESP_CODEC_DEV_WORK_MODE_DAC,
+#if CONFIG_MUSE_POWER_TEST
+        /* ptest owns PA_EN as a plain GPIO so "codecs open, amp off" is a
+         * real state; the ES8311 driver must not flip it on open/close. */
+        .pa_pin = GPIO_NUM_NC,
+#else
         .pa_pin = PA_EN,
+#endif
         .use_mclk = true,
         .hw_gain = { .pa_voltage = 5.0, .codec_dac_voltage = 3.3 },
     };
     const audio_codec_if_t *dac = es8311_codec_new(&dac_cfg);
+#if CONFIG_MUSE_POWER_TEST
+    s_ptest_dac_if = dac; /* own low-level disable even if wrapper allocation fails */
+#endif
     ESP_RETURN_ON_FALSE(dac, ESP_FAIL, TAG, "ES8311 not responding");
     es7210_codec_cfg_t adc_cfg = {
         .ctrl_if = adc_ctrl,
         .mic_selected = ES7210_SEL_MIC1 | ES7210_SEL_MIC2,
     };
     const audio_codec_if_t *adc = es7210_codec_new(&adc_cfg);
+#if CONFIG_MUSE_POWER_TEST
+    s_ptest_adc_if = adc;
+#endif
     ESP_RETURN_ON_FALSE(adc, ESP_FAIL, TAG, "ES7210 not responding");
 
     esp_codec_dev_cfg_t out_cfg = { .dev_type = ESP_CODEC_DEV_TYPE_OUT, .codec_if = dac, .data_if = data_if };
@@ -1223,6 +1350,12 @@ static esp_err_t read_power(muse_power_t *out)
     /* BatteryStatus bit0 is DSG: clear while the charger is pushing current in. */
     out->charging = !bs.DSG;
     out->usb = usb_serial_jtag_is_connected();
+    /* The gauge's coulomb counter and thermistor, for the night recorder: mA
+     * (negative while discharging), and 0.1 K which becomes 0.1 C. Neither is
+     * shown on screen, so a gauge that returns nonsense costs nothing here -
+     * the sampler records it as-is and the bench reads the trend. */
+    out->battery_ma = (int)bq27220_get_avgcurrent(s_gauge);
+    out->battery_temp_c10 = (int)bq27220_get_temperature(s_gauge) - 2732;
     return ESP_OK;
 }
 
@@ -1310,6 +1443,719 @@ static esp_err_t power_off(void)
     esp_deep_sleep_start();
     return ESP_FAIL;
 }
+
+#if CONFIG_MUSE_POWER_TEST
+/* Diagnostic-only hooks (boards/muse_power_test_board.h). Bench console: the
+ * framework speaks UART on CONFIG_ESP_CONSOLE_UART_NUM - UART0 on this board,
+ * GPIO43/44 - so the bench attaches a 3.3 V USB-UART to the TXD/RXD pads and
+ * the sweep starts when VBUS drops. Everything below is isolated: no LVGL,
+ * no touch polling, no voice/network, no production NVS. The panel brings
+ * itself up per state through the same revision probe and init tables the
+ * shipped display_start() uses; the touch controller is never initialized
+ * and is left at its auto-sleep power-on default.
+ *
+ * Unverified here (no schematic read, so nothing is claimed): whether the
+ * I2C bus has external pull-ups (pulls_off caveat in the matrix), and which
+ * GPIOs are genuinely unconnected (no unused_hiz knob at all). */
+#include "driver/uart.h"
+#include "esp_attr.h"
+#include "esp_heap_caps.h"
+#include "esp_timer.h"
+#include "soc/gpio_struct.h"
+#include "soc/gpio_periph.h"
+#include "soc/gpio_sig_map.h"
+#include "soc/io_mux_reg.h"
+
+static bool s_ptest_lcd_on, s_ptest_pwm, s_ptest_audio_attempted, s_ptest_audio_failed;
+static bool s_ptest_audio_poisoned, s_ptest_usb_dryrun, s_ptest_amp_on;
+void muse_ptest_board_usb_dryrun(bool on) { s_ptest_usb_dryrun = on; }
+static muse_ptest_codec_regs_t s_ptest_codec_regs;
+static bool s_ptest_spk_open, s_ptest_mic_open;
+static muse_ptest_codec_t s_ptest_codec_state = MUSE_PTEST_CODEC_COLD;
+static uint16_t s_ptest_knobs;
+static bool s_ptest_i2s_parked, s_ptest_uart_parked;
+static uint64_t s_ptest_held_mask;
+#define PTEST_HOLD_MAGIC 0x50544844u
+#define PTEST_WARM_MAGIC 0x5054574du
+static RTC_NOINIT_ATTR volatile struct { uint32_t magic, inverse, warm_magic, warm_inverse; } s_ptest_hold_owner;
+_Static_assert(sizeof(s_ptest_hold_owner) == MUSE_PTEST_RTC_RECOVERY_BYTES, "recovery markers RTC budget");
+static void ptest_mark_warm(void)
+{
+    s_ptest_hold_owner.warm_inverse = ~PTEST_WARM_MAGIC;
+    s_ptest_hold_owner.warm_magic = PTEST_WARM_MAGIC;
+    __sync_synchronize(); /* before ANY constructor/partial hardware write */
+}
+bool muse_ptest_board_warm_seen(void)
+{
+    return s_ptest_hold_owner.warm_magic == PTEST_WARM_MAGIC && s_ptest_hold_owner.warm_inverse == ~PTEST_WARM_MAGIC;
+}
+bool muse_ptest_board_deep_holds_owned(void)
+{
+    return s_ptest_hold_owner.magic == PTEST_HOLD_MAGIC && s_ptest_hold_owner.inverse == ~PTEST_HOLD_MAGIC;
+}
+
+/* Only the vendor's own audio pads are ever parked: I2S MCLK/BCLK/WS/DOUT/
+ * DIN (Waveshare pin map, file header). The LCD data lines 45/46 and reset 3
+ * are strapping-connected and must stay high-Z through reset, so they are
+ * never parked or held. The I2C pair gets the pulls-off treatment only. */
+static const gpio_num_t s_ptest_i2s_pins[] = { I2S_MCLK, I2S_BCLK, I2S_WS, I2S_DOUT, I2S_DIN };
+static const gpio_num_t s_ptest_pull_pins[] = { I2C_SDA, I2C_SCL };
+/* Deep-sleep hold set: the four driven I2S outputs, the backlight pin (LEDC
+ * at duty 0 latches low) and PA_EN (amp off = low). Never LCD data/reset. */
+static const gpio_num_t s_ptest_hold_pins[] = { I2S_MCLK, I2S_BCLK, I2S_WS, I2S_DOUT, LCD_BL, PA_EN };
+typedef struct { gpio_num_t pin; gpio_io_config_t io; uint32_t matrix_out; int level; } ptest_pin_save_t;
+static ptest_pin_save_t s_ptest_i2s_save[5], s_ptest_pull_save[2];
+static size_t s_ptest_i2s_saved, s_ptest_pull_saved;
+
+static int ptest_latch(gpio_num_t pin)
+{
+    return pin < 32 ? (GPIO.out >> pin) & 1 : (GPIO.out1.val >> (pin - 32)) & 1;
+}
+static esp_err_t ptest_snapshot(const gpio_num_t *pins, size_t n, ptest_pin_save_t *saved, size_t *count)
+{
+    *count = 0;
+    for (size_t i = 0; i < n; i++) {
+        saved[i].pin = pins[i];
+        ESP_RETURN_ON_ERROR(gpio_get_io_config(pins[i], &saved[i].io), TAG, "pin snapshot");
+        saved[i].matrix_out = GPIO.func_out_sel_cfg[pins[i]].val;
+        saved[i].level = ptest_latch(pins[i]);
+        (*count)++;
+    }
+    return ESP_OK;
+}
+static esp_err_t ptest_pin(gpio_num_t pin, gpio_mode_t mode, bool down)
+{
+    if (mode & GPIO_MODE_OUTPUT) { ESP_RETURN_ON_ERROR(gpio_set_level(pin, 0), TAG, "pin low latch"); }
+    const gpio_config_t cfg = {
+        .pin_bit_mask = BIT64(pin), .mode = mode,
+        .pull_up_en = GPIO_PULLUP_DISABLE,
+        .pull_down_en = down ? GPIO_PULLDOWN_ENABLE : GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE,
+    };
+    ESP_RETURN_ON_ERROR(gpio_config(&cfg), TAG, "pin mode");
+    if (rtc_gpio_is_valid_gpio(pin)) {
+        ESP_RETURN_ON_ERROR(rtc_gpio_pullup_dis(pin), TAG, "RTC pullup off");
+        ESP_RETURN_ON_ERROR(down ? rtc_gpio_pulldown_en(pin) : rtc_gpio_pulldown_dis(pin), TAG, "RTC pulldown");
+    }
+    return ESP_OK;
+}
+static esp_err_t ptest_restore_pins(ptest_pin_save_t *saved, size_t *count)
+{
+    for (size_t i = 0; i < *count; i++) {
+        ptest_pin_save_t *s = &saved[i];
+        gpio_mode_t mode = (s->io.ie ? GPIO_MODE_INPUT : 0) | (s->io.oe ? GPIO_MODE_OUTPUT : 0);
+        if (s->io.od) { mode |= GPIO_MODE_DEF_OD; }
+        ESP_RETURN_ON_ERROR(gpio_set_level(s->pin, s->level), TAG, "restore latch");
+        const gpio_config_t cfg = { .pin_bit_mask = BIT64(s->pin), .mode = mode,
+            .pull_up_en = s->io.pu, .pull_down_en = s->io.pd, .intr_type = GPIO_INTR_DISABLE };
+        ESP_RETURN_ON_ERROR(gpio_config(&cfg), TAG, "restore pin");
+        ESP_RETURN_ON_ERROR(gpio_set_drive_capability(s->pin, s->io.drv), TAG, "restore drive");
+        /* gpio_config disconnects output matrices. Restore the exact stopped
+         * I2S (or boot-default) routing, polarity and peripheral OE selection. */
+        PIN_FUNC_SELECT(GPIO_PIN_MUX_REG[s->pin], s->io.fun_sel);
+        GPIO.func_out_sel_cfg[s->pin].val = s->matrix_out;
+        ESP_RETURN_ON_ERROR(s->io.slp_sel ? gpio_sleep_sel_en(s->pin) : gpio_sleep_sel_dis(s->pin), TAG, "restore SLP_SEL");
+        if (rtc_gpio_is_valid_gpio(s->pin)) {
+            ESP_RETURN_ON_ERROR(s->io.pu ? rtc_gpio_pullup_en(s->pin) : rtc_gpio_pullup_dis(s->pin), TAG, "restore RTC PU");
+            ESP_RETURN_ON_ERROR(s->io.pd ? rtc_gpio_pulldown_en(s->pin) : rtc_gpio_pulldown_dis(s->pin), TAG, "restore RTC PD");
+        }
+    }
+    *count = 0;
+    return ESP_OK;
+}
+
+esp_err_t muse_ptest_board_uart_restore(void)
+{
+    if (!s_ptest_uart_parked) { return ESP_OK; }
+    /* Console default pins for UART0; the header pads are TXD(43)/RXD(44). */
+    ESP_RETURN_ON_ERROR(uart_set_pin(CONFIG_ESP_CONSOLE_UART_NUM, GPIO_NUM_43, GPIO_NUM_44,
+                                   UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE), TAG, "restore UART0");
+    s_ptest_uart_parked = false;
+    s_ptest_knobs &= ~MUSE_PTEST_UART_HIZ;
+    return ESP_OK;
+}
+
+esp_err_t muse_ptest_board_release_deep_holds(void)
+{
+    /* Called on boot only when the valid journal owns these holds. Program
+     * the same low state before release, avoiding an output glitch. */
+    for (size_t i = 0; i < sizeof(s_ptest_hold_pins) / sizeof(s_ptest_hold_pins[0]); i++) {
+        gpio_num_t pin = s_ptest_hold_pins[i];
+        ESP_RETURN_ON_ERROR(ptest_pin(pin, GPIO_MODE_OUTPUT, false), TAG, "held pin low");
+        ESP_RETURN_ON_ERROR(gpio_hold_dis(pin), TAG, "release held pin");
+        /* Resting config: I2S pads float (no driver owns them before audio
+         * init); amp and backlight stay driven low, as production's
+         * power_off() leaves the amp. */
+        if (pin == LCD_BL || pin == PA_EN) {
+            ESP_RETURN_ON_ERROR(ptest_pin(pin, GPIO_MODE_OUTPUT, false), TAG, "safe low");
+        } else {
+            ESP_RETURN_ON_ERROR(ptest_pin(pin, GPIO_MODE_DISABLE, false), TAG, "released pin safe hiz");
+        }
+    }
+    gpio_deep_sleep_hold_dis();
+    __sync_synchronize();
+    s_ptest_hold_owner.magic = 0; /* clear ownership only after every release */
+    s_ptest_hold_owner.inverse = 0;
+    s_ptest_held_mask = 0;
+    s_ptest_knobs &= ~MUSE_PTEST_GPIO_HOLD;
+    return ESP_OK;
+}
+
+static esp_err_t ptest_revert_knobs(void)
+{
+    esp_sleep_enable_gpio_switch(false);
+    if (s_ptest_held_mask || muse_ptest_board_deep_holds_owned()) { ESP_RETURN_ON_ERROR(muse_ptest_board_release_deep_holds(), TAG, "release own holds"); }
+    ESP_RETURN_ON_ERROR(muse_ptest_board_uart_restore(), TAG, "UART unpark");
+    ESP_RETURN_ON_ERROR(ptest_restore_pins(s_ptest_i2s_save, &s_ptest_i2s_saved), TAG, "I2S unpark");
+    s_ptest_i2s_parked = false;
+    ESP_RETURN_ON_ERROR(ptest_restore_pins(s_ptest_pull_save, &s_ptest_pull_saved), TAG, "pull restore");
+    s_ptest_knobs = 0;
+    return ESP_OK;
+}
+
+static esp_err_t ptest_apply_knobs(uint16_t knobs)
+{
+    /* This board implements no RGB LED knob and no unused-pad knob (nothing
+     * verified unconnected); reject rather than silently ignore. */
+    const uint16_t known = MUSE_PTEST_I2S_LOW | MUSE_PTEST_I2S_HIZ | MUSE_PTEST_UART_HIZ |
+                           MUSE_PTEST_PULLS_OFF | MUSE_PTEST_GPIO_ISOLATE | MUSE_PTEST_GPIO_HOLD;
+    if (knobs & ~known) { return ESP_ERR_INVALID_ARG; }
+    if ((knobs & (MUSE_PTEST_I2S_LOW | MUSE_PTEST_I2S_HIZ)) == (MUSE_PTEST_I2S_LOW | MUSE_PTEST_I2S_HIZ)) { return ESP_ERR_INVALID_ARG; }
+    if (knobs & (MUSE_PTEST_I2S_LOW | MUSE_PTEST_I2S_HIZ)) {
+        ESP_RETURN_ON_FALSE(!s_ptest_spk_open && !s_ptest_mic_open, ESP_ERR_INVALID_STATE, TAG, "park open codecs");
+        ESP_RETURN_ON_ERROR(ptest_snapshot(s_ptest_i2s_pins, 5, s_ptest_i2s_save, &s_ptest_i2s_saved), TAG, "save I2S");
+        s_ptest_i2s_parked = true;
+        for (size_t i = 0; i < 5; i++) {
+            bool low = (knobs & MUSE_PTEST_I2S_LOW) != 0;
+            ESP_RETURN_ON_ERROR(ptest_pin(s_ptest_i2s_pins[i], !low ? GPIO_MODE_DISABLE : i == 4 ? GPIO_MODE_INPUT : GPIO_MODE_OUTPUT, low && i == 4), TAG, "park I2S");
+        }
+        s_ptest_knobs |= knobs & (MUSE_PTEST_I2S_LOW | MUSE_PTEST_I2S_HIZ);
+    }
+    if (knobs & MUSE_PTEST_UART_HIZ) {
+        muse_ptest_readback_t p = {0};
+        ESP_RETURN_ON_ERROR(muse_ptest_board_power(&p), TAG, "park UART VBUS");
+        ESP_RETURN_ON_FALSE(!p.usb || s_ptest_usb_dryrun, ESP_ERR_INVALID_STATE, TAG, "UART on USB");
+        /* uart_write_bytes can return with a FIFO tail still on the wire. */
+        ESP_RETURN_ON_ERROR(uart_wait_tx_done(CONFIG_ESP_CONSOLE_UART_NUM, pdMS_TO_TICKS(1000)), TAG, "UART TX drain before parking");
+        s_ptest_uart_parked = true; /* publish before either pin changes */
+        ESP_RETURN_ON_ERROR(ptest_pin(GPIO_NUM_43, GPIO_MODE_DISABLE, false), TAG, "UART TX hiz");
+        ESP_RETURN_ON_ERROR(ptest_pin(GPIO_NUM_44, GPIO_MODE_DISABLE, false), TAG, "UART RX hiz");
+        s_ptest_knobs |= MUSE_PTEST_UART_HIZ;
+    }
+    if (knobs & MUSE_PTEST_PULLS_OFF) {
+        ESP_RETURN_ON_ERROR(ptest_snapshot(s_ptest_pull_pins, 2, s_ptest_pull_save, &s_ptest_pull_saved), TAG, "save pulls");
+        for (size_t i = 0; i < 2; i++) {
+            gpio_num_t pin = s_ptest_pull_pins[i];
+            ESP_RETURN_ON_ERROR(gpio_pullup_dis(pin), TAG, "digital PU off");
+            ESP_RETURN_ON_ERROR(gpio_pulldown_dis(pin), TAG, "digital PD off");
+            if (rtc_gpio_is_valid_gpio(pin)) {
+                ESP_RETURN_ON_ERROR(rtc_gpio_pullup_dis(pin), TAG, "RTC PU off");
+                ESP_RETURN_ON_ERROR(rtc_gpio_pulldown_dis(pin), TAG, "RTC PD off");
+            }
+        }
+        s_ptest_knobs |= MUSE_PTEST_PULLS_OFF;
+    }
+    if (knobs & MUSE_PTEST_GPIO_ISOLATE) {
+        esp_sleep_config_gpio_isolate();
+        esp_sleep_enable_gpio_switch(true);
+        /* Exempt only pads this firmware deliberately keeps latched in
+         * sleep: the parked I2S-low outputs, the backlight pin (LEDC duty 0
+         * latches low), the amp enable (low) and the panel reset (high, so
+         * SLPIN survives). Never the LCD data/strapping pads, never MSPI. */
+        const gpio_num_t keep[] = { I2S_MCLK, I2S_BCLK, I2S_WS, I2S_DOUT, LCD_BL, PA_EN, LCD_RST };
+        for (size_t i = 0; i < sizeof(keep) / sizeof(keep[0]); i++) {
+            ESP_RETURN_ON_ERROR(gpio_sleep_sel_dis(keep[i]), TAG, "kept latch in sleep");
+        }
+        if (knobs & MUSE_PTEST_I2S_LOW) {
+            ESP_RETURN_ON_ERROR(gpio_sleep_set_direction(I2S_DIN, GPIO_MODE_INPUT), TAG, "DIN sleep input");
+            ESP_RETURN_ON_ERROR(gpio_sleep_set_pull_mode(I2S_DIN, GPIO_PULLDOWN_ONLY), TAG, "DIN sleep pulldown");
+        }
+        s_ptest_knobs |= MUSE_PTEST_GPIO_ISOLATE;
+    }
+    return ESP_OK;
+}
+
+esp_err_t muse_ptest_board_prepare_deep(bool held)
+{
+    if (!held) { return ESP_OK; }
+    ESP_RETURN_ON_FALSE(s_ptest_knobs & MUSE_PTEST_I2S_LOW, ESP_ERR_INVALID_STATE, TAG, "deep hold requires low pins");
+    /* Independent, tiny ownership bank survives a torn large run journal.
+     * Claim every pad before acquiring any: releasing an unheld owned pad
+     * is safe, missing ownership after acquisition is not. */
+    ptest_mark_warm(); /* ownership recovery may outlive the large warm journal */
+    s_ptest_hold_owner.inverse = ~PTEST_HOLD_MAGIC;
+    s_ptest_hold_owner.magic = PTEST_HOLD_MAGIC;
+    __sync_synchronize();
+    for (size_t i = 0; i < sizeof(s_ptest_hold_pins) / sizeof(s_ptest_hold_pins[0]); i++) {
+        gpio_num_t pin = s_ptest_hold_pins[i];
+        /* Holding a pad that is not latched low would glitch whatever it
+         * drives; the backlight is LEDC-driven, so ask the peripheral. */
+        bool low = pin == LCD_BL ? !s_ptest_pwm || ledc_get_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0) == 0
+                                 : ptest_latch(pin) == 0;
+        ESP_RETURN_ON_FALSE(low, ESP_FAIL, TAG, "held pad not low");
+        ESP_RETURN_ON_ERROR(gpio_hold_en(pin), TAG, "deep hold low");
+        s_ptest_held_mask |= BIT64(pin);
+    }
+    gpio_deep_sleep_hold_en();
+    s_ptest_knobs |= MUSE_PTEST_GPIO_HOLD;
+    return ESP_OK;
+}
+
+unsigned muse_ptest_board_codec_history(void) { return s_ptest_audio_attempted && s_ptest_codec_state == MUSE_PTEST_CODEC_COLD ? MUSE_PTEST_CODEC_INITIALIZED : s_ptest_codec_state; }
+void muse_ptest_board_restore_codec_history(unsigned history)
+{
+    if (history >= MUSE_PTEST_CODEC_INITIALIZED && history <= MUSE_PTEST_CODEC_SUSPENDED) { s_ptest_codec_state = (muse_ptest_codec_t)history; }
+}
+
+static esp_codec_dev_handle_t s_ptest_spk, s_ptest_mic;
+static int s_ptest_volume, s_ptest_battery_mv, s_ptest_expected_duty;
+static uint32_t s_ptest_frames, s_ptest_adc_samples;
+static int64_t s_ptest_next_adc_us;
+static muse_ptest_load_t s_ptest_load;
+static esp_lcd_panel_handle_t s_ptest_panel;
+static esp_lcd_panel_io_handle_t s_ptest_io;
+
+static esp_err_t ptest_amp(bool on)
+{
+    /* The amp enable is this board's only switchable load. ptest owns it as
+     * a plain GPIO (audio_init hands the ES8311 a NC pa_pin under ptest). */
+    ESP_RETURN_ON_ERROR(gpio_set_level(PA_EN, on ? 1 : 0), TAG, "amp enable");
+    s_ptest_amp_on = on;
+    if (on) { vTaskDelay(pdMS_TO_TICKS(50)); } /* settle; bench value pending */
+    return ESP_OK;
+}
+
+static esp_err_t ptest_codec_read(uint8_t addr, const uint8_t *regs, size_t n, uint8_t *values, uint8_t *valid)
+{
+    i2c_master_dev_handle_t device = NULL;
+    const i2c_device_config_t cfg = { .device_address = addr, .scl_speed_hz = 400000 };
+    ESP_RETURN_ON_ERROR(i2c_master_bus_add_device(s_i2c, &cfg, &device), TAG, "codec snapshot handle");
+    esp_err_t first = ESP_OK;
+    for (size_t i = 0; i < n; i++) {
+        esp_err_t e = i2c_master_transmit_receive(device, &regs[i], 1, &values[i], 1, 50);
+        if (!e) { *valid |= (uint8_t)(1u << i); }
+        else {
+            ESP_LOGE(TAG, "codec @%02x reg %02x read error %x", addr, regs[i], (unsigned)e);
+            if (!first) { first = e; }
+        }
+    }
+    esp_err_t cleanup = i2c_master_bus_rm_device(device);
+    return first ? first : cleanup;
+}
+
+/* Evidence only, never acceptance: these bytes let the bench see what the
+ * codecs hold. No "expected" values are asserted - the ES8311/ES7210
+ * constructor-final and shutdown bytes are not vendor-verified for this
+ * board - and adc_variant stays 0 ("unknown"): the enum knows ES7243(E),
+ * not ES7210. Reads are side-effect-free whatever the map turns out to be. */
+static esp_err_t ptest_codec_snapshot(void)
+{
+    static const uint8_t dac_regs[] = { 0x00, 0x01, 0x02, 0x0d, 0x0e, 0x12, 0x14 };
+    static const uint8_t adc_regs[] = { 0x00, 0x01, 0x02, 0x03 };
+    memset(&s_ptest_codec_regs, 0, sizeof(s_ptest_codec_regs));
+    esp_err_t first = ptest_codec_read(ES8311_ADDR7, dac_regs, 7, s_ptest_codec_regs.dac, &s_ptest_codec_regs.dac_mask);
+    esp_err_t e = ptest_codec_read(ES7210_ADDR7, adc_regs, 4, s_ptest_codec_regs.adc, &s_ptest_codec_regs.adc_mask);
+    if (!first) { first = e; }
+    return first; /* values, including mismatches, are evidence, never ESP_FAIL */
+}
+
+void muse_ptest_board_codec_regs(muse_ptest_codec_regs_t *out)
+{
+    if (out) { *out = s_ptest_codec_regs; }
+}
+
+static esp_err_t ptest_audio_close(void)
+{
+    bool was_open = s_ptest_spk_open || s_ptest_mic_open;
+    bool orphaned_warm = s_ptest_codec_state >= MUSE_PTEST_CODEC_INITIALIZED && (!s_ptest_spk || !s_ptest_mic);
+    bool check_hw = was_open || s_ptest_audio_failed || orphaned_warm;
+    if (s_ptest_audio_failed) { s_ptest_audio_poisoned = true; }
+    esp_err_t first = ptest_amp(false);
+    /* Wrapper open may mark its own flags before failing. Close every owned
+     * wrapper, not only ones whose open returned success to this caller. */
+    if (s_ptest_spk) {
+        int e = esp_codec_dev_close(s_ptest_spk);
+        if (!first && e != ESP_CODEC_DEV_OK) { first = ESP_FAIL; }
+        if (e == ESP_CODEC_DEV_OK) { s_ptest_spk_open = false; }
+    }
+    if (s_ptest_mic) {
+        int e = esp_codec_dev_close(s_ptest_mic);
+        if (!first && e != ESP_CODEC_DEV_OK) { first = ESP_FAIL; }
+        if (e == ESP_CODEC_DEV_OK) { s_ptest_mic_open = false; }
+    }
+    if (!s_ptest_i2s_stopped) {
+        const i2s_chan_handle_t channels[] = { s_ptest_tx, s_ptest_rx };
+        bool stopped = true;
+        for (size_t i = 0; i < 2; i++) {
+            if (channels[i]) {
+                esp_err_t e = i2s_channel_disable(channels[i]);
+                if (e != ESP_OK && e != ESP_ERR_INVALID_STATE) {
+                    stopped = false;
+                    if (!first) { first = e; }
+                }
+            }
+        }
+        s_ptest_i2s_stopped = stopped;
+    }
+    if (first && s_ptest_codec_state >= MUSE_PTEST_CODEC_INITIALIZED) {
+        check_hw = true;
+        s_ptest_audio_poisoned = true;
+    }
+    if (check_hw) {
+        /* close() ignores low-level errors. Explicit enable(false) both checks
+         * errors and keeps the drivers' enabled flag consistent for reuse.
+         * Never do this to the intentional constructor-only initialized state. */
+        const audio_codec_if_t *codecs[] = { s_ptest_dac_if, s_ptest_adc_if };
+        for (size_t i = 0; i < 2; i++) {
+            if (codecs[i] && (!codecs[i]->enable || codecs[i]->enable(codecs[i], false) != ESP_CODEC_DEV_OK)) {
+                if (!first) { first = ESP_FAIL; }
+                s_ptest_audio_poisoned = true;
+            }
+        }
+        /* Verify by register transport only. The ES8311/ES7210 shutdown byte
+         * sequences are not vendor-verified here (sensecap had them for
+         * ES8311 + ES7243(E)), so there is no forced register suspend: the
+         * codec drivers' own disable() is the shutdown path under test. */
+        esp_err_t e = ptest_codec_snapshot();
+        if (e) {
+            s_ptest_audio_poisoned = true;
+            if (!first) { first = e; }
+        }
+        if (!first) {
+            s_ptest_codec_state = MUSE_PTEST_CODEC_SUSPENDED;
+            s_ptest_audio_failed = false;
+        }
+    }
+    return first;
+}
+
+static esp_err_t ptest_audio_initialize(void)
+{
+    ESP_RETURN_ON_FALSE(!s_ptest_audio_poisoned, ESP_ERR_INVALID_STATE, TAG, "audio lifecycle poisoned");
+    if (!s_ptest_spk || !s_ptest_mic) {
+        ESP_RETURN_ON_FALSE(!s_ptest_i2s_parked, ESP_ERR_INVALID_STATE, TAG, "I2S parked");
+        /* Do not retry a partially-created shared I2S bus on later commands. */
+        ESP_RETURN_ON_FALSE(!s_ptest_audio_attempted, ESP_ERR_INVALID_STATE, TAG, "partial audio init");
+        s_ptest_audio_attempted = s_ptest_audio_failed = true;
+        ptest_mark_warm(); /* sticky across retained resets, even torn run journal */
+        ESP_RETURN_ON_ERROR(audio_init(&s_ptest_spk, &s_ptest_mic), TAG, "diagnostic codecs");
+        s_ptest_codec_state = MUSE_PTEST_CODEC_INITIALIZED;
+        s_ptest_audio_failed = false;
+    }
+    return ESP_OK;
+}
+
+static esp_err_t ptest_audio_open(void)
+{
+    ESP_RETURN_ON_FALSE(!s_ptest_i2s_parked, ESP_ERR_INVALID_STATE, TAG, "audio open with parked I2S");
+    ESP_RETURN_ON_ERROR(ptest_audio_initialize(), TAG, "audio initialized");
+    s_ptest_audio_failed = true; /* Includes a failure after wrapper flags change. */
+    s_ptest_i2s_stopped = false; /* wrapper open may enable DMA before failing */
+    esp_codec_dev_sample_info_t fs = { .sample_rate = 16000, .channel = 2, .bits_per_sample = 16 };
+    if (!s_ptest_spk_open) {
+        s_ptest_spk_open = true;
+        ESP_RETURN_ON_FALSE(esp_codec_dev_open(s_ptest_spk, &fs) == ESP_CODEC_DEV_OK, ESP_FAIL, TAG, "speaker open");
+    }
+    if (!s_ptest_mic_open) {
+        s_ptest_mic_open = true;
+        ESP_RETURN_ON_FALSE(esp_codec_dev_open(s_ptest_mic, &fs) == ESP_CODEC_DEV_OK, ESP_FAIL, TAG, "mic open");
+    }
+    ESP_RETURN_ON_FALSE(esp_codec_dev_set_out_vol(s_ptest_spk, 25) == ESP_CODEC_DEV_OK, ESP_FAIL, TAG, "bounded volume");
+    s_ptest_volume = 25;
+    ESP_RETURN_ON_FALSE(esp_codec_dev_set_in_gain(s_ptest_mic, 0.0f) == ESP_CODEC_DEV_OK, ESP_FAIL, TAG, "mic gain");
+    /* Opening a codec may skip re-enabling an already-open shared data IF.
+     * Ensure clocks, but accept already-enabled as the documented state. */
+    s_ptest_i2s_stopped = false; /* enable may partially succeed */
+    const i2s_chan_handle_t channels[] = { s_ptest_tx, s_ptest_rx };
+    for (size_t i = 0; i < 2; i++) {
+        esp_err_t e = i2s_channel_enable(channels[i]);
+        ESP_RETURN_ON_FALSE(e == ESP_OK || e == ESP_ERR_INVALID_STATE, e, TAG, "I2S enable");
+    }
+    s_ptest_audio_failed = false;
+    return ESP_OK;
+}
+
+static esp_err_t ptest_lcd(int percent)
+{
+    if (!s_ptest_lcd_on) {
+        if (!s_ptest_pwm) {
+            const ledc_timer_config_t timer = {
+                .speed_mode = LEDC_LOW_SPEED_MODE, .duty_resolution = LEDC_TIMER_10_BIT,
+                .timer_num = LEDC_TIMER_0, .freq_hz = 20000, .clk_cfg = LEDC_USE_XTAL_CLK,
+            };
+            ESP_RETURN_ON_ERROR(ledc_timer_config(&timer), TAG, "diagnostic PWM");
+            s_ptest_pwm = true;
+        }
+        /* Reset by hand first, then the same revision probe and init table
+         * selection display_start() uses: two ST77916 panel revisions exist
+         * and neither matches the component's built-in default. */
+        const gpio_config_t rst_cfg = {
+            .pin_bit_mask = 1ULL << LCD_RST, .mode = GPIO_MODE_OUTPUT,
+            .pull_up_en = GPIO_PULLUP_DISABLE, .pull_down_en = GPIO_PULLDOWN_DISABLE,
+            .intr_type = GPIO_INTR_DISABLE,
+        };
+        ESP_RETURN_ON_ERROR(gpio_config(&rst_cfg), TAG, "panel reset line");
+        ESP_RETURN_ON_ERROR(gpio_set_level(LCD_RST, 0), TAG, "panel reset low");
+        vTaskDelay(pdMS_TO_TICKS(10));
+        ESP_RETURN_ON_ERROR(gpio_set_level(LCD_RST, 1), TAG, "panel reset high");
+        vTaskDelay(pdMS_TO_TICKS(10));
+        const spi_bus_config_t buscfg = ST77916_PANEL_BUS_QSPI_CONFIG(
+            LCD_PCLK, LCD_D0, LCD_D1, LCD_D2, LCD_D3, LCD_CHUNK_BYTES);
+        ESP_RETURN_ON_ERROR(spi_bus_initialize(LCD_HOST, &buscfg, SPI_DMA_CH_AUTO), TAG, "diagnostic LCD SPI");
+        esp_lcd_panel_io_handle_t probe_io;
+        esp_lcd_panel_io_spi_config_t io_config = ST77916_PANEL_IO_QSPI_CONFIG(LCD_CS, NULL, NULL);
+        io_config.pclk_hz = ST77916_PROBE_HZ;
+        ESP_RETURN_ON_ERROR(esp_lcd_new_panel_io_spi((esp_lcd_spi_bus_handle_t)LCD_HOST, &io_config, &probe_io), TAG, "probe IO");
+        uint8_t version[4] = { 0 };
+        const int probe_cmd = ((ST77916_REG_VERSION & 0xff) << 8) | (ST77916_OPCODE_READ_CMD << 24);
+        esp_err_t probe_err = esp_lcd_panel_io_rx_param(probe_io, probe_cmd, version, sizeof(version));
+        const st77916_lcd_init_cmd_t *init_cmds = s_init_version_2;
+        size_t init_cmds_size = sizeof(s_init_version_2) / sizeof(s_init_version_2[0]);
+        if (probe_err == ESP_OK && version[0] == 0x00 && version[1] == 0x7F &&
+            version[2] == 0x7F && version[3] == 0x7F) {
+            init_cmds = s_init_version_1;
+            init_cmds_size = sizeof(s_init_version_1) / sizeof(s_init_version_1[0]);
+        }
+        ESP_RETURN_ON_ERROR(esp_lcd_panel_io_del(probe_io), TAG, "probe IO del");
+        io_config.pclk_hz = 80 * 1000 * 1000;
+        ESP_RETURN_ON_ERROR(esp_lcd_new_panel_io_spi((esp_lcd_spi_bus_handle_t)LCD_HOST, &io_config, &s_ptest_io), TAG, "diagnostic LCD IO");
+        const st77916_vendor_config_t vendor_config = {
+            .init_cmds = init_cmds,
+            .init_cmds_size = init_cmds_size,
+            .flags = { .use_qspi_interface = 1 },
+        };
+        const esp_lcd_panel_dev_config_t panel_cfg = {
+            .reset_gpio_num = LCD_RST,
+            .rgb_ele_order = LCD_RGB_ELEMENT_ORDER_RGB,
+            .bits_per_pixel = 16,
+            .vendor_config = (void *)&vendor_config,
+        };
+        ESP_RETURN_ON_ERROR(esp_lcd_new_panel_st77916(s_ptest_io, &panel_cfg, &s_ptest_panel), TAG, "diagnostic panel");
+        s_ptest_lcd_on = true; /* cleanup must run even if setup fails below */
+        ESP_RETURN_ON_ERROR(esp_lcd_panel_reset(s_ptest_panel), TAG, "panel reset");
+        ESP_RETURN_ON_ERROR(esp_lcd_panel_init(s_ptest_panel), TAG, "panel init");
+        /* Clear GRAM to black through the driver's blocking draw path, the
+         * same way the shipped bring-up does: no LVGL, no color-done
+         * callback, backpressure from the queue itself. */
+        uint8_t *black = heap_caps_calloc(1, LCD_CHUNK_BYTES, MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
+        ESP_RETURN_ON_FALSE(black, ESP_ERR_NO_MEM, TAG, "black stripe");
+        esp_err_t e = ESP_OK;
+        for (int y = 0; y < LCD_V_RES; y += 8) {
+            e = esp_lcd_panel_draw_bitmap(s_ptest_panel, 0, y, LCD_H_RES,
+                                          y + 8 < LCD_V_RES ? y + 8 : LCD_V_RES, black);
+            if (e) { break; }
+        }
+        /* A draw error may mean a DMA buffer is still in flight. Keep it
+         * alive (bounded diagnostic-only leak) rather than risk a UAF. */
+        if (!e) { free(black); }
+        ESP_RETURN_ON_ERROR(e, TAG, "black draw");
+        ESP_RETURN_ON_ERROR(esp_lcd_panel_disp_on_off(s_ptest_panel, true), TAG, "panel display on");
+    }
+    /* Rebind the backlight channel every time: GPIO-mode parking disconnects
+     * the LEDC matrix. */
+    const ledc_channel_config_t ch = {
+        .gpio_num = LCD_BL, .speed_mode = LEDC_LOW_SPEED_MODE,
+        .channel = LEDC_CHANNEL_0, .timer_sel = LEDC_TIMER_0,
+        .duty = percent * 1023 / 100,
+    };
+    return ledc_channel_config(&ch);
+}
+
+static esp_err_t ptest_lcd_off(void)
+{
+    if (s_ptest_pwm) {
+        ESP_RETURN_ON_ERROR(ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, 0), TAG, "backlight zero");
+        ESP_RETURN_ON_ERROR(ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0), TAG, "backlight update");
+    }
+    if (s_ptest_lcd_on && s_ptest_panel) {
+        ESP_RETURN_ON_ERROR(esp_lcd_panel_disp_on_off(s_ptest_panel, false), TAG, "panel off");
+        /* Raw SLPIN on the QSPI command path; esp_lcd_st77916 2.x has no
+         * base.disp_sleep, so the raw command is the only sleep (the note in
+         * send_panel_sleep() above documents the same). */
+        ESP_RETURN_ON_ERROR(esp_lcd_panel_io_tx_param(s_ptest_io, (0x02u << 24) | (0x10u << 8), NULL, 0), TAG, "panel sleep");
+        vTaskDelay(pdMS_TO_TICKS(120));
+    }
+    /* No LCD rail exists on this board: SLPIN + backlight 0 is the honest
+     * "panel off" this hardware can do. */
+    return ESP_OK;
+}
+
+esp_err_t muse_ptest_board_init(void)
+{
+    ESP_RETURN_ON_ERROR(init(), TAG, "board init");
+    /* The amp enable becomes a plain ptest output here (audio_init hands the
+     * ES8311 a NC pa_pin under ptest), low from the first moment. */
+    ESP_RETURN_ON_ERROR(ptest_pin(PA_EN, GPIO_MODE_OUTPUT, false), TAG, "amp enable low");
+    /* The CST816S is never brought up in the diagnostic. Put its DisAutoSleep
+     * in the power-on default explicitly, the same value production writes
+     * when the screen sleeps, so the controller idles between touches in
+     * every state instead of scanning. Best effort: a missing touch panel
+     * must not fail the diagnostic's init. */
+    i2c_master_dev_handle_t tp = NULL;
+    const i2c_device_config_t tp_cfg = { .device_address = TP_ADDR, .scl_speed_hz = 400000 };
+    if (i2c_master_bus_add_device(s_i2c, &tp_cfg, &tp) == ESP_OK) {
+        const uint8_t cmd[2] = { 0xFE, 0x00 }; /* DisAutoSleep: allow auto sleep */
+        if (i2c_master_transmit(tp, cmd, sizeof(cmd), 50) != ESP_OK) {
+            ESP_LOGW(TAG, "ptest: touch DisAutoSleep write failed (panel absent?)");
+        }
+        i2c_master_bus_rm_device(tp);
+    }
+    return ESP_OK;
+}
+
+esp_err_t muse_ptest_board_power(muse_ptest_readback_t *out)
+{
+    if (!out || s_i2c == NULL) { return ESP_ERR_INVALID_STATE; }
+    out->usb = usb_serial_jtag_is_connected();
+    out->input = out->output = out->direction = 0; /* no expander on this board */
+    /* Charging: the gauge's DSG bit is clear while a charger pushes current
+     * in - the same reading read_power() uses. Gauge absent: not charging. */
+    out->charging = false;
+    battery_status_t bs = { 0 };
+    if (s_gauge != NULL && bq27220_get_battery_status(s_gauge, &bs) == ESP_OK) { out->charging = !bs.DSG; }
+    return ESP_OK;
+}
+
+esp_err_t muse_ptest_board_apply(const muse_ptest_state_t *state)
+{
+    /* Headless board: UART0 pads are not broken out, so ESP_LOG never reaches
+     * the host. Report the failing step as 0x4000|n in apply_err instead. */
+#define APPLY_STEP(n) do { s_ptest_apply_step = (n); } while (0)
+#define APPLY_FAIL(n, e) do { s_ptest_apply_step = (n); return (esp_err_t)(0x4000 | (n)); } while (0)
+    APPLY_STEP(1);
+    if (!state || s_i2c == NULL) { APPLY_FAIL(1, ESP_ERR_INVALID_STATE); }
+    if (state->load == MUSE_PTEST_UNSUPPORTED) { return ESP_ERR_NOT_SUPPORTED; }
+    bool audio = state->load == MUSE_PTEST_CODECS_IDLE || state->load == MUSE_PTEST_MIC || state->load == MUSE_PTEST_SINE;
+    APPLY_STEP(2);
+    if (audio && (state->knobs & (MUSE_PTEST_I2S_LOW | MUSE_PTEST_I2S_HIZ))) { APPLY_FAIL(2, ESP_ERR_INVALID_STATE); }
+    APPLY_STEP(3);
+    if (ptest_revert_knobs() != ESP_OK) { APPLY_FAIL(3, ESP_ERR_INVALID_STATE); }
+    APPLY_STEP(4);
+    if (state->codec_policy == MUSE_PTEST_CODEC_COLD && (s_ptest_audio_attempted || s_ptest_codec_state != MUSE_PTEST_CODEC_COLD)) { APPLY_FAIL(4, ESP_ERR_INVALID_STATE); }
+    APPLY_STEP(5);
+    if (state->codec_policy == MUSE_PTEST_CODEC_INITIALIZED && s_ptest_codec_state == MUSE_PTEST_CODEC_SUSPENDED) { APPLY_FAIL(5, ESP_ERR_INVALID_STATE); }
+    s_ptest_load = state->load;
+    s_ptest_frames = s_ptest_adc_samples = 0;
+    s_ptest_battery_mv = 0;
+    s_ptest_next_adc_us = 0;
+    /* Amp off before closing/reprogramming codecs, no power-up pop. */
+    APPLY_STEP(6);
+    if (ptest_amp(false) != ESP_OK) { APPLY_FAIL(6, ESP_ERR_INVALID_STATE); }
+    if (state->codec_policy == MUSE_PTEST_CODEC_INITIALIZED) {
+        /* Constructors write ES8311/ES7210 setup. No esp_codec_dev_open:
+         * wrapper close is a no-op, but stop I2S DMA. */
+        APPLY_STEP(7);
+        if (ptest_audio_initialize() != ESP_OK) { APPLY_FAIL(7, ESP_ERR_INVALID_STATE); }
+        if (ptest_audio_close() != ESP_OK) { APPLY_FAIL(7, ESP_ERR_INVALID_STATE); }
+    } else if (state->codec_policy == MUSE_PTEST_CODEC_SUSPENDED) {
+        APPLY_STEP(8);
+        if (ptest_audio_open() != ESP_OK) { APPLY_FAIL(8, ESP_ERR_INVALID_STATE); }
+        if (ptest_audio_close() != ESP_OK) { APPLY_FAIL(8, ESP_ERR_INVALID_STATE); }
+    } else {
+        APPLY_STEP(9);
+        if ((audio ? ptest_audio_open() : ptest_audio_close()) != ESP_OK) { APPLY_FAIL(9, ESP_ERR_INVALID_STATE); }
+    }
+    APPLY_STEP(10);
+    if ((state->backlight_pct < 0 ? ptest_lcd_off() : ptest_lcd(state->backlight_pct)) != ESP_OK) { APPLY_FAIL(10, ESP_ERR_INVALID_STATE); }
+    s_ptest_expected_duty = state->backlight_pct < 0 ? 0 : state->backlight_pct * 1023 / 100;
+    APPLY_STEP(11);
+    if (state->amplifier && !audio) { APPLY_FAIL(11, ESP_ERR_INVALID_STATE); }
+    if (state->amplifier) {
+        APPLY_STEP(12);
+        if (ptest_amp(true) != ESP_OK) { APPLY_FAIL(12, ESP_ERR_INVALID_STATE); }
+    }
+    APPLY_STEP(13);
+    if (ptest_apply_knobs(state->knobs) != ESP_OK) { APPLY_FAIL(13, ESP_ERR_INVALID_STATE); }
+    s_ptest_apply_step = 0;
+    return ESP_OK;
+#undef APPLY_STEP
+#undef APPLY_FAIL
+}
+
+static esp_err_t ptest_check_knobs(void)
+{
+    gpio_io_config_t io;
+    if (s_ptest_knobs & (MUSE_PTEST_I2S_LOW | MUSE_PTEST_I2S_HIZ)) {
+        for (size_t i = 0; i < 5; i++) {
+            ESP_RETURN_ON_ERROR(gpio_get_io_config(s_ptest_i2s_pins[i], &io), TAG, "I2S pin readback");
+            bool low = (s_ptest_knobs & MUSE_PTEST_I2S_LOW) != 0;
+            bool match = low ? i == 4 ? io.ie && !io.oe && io.pd && !io.pu : io.oe && !io.pu && !io.pd && io.sig_out == SIG_GPIO_OUT_IDX && !ptest_latch(s_ptest_i2s_pins[i]) : !io.ie && !io.oe && !io.pu && !io.pd;
+            ESP_RETURN_ON_FALSE(match, ESP_FAIL, TAG, "I2S parking mismatch");
+        }
+    }
+    if (s_ptest_knobs & MUSE_PTEST_UART_HIZ) {
+        const gpio_num_t pins[] = { GPIO_NUM_43, GPIO_NUM_44 };
+        for (size_t i = 0; i < 2; i++) {
+            ESP_RETURN_ON_ERROR(gpio_get_io_config(pins[i], &io), TAG, "UART pin readback");
+            ESP_RETURN_ON_FALSE(!io.ie && !io.oe && !io.pu && !io.pd, ESP_FAIL, TAG, "UART parking mismatch");
+        }
+    }
+    if (s_ptest_knobs & MUSE_PTEST_PULLS_OFF) {
+        for (size_t i = 0; i < 2; i++) {
+            ESP_RETURN_ON_ERROR(gpio_get_io_config(s_ptest_pull_pins[i], &io), TAG, "pull readback");
+            ESP_RETURN_ON_FALSE(!io.pu && !io.pd, ESP_FAIL, TAG, "pull mismatch");
+        }
+    }
+    if (s_ptest_knobs & MUSE_PTEST_GPIO_ISOLATE) {
+        ESP_RETURN_ON_ERROR(gpio_get_io_config(I2C_SDA, &io), TAG, "sleep switch readback");
+        ESP_RETURN_ON_FALSE(io.slp_sel, ESP_FAIL, TAG, "sleep switch mismatch");
+    }
+    return ESP_OK;
+}
+
+esp_err_t muse_ptest_board_readback(muse_ptest_readback_t *out)
+{
+    if (!out) { return ESP_ERR_INVALID_ARG; }
+    memset(&s_ptest_codec_regs, 0, sizeof(s_ptest_codec_regs));
+    out->codec_state = s_ptest_codec_state;
+    if (muse_ptest_board_power(out) != ESP_OK) { return (esp_err_t)(0x4200 | 1); }
+    out->backlight_duty = s_ptest_pwm ? (int)ledc_get_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0) : -1;
+    if (s_ptest_pwm && out->backlight_duty != s_ptest_expected_duty) { return (esp_err_t)(0x4200 | 2); }
+    out->codecs_open = s_ptest_spk_open && s_ptest_mic_open;
+    out->configured_volume = s_ptest_volume;
+    out->battery_mv = s_ptest_battery_mv;
+    out->io_frames = s_ptest_frames;
+    out->adc_samples = s_ptest_adc_samples;
+    if (ptest_check_knobs() != ESP_OK) { return (esp_err_t)(0x4200 | 3); }
+    out->knobs_applied = s_ptest_knobs;
+    out->codec_state = s_ptest_codec_state;
+    if (ptest_codec_snapshot() != ESP_OK) { return (esp_err_t)(0x4200 | 4); }
+    return ESP_OK;
+}
+
+esp_err_t muse_ptest_board_service(muse_ptest_load_t load)
+{
+    if (load != s_ptest_load) { return ESP_ERR_INVALID_STATE; }
+    if (load == MUSE_PTEST_MIC || load == MUSE_PTEST_SINE) {
+        /* A 10ms chunk, bounded 100ms DMA timeout. No voice/network task and
+         * no buffers saved. Sine is -18dBFS PEAK, not RMS, on both slots. */
+        int16_t pcm[160 * 2];
+        size_t transferred = 0;
+        esp_err_t e;
+        if (load == MUSE_PTEST_MIC) {
+            e = i2s_channel_read(s_ptest_rx, pcm, sizeof(pcm), &transferred, 100);
+        } else {
+            /* 16 samples/period at 16kHz. Fixed table avoids per-sample libm
+             * load: +/-4125 ~= 32767 * 10^(-18/20). */
+            static const int16_t tone[16] = { 0,1579,2917,3811,4125,3811,2917,1579,0,-1579,-2917,-3811,-4125,-3811,-2917,-1579 };
+            for (size_t i = 0; i < 160; i++) { pcm[2 * i] = pcm[2 * i + 1] = tone[i % 16]; }
+            e = i2s_channel_write(s_ptest_tx, pcm, sizeof(pcm), &transferred, 100);
+        }
+        if (e) { return e; }
+        if (transferred != sizeof(pcm)) { return ESP_FAIL; }
+        s_ptest_frames += transferred / (2 * sizeof(int16_t));
+    } else if (load == MUSE_PTEST_ADC_SAMPLE && esp_timer_get_time() >= s_ptest_next_adc_us) {
+        /* No ADC divider rail on this board: sampling is the BQ27220 gauge
+         * read the production firmware uses (read_power). */
+        muse_power_t p = {0};
+        ESP_RETURN_ON_ERROR(read_power(&p), TAG, "gauge sample");
+        s_ptest_battery_mv = p.battery_mv;
+        s_ptest_adc_samples += 8;
+        s_ptest_next_adc_us = esp_timer_get_time() + 1000000;
+    }
+    return ESP_OK;
+}
+#endif
 
 static const muse_board_t s_board = {
     .name = "Waveshare ESP32-S3-Touch-LCD-1.85B",

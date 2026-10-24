@@ -78,7 +78,7 @@ static lv_obj_t *s_home_wifi, *s_home_hatch, *s_home_ble, *s_home_sound, *s_home
     *s_home_update, *s_home_alarm;
 
 /* Alarm page. */
-static lv_obj_t *s_alarm_sw, *s_alarm_hour_val, *s_alarm_min_val, *s_alarm_hint;
+static lv_obj_t *s_alarm_sw, *s_alarm_hour_val, *s_alarm_min_val, *s_alarm_days_val, *s_alarm_hint;
 
 /* Wi-Fi page. */
 static lv_obj_t *s_wifi_sw, *s_wifi_status, *s_wifi_saved, *s_wifi_scan_btn, *s_wifi_scan_lbl, *s_wifi_list;
@@ -1180,7 +1180,39 @@ static void on_alarm_hour(lv_event_t *e)
 
 static void on_alarm_min(lv_event_t *e)
 {
-    muse_settings_set_alarm_min((muse_settings_alarm_min() + 5 * tap_direction(e) + 60) % 60);
+    /* Ten minutes a tap, and 55 + 10 is 0: a plain modulo would land on 5 and
+     * send the row backwards past the hour (docs/20261023-待办.md §2.3). */
+    const int m = muse_settings_alarm_min();
+    muse_settings_set_alarm_min(tap_direction(e) > 0 ? (m + 10 >= 60 ? 0 : m + 10)
+                                                     : (m - 10 < 0 ? 50 : m - 10));
+}
+
+/* What the DAYS row steps through (docs/20261023-待办.md §2.1, four periods as
+ * the user settled it): once, every day, workdays, weekends. Bit0 is Sunday,
+ * like tm_wday, so workdays is Mon-Fri (0x3E) and weekends Sun+Sat (0x41). */
+static const char *const DAY_LABELS[] = {"Once", "Every day", "Workdays", "Weekends"};
+static const uint8_t DAY_MASKS[] = {0x00, 0x7F, 0x3E, 0x41};
+
+#define DAY_CHOICES ((int)(sizeof(DAY_MASKS) / sizeof(DAY_MASKS[0])))
+
+static int days_index(int days)
+{
+    for (int i = 0; i < DAY_CHOICES; i++) {
+        if (DAY_MASKS[i] == days) {
+            return i;
+        }
+    }
+    return -1;   /* a mask from a hand-edited NVS, or a combination no row offers */
+}
+
+static void on_alarm_days(lv_event_t *e)
+{
+    const int cur = days_index(muse_settings_alarm_days());
+    /* An unknown mask steps to the first entry rather than pretending to be one
+     * of them, so the row always ends up on something it can show. */
+    const int idx = cur < 0 ? 0
+                            : (cur + (tap_direction(e) > 0 ? 1 : DAY_CHOICES - 1)) % DAY_CHOICES;
+    muse_settings_set_alarm_days(DAY_MASKS[idx]);
 }
 
 static void build_alarm_page(lv_obj_t *tile)
@@ -1190,10 +1222,11 @@ static void build_alarm_page(lv_obj_t *tile)
     s_alarm_sw = switch_row(list, "Alarm", muse_settings_alarm_on(), on_alarm_sw);
     row(list, NULL, "Hour", &s_alarm_hour_val, on_alarm_hour, NULL);
     row(list, NULL, "Minute", &s_alarm_min_val, on_alarm_min, NULL);
+    row(list, NULL, "Days", &s_alarm_days_val, on_alarm_days, NULL);
     s_alarm_hint = note(list, "");
     note(list, "Tap the left half of a row to go down, the right to go up. The clock chip keeps the "
-               "time, so the alarm rings with the screen off, and after it is stopped it is set for "
-               "the same time tomorrow.");
+               "time and knows the weekday, so Days picks once, every day, workdays or weekends, and "
+               "the alarm rings with the screen off.");
 }
 
 static void tick_alarm(void)
@@ -1203,6 +1236,8 @@ static void tick_alarm(void)
     }
     set_val(s_alarm_hour_val, "%02d", muse_settings_alarm_hour());
     set_val(s_alarm_min_val, "%02d", muse_settings_alarm_min());
+    const int di = days_index(muse_settings_alarm_days());
+    set_text(s_alarm_days_val, di < 0 ? "Custom" : DAY_LABELS[di]);
     const bool on = muse_settings_alarm_on();
     if (on != lv_obj_has_state(s_alarm_sw, LV_STATE_CHECKED)) {
         lv_obj_set_state(s_alarm_sw, LV_STATE_CHECKED, on);

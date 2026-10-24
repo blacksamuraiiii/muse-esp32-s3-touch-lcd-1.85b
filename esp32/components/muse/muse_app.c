@@ -29,6 +29,7 @@
 #include "muse_settings.h"
 #include "muse_state.h"
 #include "muse_rtc.h"
+#include "muse_telemetry.h"
 #include "muse_ui.h"
 #include "muse_voice.h"
 #include "muse_wifi.h"
@@ -78,7 +79,20 @@ void muse_app_run(const muse_board_t *board)
     /* Before the UI: adopts the RTC's time when the system clock is unset, so
      * the first frame already shows a real clock rather than a placeholder. The
      * SNTP half waits for Wi-Fi on its own. */
+#if CONFIG_MUSE_BUILD_TEST
+    /* Say what this image is, in the log a night's recording is read against:
+     * Test carries the telemetry sampler and the bench console commands, a
+     * Release image has neither (docs/20261023-待办.md §1). */
+    ESP_LOGW(TAG, "TEST BUILD: night-telemetry sampler and bench console commands are compiled "
+                  "in; this image is not for the release channel");
+#endif
     muse_time_start();
+#if CONFIG_MUSE_TELEMETRY
+    /* Test only: mounts the FAT partition and starts the night recorder.
+     * After the clock (every line carries a timestamp) and before the input
+     * task, which writes the boot event. */
+    muse_telemetry_start();
+#endif
     muse_state_set_caption("WAKING UP...");
     ESP_ERROR_CHECK(muse_ui_start());
     ESP_LOGI(TAG, "UI built: free internal %u", (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));

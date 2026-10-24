@@ -1,0 +1,45 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Test: the test build type (docs/20261023-待办.md §1).
+#
+#   MUSE_BUILD=test tools/muse/board.sh build lcd185b
+#
+# This file is the only thing that turns it on. It is loaded last, after the
+# board overlay, so it wins. Release is the Kconfig default, so a build that
+# forgets this overlay gets a clean release image - the failure mode is "no
+# test code", never "test code in a release".
+#
+# What Test adds, and what Release must not have:
+#   - CONFIG_MUSE_TELEMETRY (the night-telemetry sampler) defaults on, and the
+#     FAT partition it writes lives in the Test partition table below
+#   - CONFIG_MUSE_POWER_TEST becomes selectable (it replaces app_main, so it is
+#     a separate build of the same overlay: add CONFIG_MUSE_POWER_TEST=y)
+#   - the diagnostic console commands (>pmdump, >telemetry.*) are compiled in
+#   - the app reports its version with a "-test" suffix
+#
+# muse_build.h and cmake/validate_config.cmake refuse a build where the build
+# type and any of those disagree, so a half-applied overlay fails instead of
+# producing a confusing image.
+
+CONFIG_MUSE_BUILD_TEST=y
+# CONFIG_MUSE_BUILD_RELEASE is not set
+
+# The telemetry partition lives only in this table. It is the one layout
+# difference from the release image, and the reason a test build is flashed
+# over USB instead of OTA.
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions_muse_test.csv"
+
+# Long file names are not needed (one fixed CSV path), so keep the FATFS
+# defaults: no LFN heap, no extra code size.
