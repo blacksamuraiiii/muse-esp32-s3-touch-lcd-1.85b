@@ -904,6 +904,9 @@ static void build_game(void)
         lv_obj_set_style_radius(b, IC_RADIUS, 0);
         lv_obj_t *img = lv_image_create(b);
         lv_image_set_src(img, hand_img(i));
+        /* The master asset is 128 px; the row is 100 px. Scale to ~80 px so
+         * the hands sit inside the button instead of overrunning it. */
+        lv_image_set_scale(img, (uint16_t)(256 * (IC_GAME_CHOICE - 20) / 128));
         lv_obj_center(img);
         lv_obj_add_event_cb(b, on_game_choice, LV_EVENT_CLICKED, (void *)(intptr_t)i);
         s_game_choices[i] = b;
@@ -919,6 +922,13 @@ static void build_game(void)
     lv_obj_set_pos(s_game_house_img, (360 - IC_GAME_RESULT * 2 - 16) / 2 + IC_GAME_RESULT + 16, 105);
     lv_obj_set_size(s_game_house_img, IC_GAME_RESULT, IC_GAME_RESULT);
     lv_obj_add_flag(s_game_house_img, LV_OBJ_FLAG_HIDDEN);
+    /* 128 px master -> 130 px reveal. The recolor set in show_game_result()
+     * tints white pixels, so its opacity must be cover or the loser would
+     * never dim. */
+    lv_image_set_scale(s_game_you_img, (uint16_t)(256 * IC_GAME_RESULT / 128));
+    lv_image_set_scale(s_game_house_img, (uint16_t)(256 * IC_GAME_RESULT / 128));
+    lv_obj_set_style_image_recolor_opa(s_game_you_img, LV_OPA_COVER, 0);
+    lv_obj_set_style_image_recolor_opa(s_game_house_img, LV_OPA_COVER, 0);
     /* Result area below the row slot. */
     s_game_chant_lbl = label(s_game_page, cjk_font(), IC_TEXT, "石头！");
     lv_obj_align(s_game_chant_lbl, LV_ALIGN_TOP_MID, 0, 240);

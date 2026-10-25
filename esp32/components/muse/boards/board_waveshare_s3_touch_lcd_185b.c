@@ -1708,7 +1708,7 @@ void muse_ptest_board_restore_codec_history(unsigned history)
 }
 
 static esp_codec_dev_handle_t s_ptest_spk, s_ptest_mic;
-static int s_ptest_volume, s_ptest_battery_mv, s_ptest_expected_duty;
+static int s_ptest_volume, s_ptest_battery_mv, s_ptest_avg_ma, s_ptest_expected_duty;
 static uint32_t s_ptest_frames, s_ptest_adc_samples;
 static int64_t s_ptest_next_adc_us;
 static muse_ptest_load_t s_ptest_load;
@@ -2037,6 +2037,7 @@ esp_err_t muse_ptest_board_apply(const muse_ptest_state_t *state)
     s_ptest_load = state->load;
     s_ptest_frames = s_ptest_adc_samples = 0;
     s_ptest_battery_mv = 0;
+    s_ptest_avg_ma = 0;
     s_ptest_next_adc_us = 0;
     /* Amp off before closing/reprogramming codecs, no power-up pop. */
     APPLY_STEP(6);
@@ -2114,6 +2115,7 @@ esp_err_t muse_ptest_board_readback(muse_ptest_readback_t *out)
     out->codecs_open = s_ptest_spk_open && s_ptest_mic_open;
     out->configured_volume = s_ptest_volume;
     out->battery_mv = s_ptest_battery_mv;
+    out->avg_ma = s_ptest_avg_ma;
     out->io_frames = s_ptest_frames;
     out->adc_samples = s_ptest_adc_samples;
     if (ptest_check_knobs() != ESP_OK) { return (esp_err_t)(0x4200 | 3); }
@@ -2150,6 +2152,11 @@ esp_err_t muse_ptest_board_service(muse_ptest_load_t load)
         muse_power_t p = {0};
         ESP_RETURN_ON_ERROR(read_power(&p), TAG, "gauge sample");
         s_ptest_battery_mv = p.battery_mv;
+        /* The same gauge read the production firmware makes: BQ27220
+         * AverageCurrent, negative while discharging. Sampling it here (the
+         * ADC_SAMPLE load) keeps every other state free of extra I2C traffic,
+         * so that load's own current is the only thing being measured. */
+        s_ptest_avg_ma = p.battery_ma;
         s_ptest_adc_samples += 8;
         s_ptest_next_adc_us = esp_timer_get_time() + 1000000;
     }
