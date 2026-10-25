@@ -901,13 +901,13 @@ static void build_main(void)
                                 IC_LIST_TOP + 2 * (IC_ROW_H + IC_ROW_GAP),
                                 "今日运势 ｜ 未抽", on_fortune_open,
                                 &s_btn_fortune_lbl);
-    /* The coin line is the page's last row (user request 2026-10-25: it sat at
-     * y = 280, only 6 px under the 今日运势 card that ends at 274). Anchoring to
-     * BOTTOM_MID keeps it clear of the cards whatever their height grows to;
-     * -22 leaves the descenders 22 px off the bezel. At that height the circle's
-     * chord is ~210 px, which the coin text fits easily. */
+    /* Coin line, the page's last row. It sat at y = 280 first (6 px under the
+     * 今日运势 card, which ends at 274 -- too tight), then pinned to the bottom
+     * (-22) which read as too low. 302 splits the gap: 28 px below the card,
+     * 42 px above the bezel, and the circle's chord there is ~264 px, well over
+     * the width of "金币 100/100". */
     s_status1 = label(s_main_page, cjk_font(), IC_TEXT, "金币 --/100");
-    lv_obj_align(s_status1, LV_ALIGN_BOTTOM_MID, 0, -22);
+    lv_obj_align(s_status1, LV_ALIGN_TOP_MID, 0, 302);
 }
 
 static void build_feed(void)
