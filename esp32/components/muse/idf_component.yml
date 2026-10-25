@@ -16,6 +16,11 @@ dependencies:
   idf:
     version: ">=5.5"
   espressif/cjson: "~1.7"
+  # Video over Wi-Fi announces itself with it (muse_video_wifi.c).
+  espressif/mdns:
+    version: "^1.8"
+    rules:
+      - if: "$CONFIG{MUSE_VIDEO_MDNS} == \"y\""
   lvgl/lvgl:
     version: "9.5.0"
     public: true
@@ -93,7 +98,7 @@ dependencies:
   espressif/esp_lcd_touch_gt911:
     version: "1.2.1"
     rules:
-      - if: "$CONFIG{MUSE_BOARD_ID} == \"waveshare_s3_lcd7\""
+      - if: "$CONFIG{MUSE_BOARD_ID} in [\"waveshare_s3_lcd7\", \"reterminal_sticky\"]"
   espressif/esp_lcd_touch:
     version: "^1.2.0"
     rules:

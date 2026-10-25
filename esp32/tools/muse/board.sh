@@ -26,6 +26,8 @@
 # build-muse-<profile>-test/: the test build (telemetry, ptest, diagnostic
 # console commands, a FAT telemetry partition, a "-test" version suffix).
 # Without it the build is Release, the shipped build.
+# MUSE_VIDEO=1 adds devices/sdkconfig.muse-video (the phone camera over
+# Wi-Fi, on boards whose panel driver has draw_frame) in build-muse-<profile>-video/.
 # mosaico (Espressif ESP-Mosaico, ESP32-S31) builds with ESP-IDF master
 # (IDF_EXPORT_S31) and Espressif's esp-mosaico-utils (MOSAICO_UTILS), and
 # flashes through the board's Vibe Mode firmware with their mosaico.py: an
@@ -87,6 +89,9 @@ command -v idf.py >/dev/null 2>&1 || { echo "idf.py not found; activate ESP-IDF 
 cd "$root"
 B=build-muse-$profile
 defaults="sdkconfig.defaults;devices/sdkconfig.muse;devices/sdkconfig.muse-$profile"
+if [ -n "${MUSE_VIDEO:-}" ]; then
+    B=$B-video; defaults="$defaults;devices/sdkconfig.muse-video"
+fi
 if [ -n "${MUSE_BENCH:-}" ]; then
     B=$B-bench; defaults="$defaults;devices/sdkconfig.muse-bench"
 fi

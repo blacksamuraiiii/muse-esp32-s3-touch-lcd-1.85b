@@ -51,3 +51,16 @@ void ota_start(const char *url, bool force, ota_status_cb cb, void *user);
 // Percentage of the image read so far by the OTA in flight, or -1 when no
 // download is running. For progress on screen; safe from any task.
 int ota_progress_pct(void);
+// Before an update switches the boot partition, ota_start records the image it
+// installed (its partition and ELF SHA-256, in NVS), so the boot that follows
+// can tell its own update from an image another tool installed. Whether that
+// record names the running image (false when OTA is disabled):
+bool ota_verify_recorded_for_running(void);
+// Forgets the record, once the boot's health check has ended either way.
+void ota_verify_forget(void);
+
+// Whether the running image is a PENDING_VERIFY install by the ESP-Mosaico's
+// Vibe Mode firmware, which accepts its own installs: the one image the
+// health check leaves alone. False on every other board and build, and for an
+// image device.ota recorded.
+bool ota_installed_by_vibe_mode(void);

@@ -82,6 +82,8 @@ if(CONFIG_MUSE_ENABLED)
         list(APPEND srcs "boards/board_waveshare_s3_175c.c" "boards/muse_lcd_bands.c")
     elseif(CONFIG_MUSE_BOARD_OSTB_ECHOEAR_2ST)
         list(APPEND srcs "boards/board_ostb_echoear_2st.c")
+    elseif(CONFIG_MUSE_BOARD_RETERMINAL_STICKY)
+        list(APPEND srcs "boards/board_reterminal_sticky.c" "../../main/epd_ssd1677.c")
     elseif(CONFIG_MUSE_BOARD_WAVESHARE_S3_216)
         list(APPEND srcs "boards/board_waveshare_s3_216.c" "boards/muse_lcd_bands.c")
     elseif(CONFIG_MUSE_BOARD_WAVESHARE_S3_185C)
@@ -128,6 +130,18 @@ if(CONFIG_MUSE_ENABLED)
     elseif(CONFIG_MUSE_BOARD_AI_PASSPORT)
         list(APPEND srcs "boards/board_ai_passport.c")
     endif()
+    if(CONFIG_MUSE_VIDEO)
+        # Phone camera: decode and draw (muse_video), and the transports that feed it.
+        list(APPEND srcs "muse_video.c" "muse_vdec.c" "muse_yuv.c")
+        if(CONFIG_IDF_TARGET_ESP32S3)
+            list(APPEND srcs "muse_yuv_pie.S")   # the S3's SIMD colour conversion
+        elseif(CONFIG_IDF_TARGET_ESP32S31)
+            list(APPEND srcs "muse_yuv_pie_s31.S")   # the same on the S31's SIMD (checked at first use)
+        endif()
+        if(CONFIG_MUSE_VIDEO_WIFI)
+            list(APPEND srcs "muse_video_wifi.c" "muse_video_wire.c")
+        endif()
+    endif()
     # Shared core, independent of board selection. Keep it after the BSP so
     # Watcher's independently retained recovery markers keep their link order.
     if(CONFIG_MUSE_POWER_TEST)
@@ -153,9 +167,12 @@ endif()
 set(muse_priv_requires
     esp_timer esp_driver_usb_serial_jtag esp_psram nvs_flash esp_pm esp_event esp_netif
     bt esp-tls mbedtls esp_app_format esp_http_client
-    noise_core minimp3
+    noise_core minimp3 muse_vstream tinyh264 libvpx_vp8
     esp_lcd esp_adc esp_driver_i2s esp_driver_ledc esp_driver_spi esp_driver_uart esp_wifi
-    esp_driver_pcnt efuse)
+    esp_driver_pcnt efuse
+    # The Sticky's microSD (CONFIG_MUSE_STICKY_SD). Requirements are resolved
+    # before Kconfig values exist, so these can't depend on it; only the code does.
+    fatfs esp_driver_sdspi sdmmc)
 # FATFS and wear levelling carry the night recorder's CSV. Declared
 # unconditionally on purpose: wrapping this in if(CONFIG_MUSE_TELEMETRY) does
 # not work - the Kconfig value is not visible when idf_component_register
