@@ -54,6 +54,10 @@
 - **模拟器恢复可用**：补 `simulator/compat/driver/i2c_master.h`、`compat/sdkconfig.h` 增加 Release
   构建型、`sim_services.c` 用主机时间充当时钟。`MUSE_SIM_SIZE=360` 下顶栏版式与真机一致
   （真机启动日志同为 `360x360, 192 px Muse`），改版面可先在 PC 上量。
+- **中文回复放大到两排**：毛毛下方的中文回复原来是 unscii-16 的 16 px 字、三排；现在改由 Unifont 20 px
+  的 `muse_font_cjk_20` 渲染，每页两排、每排 12 字（24 字一页），字号大 25%，排数少一排。字库覆盖 ASCII、
+  中日韩标点与假名、全角符号和 GB2312 全部 6763 个汉字（约 250 KB flash）；GB2312 之外的生僻字回落到
+  16 px 的 `muse_font_cjk_16`，不会变方块。英文回复仍用 unscii-16，版式不动。
 - **待机耗电**：10 mA 底噪的归因见 `notes/20261024进展.md`；本轮排除两项——BLE 广播（设置里
   `ble off`，夜里不广播）、IMU（QMI8658A 手册 CTRL7/CTRL8 上电默认 0x00，传感器与引擎全关，
   且 1.4 起已无任何 IMU 代码）。夜间深睡窗口与分级待机尚未实现。

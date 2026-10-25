@@ -557,6 +557,7 @@ static const lv_font_t *font_pick(const lv_font_t *full, const lv_font_t *compac
 
 #if CONFIG_MUSE_CJK_FONT
 LV_FONT_DECLARE(muse_font_cjk_16)
+LV_FONT_DECLARE(muse_font_cjk_20)
 #endif
 
 /* unscii-16 for captions and replies; with CONFIG_MUSE_CJK_FONT, a copy that
@@ -572,6 +573,25 @@ static const lv_font_t *caption_font(void)
     return &font;
 #else
     return &lv_font_unscii_16;
+#endif
+}
+
+/* A Chinese reply at unscii-16's cell is too small to read on a 360 px screen,
+ * so replies carrying CJK use Unifont at 20 px instead: 12 columns, two lines,
+ * inside the box the three unscii lines already reserve. Hanzi outside GB2312
+ * fall back to the 16 px face, so a rare character still shows, just smaller. */
+static const lv_font_t *reply_font(bool cjk)
+{
+#if CONFIG_MUSE_CJK_FONT
+    static lv_font_t font;
+    if (!font.get_glyph_dsc) {
+        font = muse_font_cjk_20;
+        font.fallback = &muse_font_cjk_16;
+    }
+    return cjk ? &font : caption_font();
+#else
+    (void)cjk;
+    return caption_font();
 #endif
 }
 
@@ -1104,6 +1124,12 @@ static void build_screen(void)
     lv_obj_set_style_text_line_space(s_caption_lbl, CAPTION_LINE_SPACE, 0);
     lv_label_set_long_mode(s_caption_lbl, LV_LABEL_LONG_MODE_DOTS);
     lv_obj_align(s_caption_lbl, LV_ALIGN_CENTER, 0, cap_top + cap_h / 2);
+#if CONFIG_MUSE_CJK_FONT
+    /* A Chinese reply pages two 20 px lines at a time. The reply box below is
+     * sized for three unscii lines, which is the same 52 px, so nothing else
+     * moves: 12 columns of 20 px fill the 256 px caption width. */
+    muse_state_set_cjk_page(CAPTION_W / lv_font_get_glyph_width(reply_font(true), 0x4E2D, ' '), 2);
+#endif
 
     /* Chunky level meter. */
     int span = METER_SEGS * (METER_SEG_PX + METER_GAP_PX) - METER_GAP_PX;
@@ -1674,6 +1700,10 @@ static void update_status(muse_mode_t mode, float now)
 #if CONFIG_MUSE_CJK_FONT
         if (s_small) {
             lv_obj_set_style_text_font(s_caption_lbl, muse_text_has_cjk(caption) ? caption_font() : &lv_font_unscii_8, 0);
+        } else if (s_reply_lbl) {
+            /* Chinese replies get the 20 px face, English keeps unscii-16. */
+            lv_obj_set_style_text_font(s_reply_lbl,
+                                       muse_text_has_cjk(caption) ? reply_font(true) : caption_font(), 0);
         }
 #endif
         lv_label_set_text(lbl, caption);
