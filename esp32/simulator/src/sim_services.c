@@ -18,6 +18,7 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
 
 #include "muse_console.h"
 #include "muse_input.h"
@@ -243,4 +244,23 @@ void muse_console_write(const void *buf, size_t n)
 void muse_input_touch_talk(bool pressed)
 {
     (void)pressed;
+}
+
+/* The power icon asks for a deep sleep the desktop cannot model. */
+void muse_input_request_power_off(void)
+{
+}
+
+/* No PCF85063 on the desktop, so the status line takes the host's clock: the
+ * simulator is there to check the row's layout, and an empty clock would hide
+ * half of it. */
+bool muse_rtc_clock_str(char *buf, size_t len)
+{
+    time_t now = time(NULL);
+    struct tm tmv;
+    if (!buf || len < 6 || localtime_r(&now, &tmv) == NULL) {
+        return false;
+    }
+    snprintf(buf, len, "%02d:%02d", tmv.tm_hour, tmv.tm_min);
+    return true;
 }
