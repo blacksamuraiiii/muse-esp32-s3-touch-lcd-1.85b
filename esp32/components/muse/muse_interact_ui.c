@@ -901,15 +901,13 @@ static void build_main(void)
                                 IC_LIST_TOP + 2 * (IC_ROW_H + IC_ROW_GAP),
                                 "今日运势 ｜ 未抽", on_fortune_open,
                                 &s_btn_fortune_lbl);
-    /* Status lines, centred. Line 1: coins. Line 2: touch/feed daily
-     * counts -- hidden while a result note occupies its slot. */
-    /* Both lines sit inside the 360 circle's chord: at y = 302 the
-     * usable width is 2*sqrt(180^2 - 122^2) ~= 264 px, so the hint line
-     * is width-limited to 240 and centred. Without the width cap LVGL
-     * clamps an over-wide TOP_MID label at x = 0, which both pushed it
-     * left and let the bezel cut its ends (user report, 1.5a). */
+    /* The coin line is the page's last row (user request 2026-10-25: it sat at
+     * y = 280, only 6 px under the 今日运势 card that ends at 274). Anchoring to
+     * BOTTOM_MID keeps it clear of the cards whatever their height grows to;
+     * -22 leaves the descenders 22 px off the bezel. At that height the circle's
+     * chord is ~210 px, which the coin text fits easily. */
     s_status1 = label(s_main_page, cjk_font(), IC_TEXT, "金币 --/100");
-    lv_obj_align(s_status1, LV_ALIGN_TOP_MID, 0, 280);
+    lv_obj_align(s_status1, LV_ALIGN_BOTTOM_MID, 0, -22);
 }
 
 static void build_feed(void)
