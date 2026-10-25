@@ -136,7 +136,7 @@ typedef struct {
 } run_t;
 
 #define SAVED_MAGIC 0x50544553u
-#define SAVED_VERSION 3u
+#define SAVED_VERSION 4u
 static RTC_NOINIT_ATTR struct {
     uint32_t magic, version, size, checksum;
     run_t run;

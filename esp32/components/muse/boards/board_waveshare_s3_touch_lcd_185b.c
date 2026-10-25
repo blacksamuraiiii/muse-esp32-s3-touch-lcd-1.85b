@@ -2115,7 +2115,7 @@ esp_err_t muse_ptest_board_readback(muse_ptest_readback_t *out)
     out->codecs_open = s_ptest_spk_open && s_ptest_mic_open;
     out->configured_volume = s_ptest_volume;
     out->battery_mv = s_ptest_battery_mv;
-    out->avg_ma = s_ptest_avg_ma;
+    out->avg_ma = (int16_t)s_ptest_avg_ma;
     out->io_frames = s_ptest_frames;
     out->adc_samples = s_ptest_adc_samples;
     if (ptest_check_knobs() != ESP_OK) { return (esp_err_t)(0x4200 | 3); }
