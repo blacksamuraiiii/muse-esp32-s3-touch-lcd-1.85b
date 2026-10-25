@@ -28,3 +28,6 @@
  * build: none of the test-only facilities (telemetry, ptest, diagnostic
  * commands) are compiled in, exactly as on the device. */
 #define CONFIG_MUSE_BUILD_RELEASE 1
+/* CJK is on for the 1.85B, so the simulator carries the same faces: replies in
+ * 20 px Unifont, captions' fallback in 16 px. */
+#define CONFIG_MUSE_CJK_FONT 1

@@ -155,6 +155,10 @@ add_executable(muse_simulator
     "${MUSE_COMPONENT_DIR}/muse_state.c"
     "${MUSE_COMPONENT_DIR}/muse_text.c"
     "${MUSE_COMPONENT_DIR}/../../avatar/muse_pixel.c"
+    # The CJK faces the 1.85B draws Chinese with (compat/sdkconfig.h sets
+    # CONFIG_MUSE_CJK_FONT): replies at 20 px, the caption fallback at 16 px.
+    "${MUSE_COMPONENT_DIR}/fonts/muse_font_cjk_16.c"
+    "${MUSE_COMPONENT_DIR}/fonts/muse_font_cjk_20.c"
 )
 
 target_include_directories(muse_simulator PRIVATE
