@@ -24,3 +24,7 @@
 #define CONFIG_MUSE_CONSOLE_UART 0
 #define CONFIG_PM_PROFILING 0
 #define CONFIG_MUSE_BOARD_SIMULATOR 1
+/* The simulator previews what a shipped image looks like, so it is a Release
+ * build: none of the test-only facilities (telemetry, ptest, diagnostic
+ * commands) are compiled in, exactly as on the device. */
+#define CONFIG_MUSE_BUILD_RELEASE 1

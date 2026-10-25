@@ -82,6 +82,14 @@ static const char *TAG = "muse_ui";
 #define FONT_COMPACT (&lv_font_montserrat_14)
 #endif
 
+/* The status row's type: twice unscii-8's height, which the row could not have at
+ * unscii-16's width ("07:30" would be 80 px wide and would not fit beside the
+ * connectivity icons inside the ring's chord). So the row uses the proportional
+ * face at 16 px, which leaves a clear gap above the state label; 20 px pushed
+ * that gap shut on a 360 px circle. */
+#define STATUS_CLOCK_FONT (&lv_font_montserrat_16)
+#define STATUS_POWER_FONT (&lv_font_montserrat_16)
+
 /*
  * Two layouts: the full one (round 466 px or similar) with a progress ring,
  * level meter and settings tile, and a compact one for tiny screens (128 px)
@@ -989,21 +997,35 @@ static void build_screen(void)
     build_button_icons(face);
 
     /* Status line: three segments across the top - connectivity on the left, the
-     * clock in the middle, power on the right. On a round panel the row is given
-     * a width well inside the safe chord at its own height (the chord at this
-     * y is ~96 px either side of centre; 35 % of the diameter is 63 px, which
-     * leaves the icons off the glass's curve) and SPACE_BETWEEN does the rest,
-     * so each item keeps its place while the clock's width changes every minute.
-     * Other shapes keep the row content-sized and centred, which is what they
-     * had before. */
+     * clock in the middle, power on the right. On a round panel the row has to
+     * sit inside the ring, so it is given the width of the chord at its own top
+     * edge rather than a share of the diameter: at dy above the centre the ring's
+     * inner edge is sqrt(hole^2 - dy^2) either side, and enlarging the clock or
+     * the percentage can therefore never push either of them onto the ring.
+     * SPACE_BETWEEN does the rest, so each item keeps its place while the clock's
+     * width changes every minute. Other shapes keep the row content-sized and
+     * centred, which is what they had before. */
     lv_obj_t *status = lv_obj_create(face);
     lv_obj_remove_style_all(status);
     lv_obj_remove_flag(status, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_flex_flow(status, LV_FLEX_FLOW_ROW);
-    lv_obj_set_style_pad_column(status, s_small ? 4 : 8, 0);
+    lv_obj_set_style_pad_column(status, 4, 0);
     const bool spread = muse_board->round && !s_small;
+    /* Far enough below the glass's curve to fit the taller clock, and still clear
+     * of the state label under it. */
+    const int status_y = muse_board->rim_controls ? 40 : s_small ? 1 : 28 + s_dy;
     if (spread) {
-        lv_obj_set_size(status, s_w * 35 / 100, LV_SIZE_CONTENT);
+        int32_t half = s_w * 35 / 200;
+        if (!muse_board->rim_controls) {
+            /* The ring's inner edge, measured the way on_ring_draw() does: the arc
+             * is d = min(w,h) - 8 across, its stroke 6 px, so the hole is d/2 - 8. */
+            int32_t hole = (s_w < s_h ? s_w : s_h) / 2 - 12;
+            int32_t dy = s_h / 2 - status_y;
+            if (dy > 0 && dy < hole) {
+                half = (int32_t)sqrtf((float)(hole * hole - dy * dy)) - 6;
+            }
+        }
+        lv_obj_set_size(status, 2 * half, LV_SIZE_CONTENT);
         lv_obj_set_flex_align(status, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER,
                               LV_FLEX_ALIGN_CENTER);
     } else {
@@ -1011,7 +1033,7 @@ static void build_screen(void)
         lv_obj_set_flex_align(status, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER,
                               LV_FLEX_ALIGN_CENTER);
     }
-    lv_obj_align(status, LV_ALIGN_TOP_MID, 0, muse_board->rim_controls ? 40 : s_small ? 1 : 20 + s_dy);
+    lv_obj_align(status, LV_ALIGN_TOP_MID, 0, status_y);
     /* Left segment: the two connectivity icons, which come and go on their own
      * and must not shift the clock when one of them does. */
     lv_obj_t *conn = lv_obj_create(status);
@@ -1025,14 +1047,14 @@ static void build_screen(void)
     s_ble_icon = make_label(conn, &lv_font_montserrat_14, COLOR_DIM);
     /* Middle: the clock. Empty until there is a time worth showing, which is
      * how a board without an RTC says so. */
-    s_clock_lbl = make_label(status, &lv_font_unscii_8, COLOR_DIM);
-    s_power_lbl = make_label(status, &lv_font_unscii_8, COLOR_DIM);
+    s_clock_lbl = make_label(status, STATUS_CLOCK_FONT, COLOR_DIM);
+    s_power_lbl = make_label(status, STATUS_POWER_FONT, COLOR_DIM);
 
     /* The compact layout leaves the state to the avatar and the caption,
      * unless the screen is tall enough to fit it in small type above Muse. */
     s_state_lbl = make_label(face, s_small ? &lv_font_unscii_8 : &lv_font_unscii_16, 0xffffff);
     lv_obj_set_style_text_letter_space(s_state_lbl, s_small ? 1 : 2, 0);
-    lv_obj_align(s_state_lbl, LV_ALIGN_TOP_MID, 0, muse_board->rim_controls ? 64 : s_small ? 22 : 40 + s_dy);
+    lv_obj_align(s_state_lbl, LV_ALIGN_TOP_MID, 0, muse_board->rim_controls ? 64 : s_small ? 22 : 54 + s_dy);
     lv_obj_set_flag(s_state_lbl, LV_OBJ_FLAG_HIDDEN, s_small && !s_tall && s_h < 200);
 
     /* This gadget's own name, dim under the state while it's unpaired: with
@@ -1040,7 +1062,7 @@ static void build_screen(void)
      * Muse app. update_chrome() fills it in, shortens it to the hex tail on a
      * screen too narrow for the whole thing, and empties it once paired. */
     s_name_lbl = make_label(face, s_small ? &lv_font_unscii_8 : &lv_font_unscii_16, COLOR_DIM);
-    lv_obj_align(s_name_lbl, LV_ALIGN_TOP_MID, 0, muse_board->rim_controls ? 88 : s_small ? 32 : 60 + s_dy);
+    lv_obj_align(s_name_lbl, LV_ALIGN_TOP_MID, 0, muse_board->rim_controls ? 88 : s_small ? 32 : 74 + s_dy);
     if (muse_board->rim_controls) {
         /* Safe chord below the round panel's top, not the full 466 px width. */
         lv_obj_set_size(s_state_lbl, 280, lv_font_get_line_height(&lv_font_unscii_16));
