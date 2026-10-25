@@ -44,6 +44,30 @@
 
 static const char *TAG = "muse_pet";
 
+/* One queued command. `arg` is the game outcome (-1 lose / 0 draw / +1 win)
+ * for PET_GAME and 0 for everything else (1.5a settles by result). */
+typedef struct {
+    muse_pet_action_t action;
+    int32_t arg;
+} pet_cmd_t;
+
+/* The 1.4 / 1.5a v2 layout, kept verbatim so an upgrade can carry coins and
+ * day counters across instead of disabling rewards (see migrate_v2). */
+typedef struct {
+    uint32_t version;
+    uint32_t coins;
+    int32_t touch_day;
+    uint32_t daily_touch_coins;
+    int32_t feed_day;
+    uint32_t daily_feed_coins;
+    int32_t fortune_day;
+    uint32_t fortune;
+    int32_t decay_day;
+    uint32_t decay_notice;
+} pet_state_v2_t;
+
+_Static_assert(sizeof(pet_state_v2_t) == 40, "v2 blob layout changed");
+
 static QueueHandle_t s_commands;
 static QueueHandle_t s_feedback;
 static portMUX_TYPE s_lock = portMUX_INITIALIZER_UNLOCKED;
@@ -64,6 +88,39 @@ static bool store(nvs_handle_t h, const muse_pet_model_t *s)
 {
     return nvs_set_blob(h, MUSE_PET_NVS_KEY, s, sizeof(*s)) == ESP_OK &&
            nvs_commit(h) == ESP_OK;
+}
+
+/* Read the version word of a possibly-v2 blob without type-punning the
+ * pointer (the toolchain builds with -Werror=strict-aliasing). */
+static bool blob_version_is_v2(const muse_pet_model_t *blob)
+{
+    uint32_t version = 0;
+    memcpy(&version, blob, sizeof(version));
+    return version == 2u;
+}
+
+/* v2 kept one "already fed today" coin counter; v3 keeps a mask with one bit
+ * per food (user decision 2026-10-25: each food pays its own 10). Which food
+ * the old counter covered is unknown, so the three foods start unclaimed --
+ * on the upgrade day that can pay up to 30 coins one extra time. Coins and the
+ * touch / fortune / decay day counters carry over untouched. */
+static void migrate_v2(const pet_state_v2_t *old, muse_pet_model_t *out)
+{
+    memset(out, 0, sizeof(*out));
+    out->version = MUSE_PET_VERSION;
+    out->coins = old->coins > MUSE_PET_COINS_MAX ? MUSE_PET_COINS_MAX : old->coins;
+    out->touch_day = old->touch_day;
+    out->daily_touch_coins = old->daily_touch_coins > MUSE_PET_TOUCH_DAILY_MAX
+                                 ? MUSE_PET_TOUCH_DAILY_MAX
+                                 : old->daily_touch_coins;
+    out->feed_day = old->feed_day;
+    out->feed_mask = 0;
+    out->fortune_day = old->fortune_day;
+    out->fortune = old->fortune < MUSE_PET_FORTUNES ? old->fortune : 0;
+    out->decay_day = old->decay_day;
+    out->decay_notice = old->decay_notice > MUSE_PET_COINS_MAX
+                            ? MUSE_PET_COINS_MAX
+                            : old->decay_notice;
 }
 
 static void worker(void *arg)
@@ -89,6 +146,21 @@ static void worker(void *arg)
             vTaskDelete(NULL);
             return;
         }
+    } else if (err == ESP_OK && bytes == sizeof(pet_state_v2_t) &&
+               blob_version_is_v2(&state)) {
+        /* 1.4 / earlier 1.5a state: carry it over rather than disabling
+         * rewards (user decision 2026-10-25). Persist the migrated form before
+         * publishing, so a later read never sees v2 again. */
+        pet_state_v2_t legacy;
+        memcpy(&legacy, &state, sizeof(legacy));
+        migrate_v2(&legacy, &state);
+        if (!store(h, &state)) {
+            ESP_LOGE(TAG, "migration save failed");
+            nvs_close(h);
+            vTaskDelete(NULL);
+            return;
+        }
+        ESP_LOGW(TAG, "pet state migrated v2 -> v%d", (int)MUSE_PET_VERSION);
     } else if (err != ESP_OK || bytes != sizeof(state) ||
                !muse_pet_model_valid(&state)) {
         /* Never silently reset (design §4.4): rewards stay disabled until a
@@ -118,14 +190,16 @@ static void worker(void *arg)
     publish(&state);
 
     for (;;) {
-        muse_pet_action_t action;
-        bool command = xQueueReceive(s_commands, &action,
+        pet_cmd_t cmd = {PET_TOUCH, 0};  /* overwritten by the receive below */
+        bool command = xQueueReceive(s_commands, &cmd,
                                      pdMS_TO_TICKS(MUSE_PET_TICK_MS)) == pdTRUE;
+        muse_pet_action_t action = cmd.action;
         muse_pet_model_t candidate = state;
         int64_t now = time(NULL);
         muse_pet_result_t result;
         if (command) {
-            result = muse_pet_model_apply(&candidate, action, now, esp_random());
+            result = muse_pet_model_apply(&candidate, action, now, esp_random(),
+                                          cmd.arg);
         } else {
             /* Tick: day rollover / living cost only. No action, no feedback. */
             muse_pet_model_decay(&candidate, now);
@@ -165,7 +239,7 @@ void muse_pet_start(void)
         return;
     }
     s_started = true;
-    s_commands = xQueueCreate(MUSE_PET_QUEUE_LEN, sizeof(muse_pet_action_t));
+    s_commands = xQueueCreate(MUSE_PET_QUEUE_LEN, sizeof(pet_cmd_t));
     s_feedback = xQueueCreate(MUSE_PET_QUEUE_LEN, sizeof(muse_pet_feedback_t));
     /*
      * Internal RAM stack, on purpose: NVS commits disable cache, so a PSRAM
@@ -196,13 +270,27 @@ bool muse_pet_storage_error(void)
     return bad;
 }
 
-bool muse_pet_request(muse_pet_action_t action)
+static bool request_cmd(muse_pet_action_t action, int32_t arg)
 {
     portENTER_CRITICAL(&s_lock);
     bool ready = s_ready;
     portEXIT_CRITICAL(&s_lock);
-    return ready && s_commands &&
-           xQueueSend(s_commands, &action, 0) == pdTRUE;
+    pet_cmd_t cmd = {action, arg};
+    return ready && s_commands && xQueueSend(s_commands, &cmd, 0) == pdTRUE;
+}
+
+bool muse_pet_request(muse_pet_action_t action)
+{
+    return request_cmd(action, 0);
+}
+
+bool muse_pet_request_game(int outcome)
+{
+    /* The UI decides win/lose/draw at click time (design §5.2) and tells the
+     * worker, which settles 5/-5/0. Anything that is not a win or a loss is a
+     * draw. */
+    int32_t arg = outcome > 0 ? 1 : (outcome < 0 ? -1 : 0);
+    return request_cmd(PET_GAME, arg);
 }
 
 bool muse_pet_snapshot(muse_pet_model_t *out)

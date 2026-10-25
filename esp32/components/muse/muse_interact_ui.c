@@ -55,6 +55,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "esp_log.h"
 #include "esp_random.h"
 #include "muse_interact_food_art.h"
 #include "muse_interact_hand_assets.h"
@@ -74,11 +75,8 @@
 #define IC_GOLD 0xf6cb4b
 
 /* --- layout --- */
-#define IC_TITLE_CY 52
-#define IC_BACK_CX 68
 #define IC_BACK_W 56
 #define IC_BACK_H 48
-#define IC_BACK_Y 28
 #define IC_LIST_W 330
 #define IC_LIST_TOP 84
 #define IC_ROW_H 58
@@ -127,8 +125,9 @@ static lv_obj_t *s_btn_feed, *s_btn_game, *s_btn_fortune;
 static lv_obj_t *s_btn_feed_lbl, *s_btn_game_lbl, *s_btn_fortune_lbl;
 static int s_last_feed_idx;
 static uint32_t s_last_feed_before;
-static lv_obj_t *s_status1, *s_status2, *s_note;
+static lv_obj_t *s_status1, *s_note;
 static lv_obj_t *s_feed_cards[3];
+static lv_obj_t *s_feed_note;   /* result line on the feed subpage itself */
 static lv_obj_t *s_game_choices[3];
 static int s_game_choice_base_x[3];
 static lv_obj_t *s_game_you_img, *s_game_house_img;
@@ -136,6 +135,14 @@ static lv_obj_t *s_game_result_lbl, *s_game_streak_lbl, *s_game_chant_lbl;
 static lv_obj_t *s_game_coins_lbl;
 static bool s_storage_noted, s_unready_noted;
 static lv_obj_t *s_fortune_grade, *s_fortune_body;
+
+static const char *TAG = "muse_ic";
+
+#if CONFIG_MUSE_BUILD_TEST
+/* Set by the console task, consumed by the LVGL tick (see
+ * muse_interact_ui_test_game at the bottom of this file). */
+static volatile int s_test_game_pending = -1;
+#endif
 
 static int s_page = IC_PAGE_MAIN;
 static int s_game_phase = IC_GAME_CHOICE_VIEW;
@@ -160,9 +167,35 @@ static bool s_have_snap;
 
 #if CONFIG_MUSE_CJK_FONT
 LV_FONT_DECLARE(muse_font_cjk_16)
-static const lv_font_t *cjk_font(void) { return &muse_font_cjk_16; }
+/* Unifont's 16x16 CJK face carries NO ASCII at all -- gen_cjk_font.sh starts
+ * its ranges at U+3000 -- so every space, digit, '+' and '/' in a Chinese
+ * line used to draw as a tofu box (user photo, 1.5a). Falling back to
+ * Montserrat fills exactly those holes; the Hanzi stay on Unifont. */
+static const lv_font_t *cjk_font(void)
+{
+    static lv_font_t font;
+    if (!font.get_glyph_dsc) {
+        font = muse_font_cjk_16;
+        font.fallback = &lv_font_montserrat_16;
+    }
+    return &font;
+}
+
+/* Button copy mixes both scripts ("喂饭 ｜ +10金币"): Montserrat 20 first,
+ * the CJK face for what it lacks. Same copy-with-fallback trick muse_ui.c
+ * uses for captions. */
+static const lv_font_t *btn_font(void)
+{
+    static lv_font_t font;
+    if (!font.get_glyph_dsc) {
+        font = lv_font_montserrat_20;
+        font.fallback = &muse_font_cjk_16;
+    }
+    return &font;
+}
 #else
 static const lv_font_t *cjk_font(void) { return &lv_font_montserrat_16; }
+static const lv_font_t *btn_font(void) { return &lv_font_montserrat_20; }
 #endif
 
 static lv_obj_t *label(lv_obj_t *parent, const lv_font_t *font, uint32_t color,
@@ -176,25 +209,29 @@ static lv_obj_t *label(lv_obj_t *parent, const lv_font_t *font, uint32_t color,
     return o;
 }
 
-/* Title + back button shared by the main page and all three subpages.
- * The title label is centred on y = 52 by aligning its centre, not its
- * top: copying the settings title top (y = 44) would put a larger CJK
- * title off the button's centre line (design §5.2, the v7 lesson). */
+/* Title, and the back arrow only on a subpage (back_cb != NULL).
+ *
+ * The main interaction page has no arrow: the tile swipe right (and the
+ * round dot) already goes back to the face, and a card behind the arrow
+ * read as a stray box on the 360 circle. The title takes the settings
+ * page's place and look: TOP_MID at y = 44, accent colour -- so "互动"
+ * sits exactly where "SETTINGS" does one tile over. Subpages keep an
+ * arrow, drawn the settings way: no card, just the glyph over the
+ * title's left shoulder. */
 static void page_header(lv_obj_t *page, const char *title, lv_event_cb_t back_cb)
 {
-    lv_obj_t *back = lv_btn_create(page);
-    lv_obj_set_size(back, IC_BACK_W, IC_BACK_H);
-    lv_obj_set_pos(back, IC_BACK_CX - IC_BACK_W / 2, IC_BACK_Y);
-    lv_obj_set_style_bg_color(back, lv_color_hex(IC_CARD), 0);
-    lv_obj_set_style_radius(back, IC_RADIUS, 0);
-    lv_obj_t *arrow = label(back, &lv_font_montserrat_20, IC_ACCENT, LV_SYMBOL_LEFT);
-    lv_obj_center(arrow);
-    lv_obj_add_event_cb(back, back_cb, LV_EVENT_CLICKED, NULL);
+    if (back_cb) {
+        lv_obj_t *back = lv_obj_create(page);
+        lv_obj_remove_style_all(back);
+        lv_obj_set_size(back, IC_BACK_W, IC_BACK_H);
+        lv_obj_align(back, LV_ALIGN_TOP_MID, -112, 28);
+        lv_obj_add_event_cb(back, back_cb, LV_EVENT_CLICKED, NULL);
+        lv_obj_t *arrow = label(back, &lv_font_montserrat_20, IC_ACCENT, LV_SYMBOL_LEFT);
+        lv_obj_center(arrow);
+    }
 
     lv_obj_t *t = label(page, cjk_font(), IC_ACCENT, title);
-    /* Centre the title on y = 52: label height is font-dependent, so
-     * align by centre rather than by a copied top offset. */
-    lv_obj_align(t, LV_ALIGN_TOP_MID, 0, IC_TITLE_CY - 12);
+    lv_obj_align(t, LV_ALIGN_TOP_MID, 0, 44);
 }
 
 static void show_page(int page)
@@ -232,50 +269,56 @@ static void show_note(const char *text)
      * pushing anything off the bottom chord of the circle. */
     lv_label_set_text(s_note, text);
     lv_obj_remove_flag(s_note, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_add_flag(s_status2, LV_OBJ_FLAG_HIDDEN);
+}
+
+/* The feed subpage keeps its own result line: a feed no longer closes the
+ * page, so the answer ("喂了米饭 +10 金币") has to appear where the click
+ * happened, not only in the subtitle on the face and the main page. */
+static void feed_note(const char *text)
+{
+    if (!s_feed_note) {
+        return;
+    }
+    lv_label_set_text(s_feed_note, text);
 }
 
 static void clear_note(void)
 {
     lv_label_set_text(s_note, "");
     lv_obj_add_flag(s_note, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_remove_flag(s_status2, LV_OBJ_FLAG_HIDDEN);
 }
 
 static void refresh_status(void)
 {
     if (!s_have_snap) {
         lv_label_set_text(s_status1, "金币 --/100");
-        lv_label_set_text(s_status2, "摸摸 --/50 · 喂饭 --/10");
         return;
     }
     char buf[64];
     snprintf(buf, sizeof(buf), "金币 %lu/100", (unsigned long)s_snap.coins);
     lv_label_set_text(s_status1, buf);
-    snprintf(buf, sizeof(buf), "摸摸 %lu/50 · 喂饭 %lu/10",
-             (unsigned long)s_snap.daily_touch_coins,
-             (unsigned long)s_snap.daily_feed_coins);
-    lv_label_set_text(s_status2, buf);
 
     /* Dynamic button copy (design §5.2). Dimming is a pre-press signal,
-     * not a disable: a capped feed button still works (happy only), and
-     * a poor game button still explains itself on press. */
+     * not a disable: a fully claimed feed button still works (happy only),
+     * and a poor game button still explains itself on press.
+     * 1.5a: the feed button is done only when ALL three foods paid. */
+    const uint32_t all_fed = (1u << MUSE_PET_FEED_KINDS) - 1u;
+    bool feed_done = (s_snap.feed_mask & all_fed) == all_fed;
     lv_label_set_text(s_btn_feed_lbl,
-                      s_snap.daily_feed_coins >= 10 ? "喂饭 · 今日奖励已领"
-                                                    : "喂饭 · +10金币");
+                      feed_done ? "喂饭 ｜ 今日已领满" : "喂饭 ｜ 每种 +10金币");
     lv_obj_set_style_text_color(s_btn_feed_lbl,
-                                lv_color_hex(s_snap.daily_feed_coins >= 10 ? IC_DIM : IC_TEXT), 0);
+                                lv_color_hex(feed_done ? IC_DIM : IC_TEXT), 0);
     lv_label_set_text(s_btn_game_lbl,
-                      s_snap.coins < 5 ? "小游戏 · 金币不够" : "小游戏 · -5金币");
+                      s_snap.coins < 5 ? "小游戏 ｜ 金币不够" : "小游戏 ｜ 石头剪刀布");
     lv_obj_set_style_text_color(s_btn_game_lbl,
                                 lv_color_hex(s_snap.coins < 5 ? IC_DIM : IC_TEXT), 0);
     if (s_snap.fortune_day >= 0) {
         const char *grade = muse_pet_fortune_grade(s_snap.fortune);
         char fbuf[48];
-        snprintf(fbuf, sizeof(fbuf), "今日运势 · %s", grade ? grade : "已抽");
+        snprintf(fbuf, sizeof(fbuf), "今日运势 ｜ %s", grade ? grade : "已抽");
         lv_label_set_text(s_btn_fortune_lbl, fbuf);
     } else {
-        lv_label_set_text(s_btn_fortune_lbl, "今日运势 · 未抽");
+        lv_label_set_text(s_btn_fortune_lbl, "今日运势 ｜ 未抽");
     }
 }
 
@@ -285,10 +328,14 @@ static lv_obj_t *main_button(lv_obj_t *parent, int y, const char *text,
     lv_obj_t *b = lv_btn_create(parent);
     lv_obj_set_size(b, IC_LIST_W, IC_ROW_H);
     lv_obj_set_pos(b, (360 - IC_LIST_W) / 2, y);
+    /* The theme does not paint these cards on this build: without an
+     * explicit COVER the row is just text on black (the settings page
+     * sets the same line on its rows). */
+    lv_obj_set_style_bg_opa(b, LV_OPA_COVER, 0);
     lv_obj_set_style_bg_color(b, lv_color_hex(IC_CARD), 0);
     lv_obj_set_style_bg_color(b, lv_color_hex(IC_PRESSED), LV_STATE_PRESSED);
     lv_obj_set_style_radius(b, IC_RADIUS, 0);
-    lv_obj_t *l = label(b, &lv_font_montserrat_20, IC_TEXT, text);
+    lv_obj_t *l = label(b, btn_font(), IC_TEXT, text);
     lv_obj_center(l);
     lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, NULL);
     if (lbl_out) {
@@ -405,15 +452,20 @@ static void on_feed_food(lv_event_t *e)
     if (idx == 1) act = PET_FEED_CAKE;
     if (idx == 2) act = PET_FEED_COFFEE;
     s_last_feed_idx = idx;
-    s_last_feed_before = s_have_snap ? s_snap.daily_feed_coins : 0;
+    /* 1.5a: each food pays on its own, so remember whether THIS food was
+     * already paid (mask bit), not the old single daily counter. */
+    s_last_feed_before = (s_have_snap && (s_snap.feed_mask & (1u << idx))) ? 1u : 0u;
     if (!muse_pet_request(act)) {
         write_pet_caption("互动未就绪");
+        feed_note("互动未就绪");
         show_note("互动未就绪");
         return;
     }
-    show_page(IC_PAGE_MAIN);
-    /* Do not pre-write a success caption: the subtitle comes from the
-     * worker's feedback (design §5.3), never from the button press. */
+    /* Stay on the feed page (user decision 2026-10-25): the result lands
+     * in the page's own line, so a second food is one tap away instead of
+     * a re-entry. The wording still comes from the worker's feedback,
+     * never from the press -- "喂饭中..." only marks the wait. */
+    feed_note("喂饭中...");
     (void)e;
 }
 
@@ -518,36 +570,44 @@ static void reset_game_view(void)
     set_choice_dim(false);
 }
 
-static void on_game_choice(lv_event_t *e)
+/* One round, started either by a tap or by the bench command (which is how
+ * this path is verified without a finger on the panel). */
+static void game_start(int choice)
 {
-    int choice = (int)(intptr_t)lv_event_get_user_data(e);
+    ESP_LOGI(TAG, "game start: choice=%d phase=%d page=%d have_snap=%d coins=%d",
+             choice, s_game_phase, s_page, (int)s_have_snap,
+             s_have_snap ? (int)s_snap.coins : -1);
     if (s_game_phase == IC_GAME_SHAKE) {
         return; /* shake: buttons are dimmed and not re-clickable */
     }
     if (!s_have_snap || s_snap.coins < 5) {
-        /* Poor, checked against the last snapshot before any deduction
-         * (design §5.2: coins < 5 never deducts, never starts a game). */
-        write_pet_caption("金币不够，先摸摸 / 喂饭");
-        show_note("金币不够，先摸摸 / 喂饭");
+        /* Poor, checked against the last snapshot before any settlement
+         * (design §5.2: coins < 5 never settles, never starts a round). */
+        write_pet_caption("金币不够，先摸摸 / 喂饭 / 抽运势");
+        show_note("金币不够，先摸摸 / 喂饭 / 抽运势");
         return;
     }
-    if (!muse_pet_request(PET_GAME)) {
+    /* The result is decided NOW, at click time (design §5.2), and 1.5a
+     * settles by result (+5 win / -5 loss / 0 draw), so the worker needs it
+     * before it can apply anything. The animation that follows only reveals
+     * this already-decided outcome. If the feedback later comes back
+     * PET_POOR (snapshot was stale and the balance actually was < 5), the
+     * round is cancelled in drain_feedback() and nothing was settled. */
+    int player = choice;
+    int house = (int)(esp_random() % 3);
+    int outcome = game_result(player, house);
+    if (!muse_pet_request_game(outcome)) {
         write_pet_caption("互动未就绪");
         show_note("互动未就绪");
         return;
     }
-    /* Random result is decided NOW, at click time (design §5.2). The
-     * animation that follows only reveals it; the worker's PET_GAME
-     * feedback confirms the 5-coin deduction, it does not decide the
-     * outcome. If that feedback later comes back PET_POOR (snapshot was
-     * stale and the balance actually was < 5), the game is cancelled in
-     * drain_feedback() -- the deduction never happened, so no refund is
-     * owed either way. */
-    s_game_player = choice;
-    s_game_house = (int)(esp_random() % 3);
-    s_game_result = game_result(s_game_player, s_game_house);
+    s_game_player = player;
+    s_game_house = house;
+    s_game_result = outcome;
     s_game_phase = IC_GAME_SHAKE;
     s_game_phase_ms = lv_tick_get();
+    ESP_LOGI(TAG, "game armed: you=%d house=%d result=%d tick=%lu", s_game_player,
+             s_game_house, s_game_result, (unsigned long)s_game_phase_ms);
     s_game_pending = true;
     set_choice_dim(true);
     lv_obj_add_flag(s_game_you_img, LV_OBJ_FLAG_HIDDEN);
@@ -561,6 +621,11 @@ static void on_game_choice(lv_event_t *e)
     }
 }
 
+static void on_game_choice(lv_event_t *e)
+{
+    game_start((int)(intptr_t)lv_event_get_user_data(e));
+}
+
 static void game_tick(void)
 {
     if (s_page != IC_PAGE_GAME) {
@@ -569,6 +634,12 @@ static void game_tick(void)
     uint32_t now = lv_tick_get();
     if (s_game_phase == IC_GAME_SHAKE) {
         uint32_t elapsed = now - s_game_phase_ms;
+        static bool shake_logged = false;
+        if (!shake_logged) {
+            shake_logged = true;
+            ESP_LOGI(TAG, "game tick in SHAKE: now=%lu phase_ms=%lu elapsed=%lu",
+                     (unsigned long)now, (unsigned long)s_game_phase_ms, (unsigned long)elapsed);
+        }
         /* Chant: "石头！剪刀！布！" in ~300ms steps (design §5.5). The
          * chant order is the spoken order, not the button order. */
         const char *chant = "石头！";
@@ -599,7 +670,7 @@ static void game_tick(void)
             }
             char streak[64];
             if (s_streak > 0) {
-                snprintf(streak, sizeof(streak), "连胜 %d · %d胜 %d平 %d负",
+                snprintf(streak, sizeof(streak), "连胜 %d ｜ %d胜 %d平 %d负",
                          s_streak, s_wins, s_draws, s_losses);
             } else {
                 snprintf(streak, sizeof(streak), "%d胜 %d平 %d负",
@@ -607,6 +678,7 @@ static void game_tick(void)
             }
             lv_label_set_text(s_game_streak_lbl, streak);
             show_game_result();
+            ESP_LOGI(TAG, "game -> REVEAL (elapsed=%lu)", (unsigned long)elapsed);
             s_game_phase = IC_GAME_REVEAL;
             s_game_phase_ms = now;
             if (s_game_result > 0) {
@@ -628,6 +700,7 @@ static void game_tick(void)
                 lv_obj_remove_flag(s_game_choices[i], LV_OBJ_FLAG_HIDDEN);
             }
             set_choice_dim(false);
+            ESP_LOGI(TAG, "game -> RESULT");
             s_game_phase = IC_GAME_RESULT;
         }
     }
@@ -638,8 +711,8 @@ static void game_tick(void)
 static void show_fortune_card(void)
 {
     if (!s_have_snap || s_snap.fortune_day < 0) {
-        lv_label_set_text(s_fortune_grade, "—");
-        lv_label_set_text(s_fortune_body, "抽取中…");
+        lv_label_set_text(s_fortune_grade, "-");
+        lv_label_set_text(s_fortune_body, "抽取中...");
         return;
     }
     const char *grade = muse_pet_fortune_grade(s_snap.fortune);
@@ -662,7 +735,7 @@ static void on_fortune_open(lv_event_t *e)
         return;
     }
     show_page(IC_PAGE_FORTUNE);
-    show_fortune_card(); /* "抽取中…" until the feedback lands */
+    show_fortune_card(); /* "抽取中..." until the feedback lands */
 }
 
 /* --- feedback drain (LVGL task only) --- */
@@ -682,8 +755,11 @@ static void drain_feedback(void)
         switch (fb.action) {
         case PET_TOUCH:
             if (fb.result == PET_COIN) {
-                snprintf(buf, sizeof(buf), "毛毛很开心 +5 金币（今日摸摸 %lu/50）",
-                         (unsigned long)s_snap.daily_touch_coins);
+                /* Two lines (user decision 2026-10-25): the count is in
+                 * TOUCHES, not coins -- 10 a day at 5 coins each. */
+                snprintf(buf, sizeof(buf), "毛毛很开心 +5 金币\n今日摸摸 %lu/%u",
+                         (unsigned long)(s_snap.daily_touch_coins / MUSE_PET_TOUCH_COINS),
+                         (unsigned)MUSE_PET_TOUCH_DAILY_MAX / MUSE_PET_TOUCH_COINS);
                 muse_state_make_happy();
             } else if (fb.result == PET_CAP) {
                 snprintf(buf, sizeof(buf), "今日摸摸奖励已满 50 金币");
@@ -698,26 +774,31 @@ static void drain_feedback(void)
         case PET_FEED_RICE:
         case PET_FEED_CAKE:
         case PET_FEED_COFFEE: {
-            /* PET_OK means "settled"; whether coins moved is read from
-             * the snapshot's daily_feed_coins vs the value at click time
+            /* PET_OK means "settled"; whether coins moved is read from the
+             * snapshot's feed_mask for THIS food vs the bit at click time
              * (design §4.3) -- the result code alone does not say. */
             const char *food = MUSE_INTERACT_FOODS[s_last_feed_idx].name;
+            bool paid = (s_snap.feed_mask & (1u << s_last_feed_idx)) != 0;
             if (fb.result == PET_OK) {
-                if (s_snap.daily_feed_coins > s_last_feed_before) {
+                if (paid && !s_last_feed_before) {
                     snprintf(buf, sizeof(buf), "喂了%s +10 金币", food);
                     muse_state_make_happy();
                     show_note(buf);
+                    feed_note(buf);
                 } else {
-                    snprintf(buf, sizeof(buf), "喂了%s（今日奖励已领）", food);
+                    snprintf(buf, sizeof(buf), "喂了%s（今天已经喂过）", food);
                     show_note(buf);
+                    feed_note(buf);
                 }
                 write_pet_caption(buf);
             } else if (fb.result == PET_STORAGE) {
                 write_pet_caption("互动数据损坏");
                 show_note("互动数据损坏");
+                feed_note("互动数据损坏");
             } else {
                 write_pet_caption("互动未就绪");
                 show_note("互动未就绪");
+                feed_note("互动未就绪");
             }
             break;
         }
@@ -746,12 +827,12 @@ static void drain_feedback(void)
             if (fb.result == PET_FORTUNE_NEW || fb.result == PET_FORTUNE_SAME) {
                 /* Interface gap (see PHASE2-NOTES.md §4): the phase-1
                  * text table has grade + body but NO card name, so the
-                 * design's "今日运势：<卡名> · <等级>" cannot be written
+                 * design's "今日运势：<卡名> ｜ <等级>" cannot be written
                  * verbatim. The caption uses the grade; the subpage
                  * shows grade + full body. Do NOT invent card names. */
                 const char *grade = muse_pet_fortune_grade(s_snap.fortune);
                 if (fb.result == PET_FORTUNE_NEW) {
-                    snprintf(buf, sizeof(buf), "今日运势：%s",
+                    snprintf(buf, sizeof(buf), "今日运势：%s +20 金币",
                              grade ? grade : "吉");
                 } else {
                     snprintf(buf, sizeof(buf), "今日已抽过：%s",
@@ -779,6 +860,7 @@ static void drain_feedback(void)
 static void on_open_feed(lv_event_t *e)
 {
     (void)e;
+    feed_note("");
     show_page(IC_PAGE_FEED);
 }
 
@@ -806,26 +888,30 @@ static lv_obj_t *page_group(lv_obj_t *tile)
 
 static void build_main(void)
 {
-    page_header(s_main_page, "互动", on_back);
-    s_btn_feed = main_button(s_main_page, IC_LIST_TOP, "喂饭 · +10金币",
+    page_header(s_main_page, "互动", NULL);
+    s_btn_feed = main_button(s_main_page, IC_LIST_TOP, "喂饭 ｜ 每种 +10金币",
                              on_open_feed, &s_btn_feed_lbl);
     s_btn_game = main_button(s_main_page, IC_LIST_TOP + IC_ROW_H + IC_ROW_GAP,
-                             "小游戏 · -5金币", on_open_game, &s_btn_game_lbl);
+                             "小游戏 ｜ 石头剪刀布", on_open_game, &s_btn_game_lbl);
     s_btn_fortune = main_button(s_main_page,
                                 IC_LIST_TOP + 2 * (IC_ROW_H + IC_ROW_GAP),
-                                "今日运势 · 未抽", on_fortune_open,
+                                "今日运势 ｜ 未抽", on_fortune_open,
                                 &s_btn_fortune_lbl);
     /* Status lines, centred. Line 1: coins. Line 2: touch/feed daily
      * counts -- hidden while a result note occupies its slot. */
+    /* Both lines sit inside the 360 circle's chord: at y = 302 the
+     * usable width is 2*sqrt(180^2 - 122^2) ~= 264 px, so the hint line
+     * is width-limited to 240 and centred. Without the width cap LVGL
+     * clamps an over-wide TOP_MID label at x = 0, which both pushed it
+     * left and let the bezel cut its ends (user report, 1.5a). */
     s_status1 = label(s_main_page, cjk_font(), IC_TEXT, "金币 --/100");
-    lv_obj_align(s_status1, LV_ALIGN_TOP_MID, 0, 282);
-    s_status2 = label(s_main_page, cjk_font(), IC_TEXT, "摸摸 --/50 · 喂饭 --/10");
-    lv_obj_align(s_status2, LV_ALIGN_TOP_MID, 0, 306);
+    lv_obj_align(s_status1, LV_ALIGN_TOP_MID, 0, 280);
     s_note = label(s_main_page, cjk_font(), IC_TEXT, "");
-    lv_obj_align(s_note, LV_ALIGN_TOP_MID, 0, 306);
+    lv_obj_align(s_note, LV_ALIGN_TOP_MID, 0, 302);
     lv_obj_add_flag(s_note, LV_OBJ_FLAG_HIDDEN);
     lv_label_set_long_mode(s_note, LV_LABEL_LONG_DOT);
-    lv_obj_set_width(s_note, 300);
+    lv_obj_set_width(s_note, 240);
+    lv_obj_set_style_text_align(s_note, LV_TEXT_ALIGN_CENTER, 0);
 }
 
 static void build_feed(void)
@@ -843,6 +929,7 @@ static void build_feed(void)
         lv_obj_t *card = lv_obj_create(s_feed_page);
         lv_obj_set_size(card, IC_FEED_CARD, IC_FEED_CARD);
         lv_obj_set_pos(card, x0 + i * (IC_FEED_CARD + 8), y);
+        lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
         lv_obj_set_style_bg_color(card, lv_color_hex(IC_CARD), 0);
         lv_obj_set_style_bg_color(card, lv_color_hex(IC_PRESSED), LV_STATE_PRESSED);
         lv_obj_set_style_radius(card, IC_RADIUS, 0);
@@ -869,8 +956,15 @@ static void build_feed(void)
         lv_obj_align(nm, LV_ALIGN_TOP_MID,
                      x0 + i * (IC_FEED_CARD + 8) + IC_FEED_CARD / 2 - 180, y + IC_FEED_CARD + 8);
     }
-    lv_obj_t *hint = label(s_feed_page, cjk_font(), IC_DIM, "喂饭不花币，每天第一次 +10 金币");
-    lv_obj_align(hint, LV_ALIGN_TOP_MID, 0, 270);
+    lv_obj_t *hint = label(s_feed_page, cjk_font(), IC_DIM, "喂饭不花币，每种食物每天 +10");
+    lv_obj_align(hint, LV_ALIGN_TOP_MID, 0, 262);
+    /* Result line: same chord rule as the main page's status line (240 px
+     * at y = 292 keeps it inside the 360 circle). */
+    s_feed_note = label(s_feed_page, cjk_font(), IC_TEXT, "");
+    lv_obj_align(s_feed_note, LV_ALIGN_TOP_MID, 0, 292);
+    lv_label_set_long_mode(s_feed_note, LV_LABEL_LONG_DOT);
+    lv_obj_set_width(s_feed_note, 240);
+    lv_obj_set_style_text_align(s_feed_note, LV_TEXT_ALIGN_CENTER, 0);
 }
 
 static void build_game(void)
@@ -891,6 +985,7 @@ static void build_game(void)
         lv_obj_t *b = lv_btn_create(s_game_page);
         lv_obj_set_size(b, IC_GAME_CHOICE, IC_GAME_CHOICE);
         lv_obj_set_pos(b, x0 + i * (IC_GAME_CHOICE + 8), 120);
+        lv_obj_set_style_bg_opa(b, LV_OPA_COVER, 0);
         lv_obj_set_style_bg_color(b, lv_color_hex(IC_CARD), 0);
         lv_obj_set_style_bg_color(b, lv_color_hex(IC_PRESSED), LV_STATE_PRESSED);
         lv_obj_set_style_radius(b, IC_RADIUS, 0);
@@ -900,6 +995,12 @@ static void build_game(void)
          * the hands sit inside the button instead of overrunning it. */
         lv_image_set_scale(img, (uint16_t)(256 * (IC_GAME_CHOICE - 20) / 128));
         lv_obj_center(img);
+        /* The image covers the whole button and LVGL makes image objects
+         * clickable -- the tap landed on the image, never reached the
+         * button's CLICKED handler, so the round never started. Feed cards
+         * clear the same flag; this page was missing it (user report,
+         * 1.5a: "点击卡片没有效果"). */
+        lv_obj_remove_flag(img, LV_OBJ_FLAG_CLICKABLE);
         lv_obj_add_event_cb(b, on_game_choice, LV_EVENT_CLICKED, (void *)(intptr_t)i);
         s_game_choices[i] = b;
         s_game_choice_base_x[i] = x0 + i * (IC_GAME_CHOICE + 8);
@@ -945,11 +1046,12 @@ static void build_fortune(void)
     lv_obj_t *card = lv_obj_create(s_fortune_page);
     lv_obj_set_size(card, IC_FORTUNE_CARD_W, IC_FORTUNE_CARD_H);
     lv_obj_set_pos(card, (360 - IC_FORTUNE_CARD_W) / 2, 105);
+    lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
     lv_obj_set_style_bg_color(card, lv_color_hex(IC_CARD), 0);
     lv_obj_set_style_radius(card, IC_RADIUS, 0);
     lv_obj_set_style_border_width(card, 0, 0);
     lv_obj_remove_flag(card, LV_OBJ_FLAG_SCROLLABLE);
-    s_fortune_grade = label(card, cjk_font(), IC_GOLD, "—");
+    s_fortune_grade = label(card, cjk_font(), IC_GOLD, "-");
     lv_obj_align(s_fortune_grade, LV_ALIGN_TOP_MID, 0, 12);
     s_fortune_body = label(card, cjk_font(), IC_TEXT, "");
     lv_label_set_long_mode(s_fortune_body, LV_LABEL_LONG_WRAP);
@@ -957,7 +1059,7 @@ static void build_fortune(void)
     lv_obj_set_style_text_line_space(s_fortune_body, 6, 0);
     lv_obj_set_style_text_align(s_fortune_body, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_align(s_fortune_body, LV_ALIGN_TOP_MID, 0, 52);
-    lv_obj_t *n1 = label(s_fortune_page, cjk_font(), IC_DIM, "免费 · 每天一次");
+    lv_obj_t *n1 = label(s_fortune_page, cjk_font(), IC_DIM, "每天 +20 金币");
     lv_obj_align(n1, LV_ALIGN_TOP_MID, 0, 270);
     lv_obj_t *n2 = label(s_fortune_page, cjk_font(), IC_DIM, "同日再抽显示同一张");
     lv_obj_align(n2, LV_ALIGN_TOP_MID, 0, 294);
@@ -1008,6 +1110,18 @@ void muse_interact_ui_tick(bool active)
      * feedback queue (phase 1) and what lets a decay notice announce
      * itself the next time the user is IDLE, not only while the tile
      * is open. */
+#if CONFIG_MUSE_BUILD_TEST
+    /* Bench round requested from the console (see muse_interact_ui_test_game):
+     * run it here, on the LVGL task, where the view may be touched. */
+    if (s_test_game_pending >= 0) {
+        int choice = s_test_game_pending;
+        s_test_game_pending = -1;
+        if (s_page != IC_PAGE_GAME) {
+            show_page(IC_PAGE_GAME);
+        }
+        game_start(choice);
+    }
+#endif
     drain_feedback();
 
     muse_pet_model_t snap;
@@ -1066,3 +1180,17 @@ void muse_interact_ui_tick(bool active)
     caption_tick();
     game_tick();
 }
+
+#if CONFIG_MUSE_BUILD_TEST
+/* Bench only: run one round exactly as a tap on choice <i> would. The console
+ * runs on another task, and LVGL is single-owner, so this only queues the
+ * request; the LVGL tick below starts the round on the next frame. */
+bool muse_interact_ui_test_game(int choice)
+{
+    if (choice < 0 || choice > 2) {
+        return false;
+    }
+    s_test_game_pending = choice;
+    return true;
+}
+#endif

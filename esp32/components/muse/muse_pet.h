@@ -49,6 +49,12 @@ bool muse_pet_storage_error(void);
  */
 bool muse_pet_request(muse_pet_action_t action);
 
+/* Start a game round with its already-decided outcome: >0 win (+5 coins),
+ * <0 loss (-5), 0 draw (no change). Returns false when the worker is not
+ * ready; PET_POOR still comes back through the feedback queue when the
+ * balance is below the 5-coin stake. */
+bool muse_pet_request_game(int outcome);
+
 /* Copy the latest published snapshot. Returns false when not ready. */
 bool muse_pet_snapshot(muse_pet_model_t *out);
 
