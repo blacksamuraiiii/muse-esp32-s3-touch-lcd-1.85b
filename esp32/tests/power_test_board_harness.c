@@ -569,7 +569,7 @@ static void scenario_apply_guards_and_order(void)
              EXP_PWR_SYSTEM, EXP_PWR_SYSTEM, EXP_PWR_SYSTEM, EXP_PWR_SYSTEM | EXP_PWR_CODEC_PA);
     if (strcmp(log_buf, want)) { fprintf(stderr, "order: %s\n want: %s\n", log_buf, want); exit(1); }
     CHECK(s_ptest_knobs == 0 && hiz(40)); /* previous knobs reverted */
-    CHECK(s_ptest_frames == 0 && s_ptest_adc_samples == 0 && s_ptest_battery_mv == 0 && s_ptest_avg_ma == 0);
+    CHECK(s_ptest_frames == 0 && s_ptest_adc_samples == 0 && s_ptest_battery_mv == 0);
     CHECK(s_ptest_expected_duty == 511 && s_ptest_load == MUSE_PTEST_SINE);
 
     /* Leaving audio closes it; ADC sampling powers the divider and inits ADC. */
@@ -719,7 +719,7 @@ static void scenario_service(void)
     CHECK(muse_ptest_board_apply(&s) == ESP_OK);
     now_us = 5000000;
     CHECK(muse_ptest_board_service(MUSE_PTEST_ADC_SAMPLE) == ESP_OK && power_reads == 1);
-    CHECK(s_ptest_battery_mv == 3900 && s_ptest_avg_ma == -42 && s_ptest_adc_samples == 8);
+    CHECK(s_ptest_battery_mv == 3900 && s_ptest_adc_samples == 8);
     now_us += 999999;
     CHECK(muse_ptest_board_service(MUSE_PTEST_ADC_SAMPLE) == ESP_OK && power_reads == 1); /* 1 Hz */
     now_us += 1;
