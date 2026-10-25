@@ -54,3 +54,11 @@ void muse_interact_ui_on_hidden(void);
  * the "互动未就绪" caption on the next IDLE frame; it is not written
  * directly from the tap callback, so the caption path stays single-owner. */
 void muse_interact_ui_touch_failed(void);
+
+#if CONFIG_MUSE_BUILD_TEST
+/* Bench command "ui.game <0|1|2>": starts one round on the game subpage the
+ * way a tap would, so the shake/reveal path can be driven from the console.
+ * Callable from any task: it queues the round for the LVGL tick. Test builds
+ * only -- it is not part of the product surface. */
+bool muse_interact_ui_test_game(int choice);
+#endif

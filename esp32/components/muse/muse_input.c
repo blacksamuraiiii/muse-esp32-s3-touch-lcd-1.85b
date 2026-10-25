@@ -15,6 +15,7 @@
  */
 
 #include "muse_input.h"
+#include "muse_interact_ui.h"
 
 #include <stdint.h>
 #include <stdatomic.h>
@@ -1156,10 +1157,10 @@ static void pet_console_snapshot(void)
         fflush(stdout);
         return;
     }
-    printf("@pet coins=%u touch=%u feed=%u fortune_day=%d fortune=%u "
+    printf("@pet coins=%u touch=%u feed_mask=0x%x fortune_day=%d fortune=%u "
            "decay_day=%d decay_notice=%u\n",
            (unsigned)s.coins, (unsigned)s.daily_touch_coins,
-           (unsigned)s.daily_feed_coins, (int)s.fortune_day,
+           (unsigned)s.feed_mask, (int)s.fortune_day,
            (unsigned)s.fortune, (int)s.decay_day, (unsigned)s.decay_notice);
     fflush(stdout);
 }
@@ -1242,6 +1243,16 @@ static bool console_command(char *line, bool whole)
         return true;
     }
 #if CONFIG_MUSE_BUILD_TEST
+    if (!strncmp(line, "ui.game", 7)) {
+        /* Drives one game round from the console. The request is queued and
+         * started by the LVGL tick; the outcome is visible in the "muse_ic"
+         * log lines, not in this reply. */
+        int which = (line[7] == ' ') ? atoi(line + 8) : 0;
+        bool queued = muse_interact_ui_test_game(which);
+        printf("@ui game choice=%d queued=%d\n", which, (int)queued);
+        fflush(stdout);
+        return true;
+    }
     if (!strcmp(line, "pmdump")) {
         /* Who is holding a power-management lock right now, and for how long
          * each one has. This is the first thing to read when the chip will not
@@ -1531,10 +1542,14 @@ static bool console_command(char *line, bool whole)
             pet_console_do(PET_TOUCH, "touch");
             return true;
         }
-        if (!strcmp(line, "pet.feed")) {
-            /* Console default food is rice; the three feed actions settle
-             * identically, so this verifies feed settlement, not a food. */
-            pet_console_do(PET_FEED_RICE, "feed");
+        if (!strncmp(line, "pet.feed", 8)) {
+            /* Each food pays its own 10 now, so name it: "pet.feed 0/1/2"
+             * = rice / cake / coffee, bare "pet.feed" = rice. */
+            int which = (line[8] == ' ') ? atoi(line + 9) : 0;
+            muse_pet_action_t act = PET_FEED_RICE;
+            if (which == 1) act = PET_FEED_CAKE;
+            if (which == 2) act = PET_FEED_COFFEE;
+            pet_console_do(act, "feed");
             return true;
         }
         if (!strcmp(line, "pet.fortune")) {
@@ -1550,11 +1565,27 @@ static bool console_command(char *line, bool whole)
             }
             return true;
         }
-        if (!strcmp(line, "pet.game")) {
-            /* Verifies the 5-coin deduction only. Win/loss randomness is
-             * phase-2 UI-side (design §5.2); the model carries no game
-             * random, so there is no result to print here beyond OK/POOR. */
-            pet_console_do(PET_GAME, "game");
+        if (!strncmp(line, "pet.game", 8)) {
+            /* 1.5a settles by result, so the bench has to say which one:
+             * "pet.game 1" win (+5), "pet.game -1" loss (-5), no argument or
+             * "pet.game 0" draw (no change). */
+            int outcome = (line[8] == ' ') ? atoi(line + 9) : 0;
+            if (!muse_pet_request_game(outcome)) {
+                printf("@pet game error not-ready storage_error=%d\n",
+                       (int)muse_pet_storage_error());
+                fflush(stdout);
+                return true;
+            }
+            muse_pet_feedback_t fb;
+            if (!pet_console_wait(PET_GAME, &fb)) {
+                printf("@pet game error timeout\n");
+                fflush(stdout);
+                return true;
+            }
+            printf("@pet game outcome=%d result=%s\n", outcome,
+                   pet_result_name(fb.result));
+            fflush(stdout);
+            pet_console_snapshot();
             return true;
         }
 #if CONFIG_MUSE_BUILD_TEST
