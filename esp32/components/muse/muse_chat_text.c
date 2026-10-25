@@ -147,8 +147,10 @@ static bool next_line(const char **text, int cols, const char **start, size_t *l
 
 /*
  * Wraps `text` to the screen's page (muse_state_page) and puts the page holding
- * byte `at` in `out`. Pages overlap by a line: a page's last line starts the
- * next one, so the page turns as that line is reached and nothing is skipped.
+ * byte `at` in `out`. Pages do not overlap: a two-line page shows lines 0-1,
+ * then 2-3, so nothing is read twice. (An overlap of one line used to keep the
+ * last line in view across a turn, but on a Chinese reply that reads as AB, BC,
+ * CD - the middle line twice - which is worse than losing the anchor.)
  */
 bool muse_hatch_caption_at(const char *text, size_t at, char *out, size_t cap)
 {
@@ -166,7 +168,7 @@ bool muse_hatch_caption_at(const char *text, size_t at, char *out, size_t cap)
     if (line < 0) {
         return false;
     }
-    int first = lines > 1 ? line / (lines - 1) * (lines - 1) : line;
+    int first = lines > 0 ? line / lines * lines : line;
 
     size_t o = 0;
     out[0] = '\0';
