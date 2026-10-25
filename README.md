@@ -209,6 +209,12 @@ Muse Gadgets 是 Meta 开源的一套**自建设备（DIY Gadget）**方案：
 - **Linux 设备 SDK**（[`linux/`](linux)）——把闲置的树莓派 / Linux 主机变成 Muse 设备，
   可以替你跑系统运维任务或接管 Home Assistant。
 
+| | |
+|---|---|
+| [**ESP32 Device SDK**](esp32) | Connect your ESP32 board to Muse through our open source SDK. Throw in a screen to show images, add audio in and out, or wire up other sensors. |
+| [**Linux Device SDK**](linux) | Turn that spare Raspberry Pi or Linux box into a Muse gadget. Hack in your own commands to let Muse handle sysadmin chores or your Home Assistant setup. |
+| [**Muse Gadgets Test**](android/musegadgetstest) ([iPhone](ios/musegadgetstest)) | Stream your phone's camera, or a clip, to an ESP32 gadget's screen over Wi-Fi: H.264 or VP8 decoded on the board, 30 fps on the round 466 px boards. [`protocols/VIDEO.md`](protocols/VIDEO.md) explains how. |
+
 刷入固件后，设备会通过网络与 **Muse**（Meta 的个人 AI 助理）建立**加密会话**。
 带「家庭网络隧道」的板子，Muse 可以进一步访问你家里已有的设备，
 以及任何暴露了本地 HTTP API 的东西。
@@ -794,12 +800,23 @@ CONFIG_MUSE_TTS_URL="http://<tts-host>:5050/tts?voice=zh-CN-XiaoxiaoNeural&text=
 
 本项目采用 **Apache License 2.0**（见 [`LICENSE`](LICENSE)），但以下第三方文件保留其上游许可证：
 
-| 路径 | 上游 | 许可证 |
-|---|---|---|
-| `esp32/components/minimp3/include/minimp3.h` | [lieff/minimp3](https://github.com/lieff/minimp3) | CC0-1.0 |
-| `esp32/main/pixel_font.c` | Adafruit GFX `glcdfont.c` | BSD-2-Clause |
+| [`esp32/components/minimp3/include/minimp3.h`](esp32/components/minimp3) | [lieff/minimp3](https://github.com/lieff/minimp3) | CC0-1.0, see [`LICENSE`](esp32/components/minimp3/LICENSE) |
+| [`esp32/components/muse/boards/ostb_echoear_display_init.h`](esp32/components/muse/boards/ostb_echoear_display_init.h) | [78/xiaozhi-esp32 ESP-VoCat panel sequence](https://github.com/78/xiaozhi-esp32/blob/0d576d3d4c049c6f55eaf879725dc23e516511b4/main/boards/espressif/esp-vocat/esp_vocat.cc) | MIT, retained in the file header |
+| [`esp32/main/pixel_font.c`](esp32/main/pixel_font.c) | Adafruit GFX `glcdfont.c` | BSD-2-Clause, in the file header |
+| [`esp32/main/epd_ssd1677.c`](esp32/main/epd_ssd1677.c) | Seeed-reTerminal-E10xx-Firmware's SSD1677 refresh sequence | MIT, retained in the file header |
+| [`esp32/components/tinyh264/src`](esp32/components/tinyh264) | the Android Open Source Project's H.264 decoder, via [udevbe/tinyh264](https://github.com/udevbe/tinyh264) | Apache-2.0, AOSP's copyright, see [`LICENSE`](esp32/components/tinyh264/LICENSE) |
+| [`esp32/components/libvpx_vp8/src`](esp32/components/libvpx_vp8) | [libvpx](https://chromium.googlesource.com/webm/libvpx) v1.16.0's VP8 decoder, trimmed | BSD-3-Clause, the WebM Project authors' copyright, see [`LICENSE`](esp32/components/libvpx_vp8/LICENSE), with Google's patent grant in [`PATENTS`](esp32/components/libvpx_vp8/PATENTS) |
 
 构建时下载的依赖（ESP-IDF 组件、LVGL、SDL 等）遵循各自的许可证。
 Apache 许可证**不覆盖** [Jollybot 头像](esp32/avatar)。
+
+Muse Gadgets Test's sample clips aren't in this repository: the app fetches a few
+seconds of the Blender Foundation's open movies (CC BY 3.0) when one is
+played, and shows their credits.
+
+Muse Gadgets Test can use x264 (GPL-2.0) on the phone; this repository carries none
+of its code. An APK or iPhone app you build with it is under the GPL
+([`android/musegadgetstest/README.md`](android/musegadgetstest/README.md),
+[`ios/musegadgetstest/README.md`](ios/musegadgetstest/README.md)).
 
 **社区**：欢迎加入 [Discord](https://discord.gg/3bhjCkZdd6) 与其他玩家交流。

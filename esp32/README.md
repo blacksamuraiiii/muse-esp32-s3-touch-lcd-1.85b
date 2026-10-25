@@ -189,6 +189,8 @@ status screen.
 | Waveshare ESP32-S3-1.54inch-ePaper V2 | Status on a 1.54" e-paper, black and white | `tools/board.sh waveshare-s3-epaper-154 build` |
 | Seeed reTerminal E1001 | Status on a 7.5" e-paper, black and white images | `tools/board.sh reterminal-e1001 build` |
 | Seeed reTerminal E1002 | Status on a 7.3" e-paper, six-colour images | `tools/board.sh reterminal-e1002 build` |
+| Seeed reTerminal Sticky (experimental) | 3.97" portrait e-paper UI, touch, PDM voice notes, battery, SD and SHT40 | `tools/board.sh reterminal-sticky build` |
+| Seeed reTerminal Sticky Link status (experimental) | 3.97" e-paper status screen and SHT40 only; no Muse UI | `tools/board.sh reterminal-sticky-link build` |
 | Home Assistant Voice Preview Edition | Status on the LED ring, push-to-talk, volume dial | `tools/board.sh home-assistant-voice build` |
 | Seeed reSpeaker Lite with XIAO ESP32-S3 (experimental) | Single RGB LED, BOOT push-to-talk; 16 kHz XMOS I2S required | [Setup](devices/seeed-respeaker-lite.md) |
 | Waveshare ESP32-S3-Touch-AMOLED-1.75C | UI, push-to-talk, settings, images | see [`AGENTS.md`](AGENTS.md#boards-with-the-full-ui-by-hand) |
@@ -262,6 +264,13 @@ for how it works and for boards that need the manual steps.
 To give Muse a command of its own, such as reading a sensor or switching a
 relay, advertise it in `link.register` and handle it in `main/app.c`.
 [`AGENTS.md`](AGENTS.md#adding-a-command) walks through it.
+
+To show your phone's camera on a board's screen, build it with
+`MUSE_VIDEO=1 tools/muse/board.sh build <board>` and run Muse Gadgets Test
+([Android](../android/musegadgetstest), [iPhone](../ios/musegadgetstest)) on a phone on the
+same Wi-Fi, then open Phone camera on the board: the phone encodes H.264 or
+VP8, the board decodes and draws it, 30 fps on the round 466 px boards. [`../protocols/VIDEO.md`](../protocols/VIDEO.md) explains how, and
+[`AGENTS.md`](AGENTS.md#video-from-a-phone) which boards can.
 
 To work on the UI without a board, use the
 [`simulator/`](simulator/README.md) desktop preview. It runs the production UI
@@ -338,6 +347,17 @@ their upstream licenses:
 - [`components/muse/boards/ostb_echoear_display_init.h`](components/muse/boards/ostb_echoear_display_init.h),
   the ST77916 panel initialization table from 78/xiaozhi-esp32, is MIT, as its
   retained upstream notice says.
+- [`main/epd_ssd1677.c`](main/epd_ssd1677.c), the reTerminal Sticky SSD1677
+  driver based on the Seeed-reTerminal-E10xx-Firmware refresh sequence, is MIT
+  and retains the source's copyright and license notice.
+- [`components/tinyh264/src`](components/tinyh264), the H.264 decoder, is the
+  Android Open Source Project's (via udevbe/tinyh264), Apache-2.0 under its
+  copyright. See [`components/tinyh264/LICENSE`](components/tinyh264/LICENSE).
+- [`components/libvpx_vp8/src`](components/libvpx_vp8), the VP8 decoder, is
+  libvpx v1.16.0's, trimmed: BSD-3-Clause under the WebM Project authors'
+  copyright, with Google's patent grant. See
+  [`components/libvpx_vp8/LICENSE`](components/libvpx_vp8/LICENSE) and
+  [`PATENTS`](components/libvpx_vp8/PATENTS).
 
 ESP-IDF components fetched at build time (into `managed_components/`) are
 under their own licenses.
