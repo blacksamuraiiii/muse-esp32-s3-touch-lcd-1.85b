@@ -39,7 +39,9 @@
 #include "muse_console.h"
 #include "muse_link.h"
 #include "muse_mem.h"
+#include "muse_interact_ui.h"
 #include "muse_menu.h"
+#include "muse_pet.h"
 #include "muse_pixel.h"
 #include "muse_rtc.h"
 #include "muse_settings.h"
@@ -118,8 +120,9 @@ bool muse_ui_face_active(void)
 {
     return s_face_active;
 }
+static lv_obj_t *s_interact;
 static lv_obj_t *s_settings;
-static lv_obj_t *s_dots[2];
+static lv_obj_t *s_dots[3];
 static lv_obj_t *s_wifi_icon;
 static lv_obj_t *s_ble_icon;
 static lv_obj_t *s_cover;
@@ -547,7 +550,30 @@ static void on_aux_clicked(lv_event_t *e)
 static void on_canvas_clicked(lv_event_t *e)
 {
     (void)e;
+    /* Sync channel, unchanged: the face goes happy immediately. */
     muse_state_make_happy();
+    /* Async channel (design §5.1): coins go through the pet worker's
+     * feedback queue. Guards, in order -- all must hold, else only the
+     * happy channel runs and no coins move. */
+    if (muse_state_mode(NULL) != MUSE_MODE_IDLE) {
+        return;
+    }
+    if (!muse_ui_face_active()) {
+        return;
+    }
+    if (muse_ui_dark()) {
+        return;
+    }
+    if (s_indev) {
+        lv_point_t pt;
+        lv_indev_get_point(s_indev, &pt);
+        if (muse_ui_face_control_at(pt.x, pt.y)) {
+            return;
+        }
+    }
+    if (!muse_pet_request(PET_TOUCH)) {
+        muse_interact_ui_touch_failed();
+    }
 }
 
 static const lv_font_t *font_pick(const lv_font_t *full, const lv_font_t *compact)
@@ -946,7 +972,15 @@ static void build_screen(void)
         lv_obj_set_style_bg_color(s_tv, lv_color_black(), 0);
         lv_obj_set_style_bg_opa(s_tv, LV_OPA_COVER, 0);
         lv_obj_set_scrollbar_mode(s_tv, LV_SCROLLBAR_MODE_OFF);
-        s_face = lv_tileview_add_tile(s_tv, 0, 0, LV_DIR_RIGHT);
+        /* Order is interaction, face, settings (design §2). Direction constants
+         * follow the 1.4d pattern verbatim: a tile's direction is where you can
+         * GO FROM it, so the face (middle) gets LEFT|RIGHT, not a guessed
+         * "left swipe / right swipe" mapping. */
+        s_interact = lv_tileview_add_tile(s_tv, 0, 0, LV_DIR_RIGHT);
+        lv_obj_set_scrollbar_mode(s_interact, LV_SCROLLBAR_MODE_OFF);
+        lv_obj_set_style_bg_color(s_interact, lv_color_black(), 0);
+        lv_obj_set_style_bg_opa(s_interact, LV_OPA_COVER, 0);
+        s_face = lv_tileview_add_tile(s_tv, 1, 0, LV_DIR_LEFT | LV_DIR_RIGHT);
         /* It never scrolls, but LVGL would size its scrollbars from all its
          * children every time it draws any part of it. */
         lv_obj_set_scrollbar_mode(s_face, LV_SCROLLBAR_MODE_OFF);
@@ -954,7 +988,7 @@ static void build_screen(void)
          * shows as a different-coloured square around the character. */
         lv_obj_set_style_bg_color(s_face, lv_color_black(), 0);
         lv_obj_set_style_bg_opa(s_face, LV_OPA_COVER, 0);
-        s_settings = lv_tileview_add_tile(s_tv, 1, 0, LV_DIR_LEFT);
+        s_settings = lv_tileview_add_tile(s_tv, 2, 0, LV_DIR_LEFT);
         lv_obj_add_event_cb(s_tv, tile_changed_cb, LV_EVENT_VALUE_CHANGED, NULL);
         face = s_face;
     }
@@ -1276,7 +1310,7 @@ static void build_overlays(void)
     lv_obj_t *scr = lv_screen_active();
 
     /* Page dots. */
-    for (int i = 0; i < 2 && s_tv; i++) {
+    for (int i = 0; i < 3 && s_tv; i++) {
         lv_obj_t *d = lv_obj_create(scr);
         lv_obj_remove_style_all(d);
         lv_obj_set_size(d, 8, 8);
@@ -1284,7 +1318,7 @@ static void build_overlays(void)
         lv_obj_set_style_bg_opa(d, LV_OPA_COVER, 0);
         lv_obj_set_style_bg_color(d, lv_color_hex(COLOR_DOT_OFF), 0);
         lv_obj_remove_flag(d, LV_OBJ_FLAG_CLICKABLE);
-        lv_obj_align(d, LV_ALIGN_BOTTOM_MID, i ? 8 : -8, -14);
+        lv_obj_align(d, LV_ALIGN_BOTTOM_MID, (i - 1) * 16, -14);
         s_dots[i] = d;
     }
 
@@ -1439,21 +1473,32 @@ static void update_chrome(float now)
     s_next_settings_tick = now + SETTINGS_TICK_S;
 
     if (s_tv) {
-        int page = lv_tileview_get_tile_active(s_tv) == s_settings;
+        lv_obj_t *active = lv_tileview_get_tile_active(s_tv);
+        int page = active == s_interact ? 0 : (active == s_face ? 1 : 2);
         bool subpage = muse_settings_ui_in_subpage();
-        bool swipe = !page || !subpage;
+        bool swipe = !(page == 2 && subpage);
+        /* NOTE: the interaction tile does NOT use set_swipe_enabled-style
+         * subpage locking (design §5.2): tile swipe stays enabled inside
+         * interaction subpages, so `swipe` here only ever locks for
+         * settings subpages. Do not extend this to page 0. */
         if (swipe != lv_obj_has_flag(s_tv, LV_OBJ_FLAG_SCROLLABLE)) {
             lv_obj_set_flag(s_tv, LV_OBJ_FLAG_SCROLLABLE, swipe);
         }
-        int shown = page * 2 + subpage;
+        int shown = page * 3 + (subpage ? 1 : 0);
         if (shown != s_shown_page) {
-            for (int i = 0; i < 2; i++) {
+            for (int i = 0; i < 3; i++) {
                 lv_obj_set_style_bg_color(s_dots[i], lv_color_hex(i == page ? COLOR_ACCENT : COLOR_DOT_OFF), 0);
-                lv_obj_set_flag(s_dots[i], LV_OBJ_FLAG_HIDDEN, page && subpage);
+                /* Dots hide ONLY on a settings subpage. An interaction
+                 * subpage is not a top-level tile change, so the dots stay. */
+                lv_obj_set_flag(s_dots[i], LV_OBJ_FLAG_HIDDEN, page == 2 && subpage);
             }
             s_shown_page = shown;
         }
-        muse_settings_ui_tick(lv_obj_get_scroll_x(s_tv) > 0);
+        /* The old form was scroll_x > 0, which was "on the settings page" when
+         * the face was at (0,0) and settings at (1,0). With three tiles the
+         * face is at (1,0), so scroll_x > 0 is also true on the face page and
+         * would tick the settings UI there. Compare the active tile instead. */
+        muse_settings_ui_tick(active == s_settings);
     }
 
     /* Joining, the icon blinks: the compact layout has no state label. */
@@ -1765,6 +1810,23 @@ void muse_ui_request_snapshot(void)
 
 static void frame_tick(lv_timer_t *timer)
 {
+    /* Interaction tick runs every frame, BEFORE any early return below:
+     * it drains the pet feedback queue (a full queue stalls the worker,
+     * phase 1), expires the pet caption, and advances the game animation.
+     * It must not be gated on the face being visible or on the scroll
+     * position -- feedback can arrive while the user is on another tile,
+     * and the decay notice must be able to announce on the next IDLE
+     * frame even if the interaction tile was never opened. */
+    if (s_tv) {
+        lv_obj_t *active = lv_tileview_get_tile_active(s_tv);
+        static bool was_interact = false;
+        bool is_interact = (active == s_interact);
+        if (was_interact && !is_interact) {
+            muse_interact_ui_on_hidden();
+        }
+        was_interact = is_interact;
+        muse_interact_ui_tick(is_interact);
+    }
 #if LV_USE_SNAPSHOT
     if (s_bench_page >= 0) {
         bool settings = s_bench_page != 0;
@@ -1801,9 +1863,10 @@ static void frame_tick(lv_timer_t *timer)
     if (s_image_dsc.data) {
         return;   /* the image covers the face */
     }
-    if (s_tv && lv_obj_get_scroll_x(s_tv) != 0) {
-        /* Off screen, or sliding to or from settings: hold still so the
-         * slide gets the whole frame time. */
+    if (s_tv && lv_obj_get_scroll_x(s_tv) != s_w) {
+        /* Face not fully on screen (off screen, or mid-slide): hold still
+         * so the slide gets the whole frame time. Face is the middle tile,
+         * so its fully-visible scroll offset is one screen width. */
         return;
     }
 
@@ -1870,7 +1933,16 @@ esp_err_t muse_ui_start(void)
     } else {
         muse_menu_build(lv_screen_active(), s_w, s_h);
     }
+    if (s_interact) {
+        muse_interact_ui_build(s_interact);
+    }
     build_overlays();
+    /* Tileview defaults to its FIRST tile, which is now the interaction tile.
+     * Without this line the device would boot onto the interaction tile.
+     * The default home is still the face (design §2). */
+    if (s_tv) {
+        lv_tileview_set_tile(s_tv, s_face, LV_ANIM_OFF);
+    }
     lv_timer_create(frame_tick, muse_board->frame_ms, NULL);
     s_ready = true;
     muse_board->display_unlock();

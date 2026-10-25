@@ -99,6 +99,8 @@ typedef struct {
     uint16_t knobs_applied;  /* successful API/config readback, not measured savings */
     int configured_volume;  /* API programmed, not an analog measurement */
     int battery_mv;         /* 0 if unavailable or divider rail off */
+    int avg_ma;             /* gauge average current (BQ27220 AverageCurrent),
+                             * negative while discharging; 0 when never sampled */
     uint32_t io_frames;      /* successful I2S frames during this state */
     uint32_t adc_samples;
     uint32_t wifi_scans;

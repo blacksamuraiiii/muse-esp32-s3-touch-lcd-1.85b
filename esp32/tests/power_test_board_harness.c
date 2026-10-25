@@ -221,14 +221,15 @@ static esp_err_t i2c_master_probe(i2c_master_bus_handle_t bus, unsigned addr, in
 typedef void *esp_codec_dev_handle_t;
 typedef void *SemaphoreHandle_t;
 typedef void *i2s_chan_handle_t;
-typedef struct { int battery_mv; } muse_power_t;
+typedef struct { int battery_mv; int battery_ma; } muse_power_t;
 static int ledc_duty;
 static unsigned ledc_get_duty(int mode, int channel) { (void)mode; (void)channel; return (unsigned)ledc_duty; }
 static int64_t now_us;
 static int64_t esp_timer_get_time(void) { return now_us; }
 static int battery_mv = 3900;
+static int battery_ma = -42;
 static unsigned power_reads;
-static esp_err_t read_power(muse_power_t *p) { ESP_RETURN_ON_ERROR(fault("read_power"), TAG, ""); power_reads++; p->battery_mv = battery_mv; return ESP_OK; }
+static esp_err_t read_power(muse_power_t *p) { ESP_RETURN_ON_ERROR(fault("read_power"), TAG, ""); power_reads++; p->battery_mv = battery_mv; p->battery_ma = battery_ma; return ESP_OK; }
 static int16_t i2s_buf[320];
 static size_t i2s_short;
 static esp_err_t i2s_channel_read(i2s_chan_handle_t h, void *buf, size_t n, size_t *done, int timeout)
@@ -568,7 +569,7 @@ static void scenario_apply_guards_and_order(void)
              EXP_PWR_SYSTEM, EXP_PWR_SYSTEM, EXP_PWR_SYSTEM, EXP_PWR_SYSTEM | EXP_PWR_CODEC_PA);
     if (strcmp(log_buf, want)) { fprintf(stderr, "order: %s\n want: %s\n", log_buf, want); exit(1); }
     CHECK(s_ptest_knobs == 0 && hiz(40)); /* previous knobs reverted */
-    CHECK(s_ptest_frames == 0 && s_ptest_adc_samples == 0 && s_ptest_battery_mv == 0);
+    CHECK(s_ptest_frames == 0 && s_ptest_adc_samples == 0 && s_ptest_battery_mv == 0 && s_ptest_avg_ma == 0);
     CHECK(s_ptest_expected_duty == 511 && s_ptest_load == MUSE_PTEST_SINE);
 
     /* Leaving audio closes it; ADC sampling powers the divider and inits ADC. */
@@ -718,7 +719,7 @@ static void scenario_service(void)
     CHECK(muse_ptest_board_apply(&s) == ESP_OK);
     now_us = 5000000;
     CHECK(muse_ptest_board_service(MUSE_PTEST_ADC_SAMPLE) == ESP_OK && power_reads == 1);
-    CHECK(s_ptest_battery_mv == 3900 && s_ptest_adc_samples == 8);
+    CHECK(s_ptest_battery_mv == 3900 && s_ptest_avg_ma == -42 && s_ptest_adc_samples == 8);
     now_us += 999999;
     CHECK(muse_ptest_board_service(MUSE_PTEST_ADC_SAMPLE) == ESP_OK && power_reads == 1); /* 1 Hz */
     now_us += 1;
