@@ -70,7 +70,14 @@ endforeach()
 if(GADGET_BUILD_TYPE STREQUAL "test" AND NOT DEFINED PROJECT_VER)
     file(STRINGS "${GADGET_SOURCE_DIR}/version.txt" GADGET_VERSION)
     if(GADGET_VERSION)
-        set(PROJECT_VER "${GADGET_VERSION}-test")
+        # A version that already ends in a letter (1.4a, 1.4d) is a test version by
+        # itself: the letter is the test marker, so no "-test" is appended. A plain
+        # numeric version (1.4) is a release version, and its test image says so.
+        if(GADGET_VERSION MATCHES "[a-z]$")
+            set(PROJECT_VER "${GADGET_VERSION}")
+        else()
+            set(PROJECT_VER "${GADGET_VERSION}-test")
+        endif()
     endif()
 endif()
 

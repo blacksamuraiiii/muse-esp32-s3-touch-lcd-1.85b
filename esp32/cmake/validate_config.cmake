@@ -136,10 +136,10 @@ if(CONFIG_MUSE_BUILD_TEST)
             "a Test image needs its *_test.csv table (the FAT telemetry partition lives there). "
             "Set CONFIG_PARTITION_TABLE_CUSTOM_FILENAME in the Test overlay. ${GADGET_CONFIG_REGEN_HINT}")
     endif()
-    if(DEFINED PROJECT_VER AND NOT PROJECT_VER MATCHES "-test$")
+    if(DEFINED PROJECT_VER AND NOT PROJECT_VER MATCHES "(-test|[a-z])$")
         message(FATAL_ERROR
-            "Test build reporting version \"${PROJECT_VER}\": the version must carry the "
-            "-test suffix so a test image cannot be mistaken for a release one. "
+            "Test build reporting version \"${PROJECT_VER}\": a test version must say so - "
+            "either a letter suffix (1.4d) or the -test suffix on a numeric version. "
             "Build through tools/muse/board.sh (it passes the SDKCONFIG_DEFAULTS chain this "
             "reads), or set PROJECT_VER by hand. ${GADGET_CONFIG_REGEN_HINT}")
     endif()
@@ -155,5 +155,11 @@ elseif(CONFIG_MUSE_BUILD_RELEASE)
         message(FATAL_ERROR
             "Release build version \"${PROJECT_VER}\": the -test suffix belongs to "
             "the Test build type only. ${GADGET_CONFIG_REGEN_HINT}")
+    endif()
+    if(DEFINED PROJECT_VER AND PROJECT_VER MATCHES "[a-z]$")
+        message(FATAL_ERROR
+            "Release build version \"${PROJECT_VER}\": a version ending in a letter (1.4d) "
+            "is a test version, so a Release image must not carry one. Build it with the Test "
+            "overlay, or drop the letter for a release. ${GADGET_CONFIG_REGEN_HINT}")
     endif()
 endif()
