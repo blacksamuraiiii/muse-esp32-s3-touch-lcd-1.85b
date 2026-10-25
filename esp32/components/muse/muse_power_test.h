@@ -99,8 +99,6 @@ typedef struct {
     uint16_t knobs_applied;  /* successful API/config readback, not measured savings */
     int configured_volume;  /* API programmed, not an analog measurement */
     int battery_mv;         /* 0 if unavailable or divider rail off */
-    int avg_ma;             /* gauge average current (BQ27220 AverageCurrent),
-                             * negative while discharging; 0 when never sampled */
     uint32_t io_frames;      /* successful I2S frames during this state */
     uint32_t adc_samples;
     uint32_t wifi_scans;
@@ -108,6 +106,10 @@ typedef struct {
     int16_t pm_min_mhz, pm_max_mhz;
     bool auto_light_sleep;
     int16_t cpu_readback_mhz; /* instantaneous clock at the boundary */
+    /* Gauge average current (BQ27220 AverageCurrent), negative while
+     * discharging; 0 when never sampled. int16 keeps the RTC-saved run_t
+     * inside its 7680-byte budget: it sits in the padding before slept_us. */
+    int16_t avg_ma;
     int64_t slept_us;        /* measured automatic light sleep, if enabled */
     uint32_t sleep_count;
 } muse_ptest_readback_t;
