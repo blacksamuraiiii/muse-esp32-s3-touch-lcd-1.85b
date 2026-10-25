@@ -12,7 +12,7 @@
  *   - Main page: three buttons, LIST_W 330, ROW_H 58, first row at
  *     LIST_TOP 84, 8px gaps (84 / 150 / 216). Status line 1 at y ~285,
  *     status line 2 at y ~308; the result note SHARES the line-2 slot
- *     while a result exists (see the note in show_note() -- the circle
+ *     while a result exists (see game_hint() -- the circle
  *     chord at the bottom cannot fit buttons + two status lines + a
  *     separate note line, and the note must not be a third line that
  *     gets clipped. On leaving the tile the note is cleared and line 2
@@ -125,7 +125,7 @@ static lv_obj_t *s_btn_feed, *s_btn_game, *s_btn_fortune;
 static lv_obj_t *s_btn_feed_lbl, *s_btn_game_lbl, *s_btn_fortune_lbl;
 static int s_last_feed_idx;
 static uint32_t s_last_feed_before;
-static lv_obj_t *s_status1, *s_note;
+static lv_obj_t *s_status1;
 static lv_obj_t *s_feed_cards[3];
 static lv_obj_t *s_feed_note;   /* result line on the feed subpage itself */
 static lv_obj_t *s_game_choices[3];
@@ -262,13 +262,17 @@ static void on_back(lv_event_t *e)
     }
 }
 
-static void show_note(const char *text)
+/* The game subpage writes a refusal ("金币不够…") into its own result slot:
+ * the interaction main page carries the coin line only (user decision
+ * 2026-10-25), so nothing prints a note below it any more. */
+static void game_hint(const char *text)
 {
-    /* The note shares the status-line-2 slot while a result exists (see
-     * the file header). Hiding line 2 is what makes room for it without
-     * pushing anything off the bottom chord of the circle. */
-    lv_label_set_text(s_note, text);
-    lv_obj_remove_flag(s_note, LV_OBJ_FLAG_HIDDEN);
+    if (!s_game_result_lbl) {
+        return;
+    }
+    lv_obj_set_style_text_color(s_game_result_lbl, lv_color_hex(IC_DIM), 0);
+    lv_label_set_text(s_game_result_lbl, text);
+    lv_obj_remove_flag(s_game_result_lbl, LV_OBJ_FLAG_HIDDEN);
 }
 
 /* The feed subpage keeps its own result line: a feed no longer closes the
@@ -280,12 +284,6 @@ static void feed_note(const char *text)
         return;
     }
     lv_label_set_text(s_feed_note, text);
-}
-
-static void clear_note(void)
-{
-    lv_label_set_text(s_note, "");
-    lv_obj_add_flag(s_note, LV_OBJ_FLAG_HIDDEN);
 }
 
 static void refresh_status(void)
@@ -458,7 +456,6 @@ static void on_feed_food(lv_event_t *e)
     if (!muse_pet_request(act)) {
         write_pet_caption("互动未就绪");
         feed_note("互动未就绪");
-        show_note("互动未就绪");
         return;
     }
     /* Stay on the feed page (user decision 2026-10-25): the result lands
@@ -584,7 +581,7 @@ static void game_start(int choice)
         /* Poor, checked against the last snapshot before any settlement
          * (design §5.2: coins < 5 never settles, never starts a round). */
         write_pet_caption("金币不够，先摸摸 / 喂饭 / 抽运势");
-        show_note("金币不够，先摸摸 / 喂饭 / 抽运势");
+        game_hint("金币不够，先摸摸 / 喂饭 / 抽运势");
         return;
     }
     /* The result is decided NOW, at click time (design §5.2), and 1.5a
@@ -598,7 +595,6 @@ static void game_start(int choice)
     int outcome = game_result(player, house);
     if (!muse_pet_request_game(outcome)) {
         write_pet_caption("互动未就绪");
-        show_note("互动未就绪");
         return;
     }
     s_game_player = player;
@@ -731,7 +727,6 @@ static void on_fortune_open(lv_event_t *e)
      * designed behaviour, not a bug. */
     if (!muse_pet_request(PET_FORTUNE)) {
         write_pet_caption("互动未就绪");
-        show_note("互动未就绪");
         return;
     }
     show_page(IC_PAGE_FORTUNE);
@@ -783,21 +778,17 @@ static void drain_feedback(void)
                 if (paid && !s_last_feed_before) {
                     snprintf(buf, sizeof(buf), "喂了%s +10 金币", food);
                     muse_state_make_happy();
-                    show_note(buf);
                     feed_note(buf);
                 } else {
                     snprintf(buf, sizeof(buf), "喂了%s（今天已经喂过）", food);
-                    show_note(buf);
                     feed_note(buf);
                 }
                 write_pet_caption(buf);
             } else if (fb.result == PET_STORAGE) {
                 write_pet_caption("互动数据损坏");
-                show_note("互动数据损坏");
                 feed_note("互动数据损坏");
             } else {
                 write_pet_caption("互动未就绪");
-                show_note("互动未就绪");
                 feed_note("互动未就绪");
             }
             break;
@@ -809,7 +800,7 @@ static void drain_feedback(void)
                  * (which was only a reveal of a never-started game). */
                 reset_game_view();
                 write_pet_caption("金币不够，先摸摸 / 喂饭");
-                show_note("金币不够，先摸摸 / 喂饭");
+                game_hint("金币不够，先摸摸 / 喂饭");
             } else if (fb.result == PET_OK) {
                 /* Deduction confirmed; the outcome was already decided
                  * at click time, so nothing more to do here. If the
@@ -819,7 +810,6 @@ static void drain_feedback(void)
             } else if (fb.result == PET_STORAGE) {
                 reset_game_view();
                 write_pet_caption("互动数据损坏");
-                show_note("互动数据损坏");
             }
             break;
         case PET_FORTUNE:
@@ -839,10 +829,8 @@ static void drain_feedback(void)
                              grade ? grade : "吉");
                 }
                 write_pet_caption(buf);
-                show_note(buf);
             } else if (fb.result == PET_STORAGE) {
                 write_pet_caption("互动数据损坏");
-                show_note("互动数据损坏");
             }
             break;
         default:
@@ -906,12 +894,6 @@ static void build_main(void)
      * left and let the bezel cut its ends (user report, 1.5a). */
     s_status1 = label(s_main_page, cjk_font(), IC_TEXT, "金币 --/100");
     lv_obj_align(s_status1, LV_ALIGN_TOP_MID, 0, 280);
-    s_note = label(s_main_page, cjk_font(), IC_TEXT, "");
-    lv_obj_align(s_note, LV_ALIGN_TOP_MID, 0, 302);
-    lv_obj_add_flag(s_note, LV_OBJ_FLAG_HIDDEN);
-    lv_label_set_long_mode(s_note, LV_LABEL_LONG_DOT);
-    lv_obj_set_width(s_note, 240);
-    lv_obj_set_style_text_align(s_note, LV_TEXT_ALIGN_CENTER, 0);
 }
 
 static void build_feed(void)
@@ -981,7 +963,12 @@ static void build_game(void)
      * image -- no text (user decision: image click, not text button). */
     int total = 3 * IC_GAME_CHOICE + 2 * 8;
     int x0 = (360 - total) / 2;
+    /* Left-to-right order 石头 / 剪刀 / 布 (user decision 2026-10-25). Slot
+     * order is NOT the hand index: user_data keeps the real hand so
+     * game_result() and the assets stay keyed to rock/paper/scissors. */
+    static const int hand_order[3] = {0, 2, 1};
     for (int i = 0; i < 3; i++) {
+        const int hand = hand_order[i];
         lv_obj_t *b = lv_btn_create(s_game_page);
         lv_obj_set_size(b, IC_GAME_CHOICE, IC_GAME_CHOICE);
         lv_obj_set_pos(b, x0 + i * (IC_GAME_CHOICE + 8), 120);
@@ -990,7 +977,7 @@ static void build_game(void)
         lv_obj_set_style_bg_color(b, lv_color_hex(IC_PRESSED), LV_STATE_PRESSED);
         lv_obj_set_style_radius(b, IC_RADIUS, 0);
         lv_obj_t *img = lv_image_create(b);
-        lv_image_set_src(img, hand_img(i));
+        lv_image_set_src(img, hand_img(hand));
         /* The master asset is 128 px; the row is 100 px. Scale to ~80 px so
          * the hands sit inside the button instead of overrunning it. */
         lv_image_set_scale(img, (uint16_t)(256 * (IC_GAME_CHOICE - 20) / 128));
@@ -1001,7 +988,7 @@ static void build_game(void)
          * clear the same flag; this page was missing it (user report,
          * 1.5a: "点击卡片没有效果"). */
         lv_obj_remove_flag(img, LV_OBJ_FLAG_CLICKABLE);
-        lv_obj_add_event_cb(b, on_game_choice, LV_EVENT_CLICKED, (void *)(intptr_t)i);
+        lv_obj_add_event_cb(b, on_game_choice, LV_EVENT_CLICKED, (void *)(intptr_t)hand);
         s_game_choices[i] = b;
         s_game_choice_base_x[i] = x0 + i * (IC_GAME_CHOICE + 8);
     }
@@ -1028,6 +1015,12 @@ static void build_game(void)
     lv_obj_add_flag(s_game_chant_lbl, LV_OBJ_FLAG_HIDDEN);
     s_game_result_lbl = label(s_game_page, cjk_font(), IC_TEXT, "");
     lv_obj_align(s_game_result_lbl, LV_ALIGN_TOP_MID, 0, 240);
+    /* Also carries the "金币不够" refusal now, which is a full sentence: cap
+     * the width to the circle's chord and centre it instead of letting a long
+     * line run off both sides. */
+    lv_obj_set_width(s_game_result_lbl, 280);
+    lv_label_set_long_mode(s_game_result_lbl, LV_LABEL_LONG_DOT);
+    lv_obj_set_style_text_align(s_game_result_lbl, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_add_flag(s_game_result_lbl, LV_OBJ_FLAG_HIDDEN);
     s_game_streak_lbl = label(s_game_page, cjk_font(), IC_DIM, "");
     lv_obj_align(s_game_streak_lbl, LV_ALIGN_TOP_MID, 0, 272);
@@ -1090,7 +1083,8 @@ void muse_interact_ui_build(lv_obj_t *tile)
 
 void muse_interact_ui_on_hidden(void)
 {
-    clear_note();
+    /* No note line to clear any more: the coin line is a live status and the
+     * subpages own their own hint slots (user decision 2026-10-25). */
     reset_game_view();
     show_page(IC_PAGE_MAIN);
 }
@@ -1141,13 +1135,11 @@ void muse_interact_ui_tick(bool active)
         if (!s_storage_noted && muse_state_mode(NULL) == MUSE_MODE_IDLE) {
             s_storage_noted = true;
             write_pet_caption("互动数据损坏");
-            show_note("互动数据损坏");
         }
     } else if (!muse_pet_ready()) {
         if (!s_unready_noted && muse_state_mode(NULL) == MUSE_MODE_IDLE) {
             s_unready_noted = true;
             write_pet_caption("互动未就绪");
-            show_note("互动未就绪");
         }
     }
 
@@ -1162,7 +1154,6 @@ void muse_interact_ui_tick(bool active)
         snprintf(buf, sizeof(buf), "毛毛这几天花了 %lu 金币",
                  (unsigned long)s_snap.decay_notice);
         write_pet_caption(buf);
-        show_note(buf);
         s_decay_announced_day = s_snap.decay_day;
         /* ACK after showing, not before: if the ACK raced the caption,
          * the next snapshot would have notice 0 and the amount would
