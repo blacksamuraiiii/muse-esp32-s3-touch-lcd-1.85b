@@ -35,13 +35,13 @@ tts-server/.env
 virtual-avatar/preview/
 virtual-avatar/maomao/
 
-# Internal working notes: dated to-do lists, progress logs, code reviews and
-# ad-hoc analysis. Kept locally for the work itself, never part of the firmware
-# or of the published project.
-/notes/
-
 # Machine-local sdkconfig overlay (TTS endpoint, Wi-Fi, static IP). Loaded last
 # by tools/muse/board.sh so it survives deleting the build directory; never
 # committed, because it holds addresses and possibly credentials.
 esp32/devices/sdkconfig.local
-esp32/*.ps1 is a local build helper
+# Local build / flash helper scripts (machine-specific paths and port names).
+esp32/*.ps1
+esp32/build-*.log
+esp32/flash-*.log
+esp32/reconf.log
+esp32/probe_build.log
