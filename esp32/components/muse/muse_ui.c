@@ -588,17 +588,46 @@ static const lv_font_t *font_pick(const lv_font_t *full, const lv_font_t *compac
 #if CONFIG_MUSE_CJK_FONT
 LV_FONT_DECLARE(muse_font_cjk_16)
 LV_FONT_DECLARE(muse_font_cjk_20)
+LV_FONT_DECLARE(muse_font_ui_16)
+#endif
+
+#if CONFIG_MUSE_CJK_FONT
+/* Full-coverage CJK: Unifont's 16x16 bitmap, plus Montserrat for the ASCII the
+ * CJK faces do not carry. Only reached for characters outside the UI subset. */
+static const lv_font_t *cjk_face(void)
+{
+    static lv_font_t font;
+    if (!font.get_glyph_dsc) {
+        font = muse_font_cjk_16;
+        font.fallback = &lv_font_montserrat_16;
+    }
+    return &font;
+}
+
+/* The antialiased UI subset (tools/muse/gen_ui_font.sh). Unifont is 1bpp, so at
+ * 16 px its Hanzi are hard one-pixel strokes next to unscii's smooth Latin --
+ * that is what made the caption copy look blurry (user report 2026-10-25). */
+static const lv_font_t *ui_cjk_face(void)
+{
+    static lv_font_t font;
+    if (!font.get_glyph_dsc) {
+        font = muse_font_ui_16;
+        font.fallback = cjk_face();
+    }
+    return &font;
+}
 #endif
 
 /* unscii-16 for captions and replies; with CONFIG_MUSE_CJK_FONT, a copy that
- * falls back to Unifont's 16x16 CJK, the same cell, for what unscii lacks. */
+ * falls back to the 16 px antialiased CJK subset, the same cell, for what
+ * unscii lacks. */
 static const lv_font_t *caption_font(void)
 {
 #if CONFIG_MUSE_CJK_FONT
     static lv_font_t font;
     if (!font.get_glyph_dsc) {
         font = lv_font_unscii_16;
-        font.fallback = &muse_font_cjk_16;
+        font.fallback = ui_cjk_face();
     }
     return &font;
 #else
@@ -616,7 +645,7 @@ static const lv_font_t *reply_font(bool cjk)
     static lv_font_t font;
     if (!font.get_glyph_dsc) {
         font = muse_font_cjk_20;
-        font.fallback = &muse_font_cjk_16;
+        font.fallback = ui_cjk_face();
     }
     return cjk ? &font : caption_font();
 #else
