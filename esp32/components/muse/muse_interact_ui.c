@@ -167,16 +167,32 @@ static bool s_have_snap;
 
 #if CONFIG_MUSE_CJK_FONT
 LV_FONT_DECLARE(muse_font_cjk_16)
-/* Unifont's 16x16 CJK face carries NO ASCII at all -- gen_cjk_font.sh starts
- * its ranges at U+3000 -- so every space, digit, '+' and '/' in a Chinese
- * line used to draw as a tofu box (user photo, 1.5a). Falling back to
- * Montserrat fills exactly those holes; the Hanzi stay on Unifont. */
-static const lv_font_t *cjk_font(void)
+LV_FONT_DECLARE(muse_font_ui_16)
+/* Long-tail CJK, and the ASCII the CJK faces lack: Unifont's 16x16 bitmap
+ * starts at U+3000, so every space, digit and '+' in a Chinese line used to
+ * draw as a tofu box (user photo, 1.5a). Montserrat fills exactly those. */
+static const lv_font_t *cjk_fallback_font(void)
 {
     static lv_font_t font;
     if (!font.get_glyph_dsc) {
         font = muse_font_cjk_16;
         font.fallback = &lv_font_montserrat_16;
+    }
+    return &font;
+}
+
+/* Interface copy: 16 px WenQuanYi Micro Hei at 4bpp, antialiased, subset to
+ * the characters the sources actually use (tools/muse/gen_ui_font.sh). Unifont
+ * is 1bpp, i.e. hard one-pixel strokes -- that is why the Hanzi looked rougher
+ * than the Latin text next to it (user report 2026-10-25). A character outside
+ * the subset falls back to the full Unifont face, so new copy never shows a
+ * box, it only looks less smooth until the subset is regenerated. */
+static const lv_font_t *cjk_font(void)
+{
+    static lv_font_t font;
+    if (!font.get_glyph_dsc) {
+        font = muse_font_ui_16;
+        font.fallback = cjk_fallback_font();
     }
     return &font;
 }
@@ -189,7 +205,7 @@ static const lv_font_t *btn_font(void)
     static lv_font_t font;
     if (!font.get_glyph_dsc) {
         font = lv_font_montserrat_20;
-        font.fallback = &muse_font_cjk_16;
+        font.fallback = cjk_font();
     }
     return &font;
 }

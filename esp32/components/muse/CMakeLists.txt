@@ -66,6 +66,7 @@ if(CONFIG_MUSE_ENABLED)
     if(CONFIG_MUSE_CJK_FONT)
         list(APPEND srcs "fonts/muse_font_cjk_16.c")   # captions' CJK fallback
         list(APPEND srcs "fonts/muse_font_cjk_20.c")   # 20 px CJK for replies
+        list(APPEND srcs "fonts/muse_font_ui_16.c")    # 16 px 4bpp UI subset (antialiased)
     endif()
     # Your own character (tools/muse/AVATAR_RECIPE.md) stands in for the default
     # avatar when avatar/muse_pixel.c exists here; this avatar/ is gitignored. The
