@@ -187,6 +187,7 @@ static esp_err_t fw_readback(muse_ptest_readback_t *out)
     out->knobs_applied = applied_knobs;
     out->configured_volume = out->codecs_open ? 25 : 0;
     out->battery_mv = adc_samples ? 3700 : 0;
+    out->avg_ma = adc_samples ? -42 : 0;
     out->io_frames = frames;
     out->adc_samples = adc_samples;
     out->wifi_scans = scans;

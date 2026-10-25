@@ -26,6 +26,7 @@
 #include "muse_ble.h"
 #include "muse_chat.h"
 #include "muse_input.h"
+#include "muse_pet.h"
 #include "muse_settings.h"
 #include "muse_state.h"
 #include "muse_rtc.h"
@@ -87,6 +88,10 @@ void muse_app_run(const muse_board_t *board)
                   "in; this image is not for the release channel");
 #endif
     muse_time_start();
+    /* 1.5a pet worker: after the clock is adopted, before UI/voice start.
+     * muse_pet_start() never blocks and never aborts the app: on failure it
+     * only logs, and muse_pet_request() then returns false. */
+    muse_pet_start();
 #if CONFIG_MUSE_TELEMETRY
     /* Test only: mounts the FAT partition and starts the night recorder.
      * After the clock (every line carries a timestamp) and before the input

@@ -44,6 +44,8 @@
 #include "muse_link.h"
 #include "muse_mem.h"
 #include "muse_menu.h"
+#include "muse_pet.h"
+#include "muse_pet_text.h"
 #include "muse_settings.h"
 #include "muse_state.h"
 #include "muse_telemetry.h"
@@ -1096,6 +1098,81 @@ static void set_face(const char *name)
     fflush(stdout);
 }
 
+static const char *pet_result_name(muse_pet_result_t r)
+{
+    switch (r) {
+    case PET_OK: return "OK";
+    case PET_COIN: return "COIN";
+    case PET_CAP: return "CAP";
+    case PET_POOR: return "POOR";
+    case PET_FORTUNE_NEW: return "FORTUNE_NEW";
+    case PET_FORTUNE_SAME: return "FORTUNE_SAME";
+    case PET_STORAGE: return "STORAGE";
+    default: return "BUSY";
+    }
+}
+
+/* Wait up to ~2 s for the feedback of one action. Feedback for other actions
+ * is pushed back to the front so the console loop never swallows feedback
+ * meant for the UI (see muse_pet_feedback_requeue()). */
+static bool pet_console_wait(muse_pet_action_t action, muse_pet_feedback_t *out)
+{
+    for (int i = 0; i < 200; i++) {
+        muse_pet_feedback_t fb;
+        if (muse_pet_feedback(&fb)) {
+            if (fb.action == action) {
+                *out = fb;
+                return true;
+            }
+            if (!muse_pet_feedback_requeue(&fb)) {
+                printf("@pet feedback dropped\n");
+                fflush(stdout);
+            }
+        }
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+    return false;
+}
+
+static void pet_console_snapshot(void)
+{
+    muse_pet_model_t s;
+    if (!muse_pet_snapshot(&s)) {
+        printf("@pet snapshot unavailable ready=%d storage_error=%d\n",
+               (int)muse_pet_ready(), (int)muse_pet_storage_error());
+        fflush(stdout);
+        return;
+    }
+    printf("@pet coins=%u touch=%u feed=%u fortune_day=%d fortune=%u "
+           "decay_day=%d decay_notice=%u\n",
+           (unsigned)s.coins, (unsigned)s.daily_touch_coins,
+           (unsigned)s.daily_feed_coins, (int)s.fortune_day,
+           (unsigned)s.fortune, (int)s.decay_day, (unsigned)s.decay_notice);
+    fflush(stdout);
+}
+
+/* Send one action and print its result + snapshot. Returns false on
+ * not-ready / queue-full / timeout, so the caller prints nothing further. */
+static bool pet_console_do(muse_pet_action_t action, const char *what)
+{
+    if (!muse_pet_request(action)) {
+        printf("@pet %s error not-ready storage_error=%d\n", what,
+               (int)muse_pet_storage_error());
+        fflush(stdout);
+        return false;
+    }
+    muse_pet_feedback_t fb;
+    if (!pet_console_wait(action, &fb)) {
+        printf("@pet %s error timeout\n", what);
+        fflush(stdout);
+        return false;
+    }
+    printf("@pet %s result=%s\n", what, pet_result_name(fb.result));
+    fflush(stdout);
+    pet_console_snapshot();
+    return true;
+}
+
 /*
  * Console-only commands; false for setup commands. Their buffers are taken
  * per command: without PSRAM, static ones would hold internal RAM for good.
@@ -1406,6 +1483,81 @@ static bool console_command(char *line, bool whole)
 #endif
     if (!strncmp(line, "face=", 5)) {
         set_face(line + 5);
+        return true;
+    }
+    if (!strncmp(line, "pet.", 4)) {
+        if (!strcmp(line, "pet.status")) {
+            /* Read-only, always compiled (design §3.3: only pet.reset is
+             * Test-gated). Never invents numbers: without a snapshot it
+             * prints ready/storage_error and nothing else. */
+            if (!muse_pet_ready()) {
+                printf("@pet status ready=0 storage_error=%d\n",
+                       (int)muse_pet_storage_error());
+            } else {
+                pet_console_snapshot();
+            }
+            fflush(stdout);
+            return true;
+        }
+        if (!strcmp(line, "pet.touch")) {
+            pet_console_do(PET_TOUCH, "touch");
+            return true;
+        }
+        if (!strcmp(line, "pet.feed")) {
+            /* Console default food is rice; the three feed actions settle
+             * identically, so this verifies feed settlement, not a food. */
+            pet_console_do(PET_FEED_RICE, "feed");
+            return true;
+        }
+        if (!strcmp(line, "pet.fortune")) {
+            if (pet_console_do(PET_FORTUNE, "fortune")) {
+                muse_pet_model_t s;
+                if (muse_pet_snapshot(&s) && s.fortune_day >= 0) {
+                    const char *g = muse_pet_fortune_grade(s.fortune);
+                    const char *t = muse_pet_fortune_text(s.fortune);
+                    printf("@pet fortune grade=%s text=%s\n",
+                           g ? g : "?", t ? t : "?");
+                    fflush(stdout);
+                }
+            }
+            return true;
+        }
+        if (!strcmp(line, "pet.game")) {
+            /* Verifies the 5-coin deduction only. Win/loss randomness is
+             * phase-2 UI-side (design §5.2); the model carries no game
+             * random, so there is no result to print here beyond OK/POOR. */
+            pet_console_do(PET_GAME, "game");
+            return true;
+        }
+#if CONFIG_MUSE_BUILD_TEST
+        if (!strcmp(line, "pet.reset")) {
+            /* Destructive, Test only (design §3.3). Two paths:
+             *  - worker running: PET_RESET through the queue (race-free,
+             *    the worker is the sole NVS writer);
+             *  - worker dead (e.g. corrupt blob): erase directly, then a
+             *    reboot rebuilds fresh state (the worker re-inits on
+             *    NOT_FOUND). Never erase behind a live worker. */
+            if (muse_pet_ready()) {
+                muse_pet_feedback_t fb;
+                if (muse_pet_request(PET_RESET) &&
+                    pet_console_wait(PET_RESET, &fb) && fb.result == PET_OK) {
+                    printf("@pet reset ok\n");
+                } else {
+                    printf("@pet reset error\n");
+                }
+            } else if (muse_pet_erase_storage()) {
+                printf("@pet reset erased, reboot to rebuild\n");
+            } else {
+                printf("@pet reset erase failed\n");
+            }
+            fflush(stdout);
+            return true;
+        }
+#endif
+        /* In a Release build, pet.reset falls through to here (the #if block
+         * above is compiled out) instead of silently doing nothing. */
+        printf("@pet unknown command\n");
+        fflush(stdout);
         return true;
     }
     if (strncmp(line, "chat", 4) != 0) {

@@ -335,8 +335,8 @@ static void emit_actual(const muse_ptest_readback_t *a)
 {
     emit("{\"usb\":%s,\"charging\":%s,\"expander_input\":%u,\"expander_output\":%u,\"expander_direction\":%u,",
          a->usb ? "true" : "false", a->charging ? "true" : "false", a->input, a->output, a->direction);
-    emit("\"backlight_duty_1023\":%d,\"codecs_open\":%s,\"configured_volume\":%d,\"battery_mv\":%d,\"io_frames\":%" PRIu32 ",\"adc_samples\":%" PRIu32 ",",
-         a->backlight_duty, a->codecs_open ? "true" : "false", a->configured_volume, a->battery_mv, a->io_frames, a->adc_samples);
+    emit("\"backlight_duty_1023\":%d,\"codecs_open\":%s,\"configured_volume\":%d,\"battery_mv\":%d,\"avg_ma\":%d,\"io_frames\":%" PRIu32 ",\"adc_samples\":%" PRIu32 ",",
+         a->backlight_duty, a->codecs_open ? "true" : "false", a->configured_volume, a->battery_mv, a->avg_ma, a->io_frames, a->adc_samples);
     emit("\"wifi_started\":%s,\"wifi_scans\":%" PRIu32 ",\"pm_min_mhz\":%d,\"pm_max_mhz\":%d,\"auto_light_sleep\":%s,\"cpu_readback_mhz\":%d,\"slept_us\":%" PRId64 ",\"sleep_count\":%" PRIu32 ",",
          a->wifi_started ? "true" : "false", a->wifi_scans, a->pm_min_mhz, a->pm_max_mhz,
          a->auto_light_sleep ? "true" : "false", a->cpu_readback_mhz, a->slept_us, a->sleep_count);
