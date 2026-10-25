@@ -87,7 +87,7 @@
 #define IC_FEED_CARD 100
 #define IC_FEED_ICON 80
 #define IC_GAME_CHOICE 100
-#define IC_GAME_RESULT 130
+#define IC_HAND_RESULT 130
 #define IC_FORTUNE_CARD_W 300
 #define IC_FORTUNE_CARD_H 150
 
@@ -144,7 +144,6 @@ static int s_game_player = -1, s_game_house = -1, s_game_result; /* -1 draw */
 static int s_wins, s_losses, s_draws, s_streak; /* session only, NOT NVS */
 static bool s_game_pending; /* PET_GAME requested, feedback not yet seen */
 static bool s_touch_failed;
-static bool s_decay_pending;
 static int32_t s_decay_announced_day = -2;
 
 /* Pet caption bookkeeping: the exact text we last wrote, and when it
@@ -345,7 +344,7 @@ static void caption_tick(void)
         snprintf(cur, sizeof(cur), "%s", s_pet_caption);
     }
     if (strcmp(cur, s_pet_caption) == 0) {
-        muse_state_set_caption("");
+        muse_state_set_caption("%s", "");
     }
     s_pet_caption[0] = '\0';
 }
@@ -427,13 +426,6 @@ static const lv_image_dsc_t *hand_img(int choice)
     return &muse_interact_hand_scissors;
 }
 
-static const char *hand_name(int choice)
-{
-    if (choice == IC_ROCK) return "石头";
-    if (choice == IC_PAPER) return "布";
-    return "剪刀";
-}
-
 /* 1 beats 0, 2 beats 1, 0 beats 2 (paper wraps rock, scissors cut paper,
  * rock crushes scissors). Returns +1 player wins, -1 player loses,
  * 0 draw. This is UI-local: the model never settles win/loss (design
@@ -465,7 +457,7 @@ static void show_game_result(void)
     /* Reveal view: two hands side by side, ~130px each, in place of the
      * choice row (the choice row is hidden during the 0.8s reveal).
      * Winner gets an ACCENT border; loser is recoloured to DIM (same
-     * asset, lv_image_set_recolor -- NOT a second asset, NOT an opaque
+     * asset, the image_recolor style -- NOT a second asset, NOT an opaque
      * overlay); draw gets neither. When the reveal hold ends, the tick
      * hides the hands and brings the choice row back, keeping the result
      * text + streak visible: that is the "choice button stays for the
@@ -476,18 +468,18 @@ static void show_game_result(void)
     lv_image_set_src(s_game_house_img, hand_img(s_game_house));
     lv_obj_set_style_border_width(s_game_you_img, 0, 0);
     lv_obj_set_style_border_width(s_game_house_img, 0, 0);
-    lv_image_set_recolor(s_game_you_img, lv_color_hex(IC_TEXT));
-    lv_image_set_recolor(s_game_house_img, lv_color_hex(IC_TEXT));
+    lv_obj_set_style_image_recolor(s_game_you_img, lv_color_hex(IC_TEXT), 0);
+    lv_obj_set_style_image_recolor(s_game_house_img, lv_color_hex(IC_TEXT), 0);
     if (s_game_result > 0) {
         lv_obj_set_style_border_width(s_game_you_img, 3, 0);
         lv_obj_set_style_border_color(s_game_you_img, lv_color_hex(IC_ACCENT), 0);
-        lv_image_set_recolor(s_game_house_img, lv_color_hex(IC_DIM));
+        lv_obj_set_style_image_recolor(s_game_house_img, lv_color_hex(IC_DIM), 0);
         lv_obj_set_style_text_color(s_game_result_lbl, lv_color_hex(IC_OK), 0);
         lv_label_set_text(s_game_result_lbl, "你赢了！");
     } else if (s_game_result < 0) {
         lv_obj_set_style_border_width(s_game_house_img, 3, 0);
         lv_obj_set_style_border_color(s_game_house_img, lv_color_hex(IC_ACCENT), 0);
-        lv_image_set_recolor(s_game_you_img, lv_color_hex(IC_DIM));
+        lv_obj_set_style_image_recolor(s_game_you_img, lv_color_hex(IC_DIM), 0);
         /* No error shake on losing (design §5.5): the loser dims, it
          * does not jitter. */
         lv_obj_set_style_text_color(s_game_result_lbl, lv_color_hex(IC_DANGER), 0);
@@ -915,18 +907,18 @@ static void build_game(void)
     /* Reveal hands: same row slot, ~130px each, left = you, right = house.
      * They are created once and hidden until a reveal. */
     s_game_you_img = lv_image_create(s_game_page);
-    lv_obj_set_pos(s_game_you_img, (360 - IC_GAME_RESULT * 2 - 16) / 2, 105);
-    lv_obj_set_size(s_game_you_img, IC_GAME_RESULT, IC_GAME_RESULT);
+    lv_obj_set_pos(s_game_you_img, (360 - IC_HAND_RESULT * 2 - 16) / 2, 105);
+    lv_obj_set_size(s_game_you_img, IC_HAND_RESULT, IC_HAND_RESULT);
     lv_obj_add_flag(s_game_you_img, LV_OBJ_FLAG_HIDDEN);
     s_game_house_img = lv_image_create(s_game_page);
-    lv_obj_set_pos(s_game_house_img, (360 - IC_GAME_RESULT * 2 - 16) / 2 + IC_GAME_RESULT + 16, 105);
-    lv_obj_set_size(s_game_house_img, IC_GAME_RESULT, IC_GAME_RESULT);
+    lv_obj_set_pos(s_game_house_img, (360 - IC_HAND_RESULT * 2 - 16) / 2 + IC_HAND_RESULT + 16, 105);
+    lv_obj_set_size(s_game_house_img, IC_HAND_RESULT, IC_HAND_RESULT);
     lv_obj_add_flag(s_game_house_img, LV_OBJ_FLAG_HIDDEN);
     /* 128 px master -> 130 px reveal. The recolor set in show_game_result()
      * tints white pixels, so its opacity must be cover or the loser would
      * never dim. */
-    lv_image_set_scale(s_game_you_img, (uint16_t)(256 * IC_GAME_RESULT / 128));
-    lv_image_set_scale(s_game_house_img, (uint16_t)(256 * IC_GAME_RESULT / 128));
+    lv_image_set_scale(s_game_you_img, (uint16_t)(256 * IC_HAND_RESULT / 128));
+    lv_image_set_scale(s_game_house_img, (uint16_t)(256 * IC_HAND_RESULT / 128));
     lv_obj_set_style_image_recolor_opa(s_game_you_img, LV_OPA_COVER, 0);
     lv_obj_set_style_image_recolor_opa(s_game_house_img, LV_OPA_COVER, 0);
     /* Result area below the row slot. */
