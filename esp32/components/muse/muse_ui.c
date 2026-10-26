@@ -1104,7 +1104,7 @@ static void build_screen(void)
      * these rows, so there's nowhere to put this without covering the face. */
     lv_obj_set_flag(s_name_lbl, LV_OBJ_FLAG_HIDDEN, s_small && !s_tall && s_h < 200);
 
-    s_caption_lbl = make_label(face, font_pick(&lv_font_montserrat_14, &lv_font_unscii_8), MUSE_THEME_CAPTION);
+    s_caption_lbl = make_label(face, font_pick(muse_font_caption(), &lv_font_unscii_8), MUSE_THEME_CAPTION);
     if (s_small) {
         /* Two lines over the bottom of the face, on a dark band so they stay
          * legible. A tall screen has room to keep them above the mic icon. */
@@ -1730,7 +1730,7 @@ static void update_status(muse_mode_t mode, float now)
              * English prompts (TOO QUIET, HOLD LONGER TO TALK, RECORDING)
              * keep the Montserrat look they have always had. */
             const lv_font_t *f = muse_text_has_cjk(caption) ? muse_font_reply()
-                                                            : &lv_font_montserrat_14;
+                                                            : muse_font_caption();
             lv_obj_set_style_text_font(s_caption_lbl, f, 0);
             if (s_reply_lbl)
                 lv_obj_set_style_text_font(s_reply_lbl, f, 0);
