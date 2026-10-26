@@ -55,6 +55,12 @@ for a, b in [(0x3000, 0x303F), (0x3040, 0x30FF),
         chars.add(chr(cp))
 for ws in ("\n", "\r", "\t"):
     chars.discard(ws)
+# Drop format/control characters: the U+202A..U+202E and U+2066..U+2069 bidi
+# overrides inside 0x2000..0x206F render as nothing in the UI, and lv_font_conv
+# writes them into each glyph's comment, where GCC's -Werror=bidi-chars turns
+# the build red ("unpaired UTF-8 bidirectional control character detected").
+import unicodedata
+chars = {c for c in chars if unicodedata.category(c)[0] != "C"}
 open(chars_out, "w", encoding="utf-8").write("".join(sorted(chars)))
 print("ui font level-1 set: %d code points" % len(chars))
 # lv_font_conv reads single faces, not TTC collections: pull face 0 out first.
