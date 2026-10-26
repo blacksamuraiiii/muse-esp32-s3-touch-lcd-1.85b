@@ -38,11 +38,23 @@ const lv_font_t *muse_font_cjk(void)
 
 const lv_font_t *muse_font_caption(void)
 {
-    /* 1.5b: the antialiased face leads, so Chinese and the digits/spaces that
-     * sit inside a Chinese line share one visual size. ASCII has no glyph in
-     * either CJK face, so it lands on Montserrat 14 -- a size down from
-     * unscii_16, whose blocky digits read a size larger than the hanzi beside
-     * them (user, 1.5b). */
+    static lv_font_t font;
+    if (!font.get_glyph_dsc) {
+        font = lv_font_unscii_16;
+        font.fallback = muse_font_cjk();
+    }
+    return &font;
+}
+
+/*
+ * 1.5b: what a reply and the caption band under Muse draw with. The
+ * antialiased 16 px face leads, so the hanzi are smooth; ASCII has no glyph in
+ * either CJK face, so it lands on Montserrat 14, which reads at the same size
+ * as a 16 px hanzi. The status words, the name row and the hints keep
+ * muse_font_caption() -- the pixel look they had.
+ */
+const lv_font_t *muse_font_reply(void)
+{
     static lv_font_t ascii, font;
     if (!font.get_glyph_dsc) {
         ascii = muse_font_cjk_16;
@@ -67,6 +79,7 @@ const lv_font_t *muse_font_btn(void)
 
 const lv_font_t *muse_font_cjk(void) { return &lv_font_montserrat_16; }
 const lv_font_t *muse_font_caption(void) { return &lv_font_unscii_16; }
+const lv_font_t *muse_font_reply(void) { return &lv_font_unscii_16; }
 const lv_font_t *muse_font_btn(void) { return &lv_font_montserrat_20; }
 
 #endif

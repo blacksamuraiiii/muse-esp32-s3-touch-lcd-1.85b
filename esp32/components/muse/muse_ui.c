@@ -819,7 +819,7 @@ static void build_answer(lv_obj_t *face, int ring_in)
             spk_x = -(int)sqrtf((float)(d * d - spk_y * spk_y));
         }
     }
-    const lv_font_t *font = muse_font_caption();
+    const lv_font_t *font = muse_font_reply();
     int cw = lv_font_get_glyph_width(font, 'M', ' ');
     int pitch = lv_font_get_line_height(font) + CAPTION_LINE_SPACE;
 
@@ -996,7 +996,7 @@ static void build_screen(void)
     int ring_in = (s_w < s_h ? s_w : s_h) / 2 - 10;   /* the ring's inner edge */
     /* +4: three 20 px lines with 2 px between them need 64, and the band used
      * to be sized to the pixel -- the third row's descenders were clipped. */
-    int cap_h = 3 * lv_font_get_line_height(muse_font_caption()) + 2 * CAPTION_LINE_SPACE + 4;
+    int cap_h = 3 * lv_font_get_line_height(muse_font_reply()) + 2 * CAPTION_LINE_SPACE + 4;
     int cap_bottom = 179;                              /* a 466 px circle's; fine for rectangles */
     if (muse_board->round) {
         cap_bottom = (int)sqrtf((float)(ring_in * ring_in - CAPTION_W * CAPTION_W / 4)) - 3;
@@ -1098,7 +1098,7 @@ static void build_screen(void)
      * these rows, so there's nowhere to put this without covering the face. */
     lv_obj_set_flag(s_name_lbl, LV_OBJ_FLAG_HIDDEN, s_small && !s_tall && s_h < 200);
 
-    s_caption_lbl = make_label(face, font_pick(muse_font_caption(), &lv_font_unscii_8), MUSE_THEME_CAPTION);
+    s_caption_lbl = make_label(face, font_pick(muse_font_reply(), &lv_font_unscii_8), MUSE_THEME_CAPTION);
     if (s_small) {
         /* Two lines over the bottom of the face, on a dark band so they stay
          * legible. A tall screen has room to keep them above the mic icon. */
@@ -1133,7 +1133,7 @@ static void build_screen(void)
      * the caption chain, no separate 20 px face). Three rows is what the
      * caption band and the heard-reply box are both sized for; the read layout
      * gets four. 16 columns of 16 px fill the 256 px caption width. */
-    muse_state_set_cjk_page(CAPTION_W / lv_font_get_glyph_width(muse_font_caption(), 0x4E2D, ' '), 3);
+    muse_state_set_cjk_page(CAPTION_W / lv_font_get_glyph_width(muse_font_reply(), 0x4E2D, ' '), 3);
 #endif
 
     /* Chunky level meter. */
