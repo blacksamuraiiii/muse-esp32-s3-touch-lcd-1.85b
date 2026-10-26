@@ -1005,7 +1005,10 @@ static void build_screen(void)
     int cap_top = cap_bottom - cap_h;
     int meter_y = cap_top - 6 - METER_SEG_PX / 2;
     int art_bottom = meter_y - METER_SEG_PX / 2 - 4;
-    s_big_y = s_small ? 0 : art_bottom - (s_canvas_px / 2 - ART_BLANK_ROWS * (s_canvas_px / MUSE_PX_W));
+    /* +6: the art's bottom ART_BLANK_ROWS are empty, so Muse can sit that much
+     * lower without reaching the level meter -- which is the only way to get
+     * air between its hair and READY on a 360 px round screen. */
+    s_big_y = s_small ? 0 : art_bottom - (s_canvas_px / 2 - ART_BLANK_ROWS * (s_canvas_px / MUSE_PX_W)) + 6;
 
     /* The character. */
     muse_image_init();
@@ -1101,7 +1104,7 @@ static void build_screen(void)
      * these rows, so there's nowhere to put this without covering the face. */
     lv_obj_set_flag(s_name_lbl, LV_OBJ_FLAG_HIDDEN, s_small && !s_tall && s_h < 200);
 
-    s_caption_lbl = make_label(face, font_pick(muse_font_reply(), &lv_font_unscii_8), MUSE_THEME_CAPTION);
+    s_caption_lbl = make_label(face, font_pick(&lv_font_montserrat_14, &lv_font_unscii_8), MUSE_THEME_CAPTION);
     if (s_small) {
         /* Two lines over the bottom of the face, on a dark band so they stay
          * legible. A tall screen has room to keep them above the mic icon. */
@@ -1721,11 +1724,16 @@ static void update_status(muse_mode_t mode, float now)
 #if CONFIG_MUSE_CJK_FONT
         if (s_small) {
             lv_obj_set_style_text_font(s_caption_lbl, muse_text_has_cjk(caption) ? muse_font_caption() : &lv_font_unscii_8, 0);
-        } else if (s_reply_lbl) {
-            /* Chinese replies get the shared 16 px caption chain (1.5b),
-             * English keeps unscii-16. */
-            lv_obj_set_style_text_font(s_reply_lbl,
-                                       muse_text_has_cjk(caption) ? muse_font_caption() : muse_font_caption(), 0);
+        } else {
+            /* Chinese, and the digits and symbols beside it, in the 16 px
+             * antialiased face so nothing shifts size mid-sentence; plain
+             * English prompts (TOO QUIET, HOLD LONGER TO TALK, RECORDING)
+             * keep the Montserrat look they have always had. */
+            const lv_font_t *f = muse_text_has_cjk(caption) ? muse_font_reply()
+                                                            : &lv_font_montserrat_14;
+            lv_obj_set_style_text_font(s_caption_lbl, f, 0);
+            if (s_reply_lbl)
+                lv_obj_set_style_text_font(s_reply_lbl, f, 0);
         }
 #endif
         lv_label_set_text(lbl, caption);
