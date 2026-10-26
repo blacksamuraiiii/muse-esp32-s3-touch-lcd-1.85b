@@ -65,7 +65,7 @@ static const char *TAG = "muse_ui";
 #define METER_GAP_PX 4
 #define RING_RANGE 1000
 #define CAPTION_W 256           /* 16 columns of unscii_16, the width reply captions wrap to */
-#define CAPTION_LINE_SPACE 2
+#define CAPTION_LINE_SPACE 4
 #define ART_BLANK_ROWS 3        /* Muse's art never reaches the grid's bottom rows */
 #define MINI_CELL_PX 2          /* Muse's grid cells over a reply that's read */
 #define ANSWER_MS 300           /* Muse making room for a reply, and back */
@@ -994,9 +994,10 @@ static void build_screen(void)
      * one more row; Muse and the meter move up to make room for it.
      */
     int ring_in = (s_w < s_h ? s_w : s_h) / 2 - 10;   /* the ring's inner edge */
-    /* +4: three 20 px lines with 2 px between them need 64, and the band used
-     * to be sized to the pixel -- the third row's descenders were clipped. */
-    int cap_h = 3 * lv_font_get_line_height(muse_font_reply()) + 2 * CAPTION_LINE_SPACE + 4;
+    /* Two rows, as before: three rows fit but pushed Muse up by 28 px and the
+     * user wants the face where it was. The reply chain's 20 px line height
+     * makes two rows 42 px instead of Unifont's 36. */
+    int cap_h = 2 * lv_font_get_line_height(muse_font_reply()) + CAPTION_LINE_SPACE;
     int cap_bottom = 179;                              /* a 466 px circle's; fine for rectangles */
     if (muse_board->round) {
         cap_bottom = (int)sqrtf((float)(ring_in * ring_in - CAPTION_W * CAPTION_W / 4)) - 3;
@@ -1129,11 +1130,10 @@ static void build_screen(void)
     lv_label_set_long_mode(s_caption_lbl, LV_LABEL_LONG_MODE_DOTS);
     lv_obj_align(s_caption_lbl, LV_ALIGN_CENTER, 0, cap_top + cap_h / 2);
 #if CONFIG_MUSE_CJK_FONT
-    /* A Chinese reply pages three 16 px lines at a time (1.5b: replies share
-     * the caption chain, no separate 20 px face). Three rows is what the
-     * caption band and the heard-reply box are both sized for; the read layout
-     * gets four. 16 columns of 16 px fill the 256 px caption width. */
-    muse_state_set_cjk_page(CAPTION_W / lv_font_get_glyph_width(muse_font_reply(), 0x4E2D, ' '), 3);
+    /* A Chinese reply pages two 16 px lines at a time (1.5b: replies share
+     * the caption chain, no separate 20 px face). 16 columns of 16 px fill the
+     * 256 px caption width. */
+    muse_state_set_cjk_page(CAPTION_W / lv_font_get_glyph_width(muse_font_reply(), 0x4E2D, ' '), 2);
 #endif
 
     /* Chunky level meter. */
