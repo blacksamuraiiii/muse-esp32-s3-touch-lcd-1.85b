@@ -155,6 +155,17 @@ add_executable(muse_simulator
     "${MUSE_COMPONENT_DIR}/muse_state.c"
     "${MUSE_COMPONENT_DIR}/muse_text.c"
     "${MUSE_COMPONENT_DIR}/muse_font.c"
+    # 1.5: muse_ui.c builds the interact page (pet economy), so the
+    # simulator links it and the pet state it drives.
+    "${MUSE_COMPONENT_DIR}/muse_interact_ui.c"
+    "${MUSE_COMPONENT_DIR}/muse_pet_model.c"
+    "${MUSE_COMPONENT_DIR}/muse_pet_text.c"
+    "${MUSE_COMPONENT_DIR}/muse_interact_hand_rock.c"
+    "${MUSE_COMPONENT_DIR}/muse_interact_hand_paper.c"
+    "${MUSE_COMPONENT_DIR}/muse_interact_hand_scissors.c"
+    # muse_pet.c is a FreeRTOS worker with NVS behind it; the layout the
+    # simulator measures does not depend on it, so sim_services.c stubs
+    # its API instead.
     "${MUSE_COMPONENT_DIR}/../../avatar/muse_pixel.c"
     # The CJK faces the 1.85B draws Chinese with (compat/sdkconfig.h sets
     # CONFIG_MUSE_CJK_FONT): one 16 px antialiased level-1 face plus the
