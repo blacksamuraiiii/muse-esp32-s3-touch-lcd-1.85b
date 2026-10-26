@@ -64,7 +64,10 @@ static const char *TAG = "muse_ui";
 #define METER_SEG_PX 9
 #define METER_GAP_PX 4
 #define RING_RANGE 1000
-#define CAPTION_W 256           /* 16 columns of unscii_16, the width reply captions wrap to */
+/* 15 columns instead of 16: the round screen's chord at 240 px is 9 px lower
+ * than at 256, so the caption band and the level meter above it both sit
+ * lower without touching the ring. Costs two characters per page. */
+#define CAPTION_W 240
 #define CAPTION_LINE_SPACE 4
 #define ART_BLANK_ROWS 3        /* Muse's art never reaches the grid's bottom rows */
 #define MINI_CELL_PX 2          /* Muse's grid cells over a reply that's read */
@@ -1005,10 +1008,7 @@ static void build_screen(void)
     int cap_top = cap_bottom - cap_h;
     int meter_y = cap_top - 6 - METER_SEG_PX / 2;
     int art_bottom = meter_y - METER_SEG_PX / 2 - 4;
-    /* +6: the art's bottom ART_BLANK_ROWS are empty, so Muse can sit that much
-     * lower without reaching the level meter -- which is the only way to get
-     * air between its hair and READY on a 360 px round screen. */
-    s_big_y = s_small ? 0 : art_bottom - (s_canvas_px / 2 - ART_BLANK_ROWS * (s_canvas_px / MUSE_PX_W)) + 6;
+    s_big_y = s_small ? 0 : art_bottom - (s_canvas_px / 2 - ART_BLANK_ROWS * (s_canvas_px / MUSE_PX_W));
 
     /* The character. */
     muse_image_init();
