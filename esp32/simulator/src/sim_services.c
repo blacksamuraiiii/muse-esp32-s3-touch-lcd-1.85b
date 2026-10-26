@@ -16,6 +16,8 @@
 
 #include "sim_services.h"
 
+#include "muse_pet.h"
+
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
@@ -262,5 +264,56 @@ bool muse_rtc_clock_str(char *buf, size_t len)
         return false;
     }
     snprintf(buf, len, "%02d:%02d", tmv.tm_hour, tmv.tm_min);
+    return true;
+}
+
+/* The interact page's pet economy runs in a FreeRTOS worker over NVS
+ * (components/muse/muse_pet.c). The simulator measures layout, not the
+ * economy, so the API is stubbed: "ready", with a full wallet and no
+ * feedback, which is what the page draws when nothing is pending. */
+static bool s_pet_ready = true;
+
+bool muse_pet_ready(void) { return s_pet_ready; }
+
+bool muse_pet_storage_error(void) { return false; }
+
+bool muse_pet_request(muse_pet_action_t action)
+{
+    (void)action;
+    return s_pet_ready;
+}
+
+bool muse_pet_request_game(int outcome)
+{
+    (void)outcome;
+    return s_pet_ready;
+}
+
+bool muse_pet_decay_ack(int32_t day)
+{
+    (void)day;
+    return s_pet_ready;
+}
+
+bool muse_pet_snapshot(muse_pet_model_t *out)
+{
+    if (!out || !s_pet_ready) {
+        return false;
+    }
+    memset(out, 0, sizeof(*out));
+    out->coins = 60;
+    out->fortune_day = -1;
+    return true;
+}
+
+bool muse_pet_feedback(muse_pet_feedback_t *out)
+{
+    (void)out;
+    return false;   /* nothing pending: the page shows no hint */
+}
+
+bool muse_pet_feedback_requeue(const muse_pet_feedback_t *fb)
+{
+    (void)fb;
     return true;
 }
