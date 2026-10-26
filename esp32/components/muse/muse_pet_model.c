@@ -126,7 +126,13 @@ muse_pet_result_t muse_pet_model_apply(muse_pet_model_t *s, muse_pet_action_t ac
         return PET_OK;
     }
     if (action == PET_DECAY_ACK) {
-        s->decay_notice = 0;
+        /* 1.5b: arg is the day the UI announced. Only clear a notice for
+         * that day: an ACK that arrives after a midnight rollover created
+         * a new notice must not silently clear the new one. A stale ACK
+         * is a no-op, and the UI re-announces from the fresh snapshot. */
+        if (arg == s->decay_day) {
+            s->decay_notice = 0;
+        }
         return PET_OK;
     }
 

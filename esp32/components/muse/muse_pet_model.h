@@ -76,7 +76,9 @@ typedef struct {
 
 /* Actions. PET_FEED_* settle identically; see the header note above.
  * PET_DECAY_ACK and PET_RESET are internal only: never sent by UI buttons.
- * PET_DECAY_ACK clears decay_notice after phase-2 UI has shown it once.
+ * PET_DECAY_ACK clears decay_notice after phase-2 UI has shown it once;
+ * since 1.5b its arg is the announced decay_day, and only a notice for
+ * that day is cleared (see muse_pet_decay_ack()).
  * PET_RESET rebuilds the initial state; only the Test-gated console command
  * may send it (see the muse_input.c patch note). */
 typedef enum {

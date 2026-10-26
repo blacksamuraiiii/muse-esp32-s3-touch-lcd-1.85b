@@ -51,6 +51,7 @@ typedef void (*muse_link_req_cb)(void *ctx, int status, const uint8_t *data, siz
 typedef struct {
     void (*wifi_status)(muse_wifi_status_t *out);
     void (*wifi_apply)(void);                     /* on/off or credentials changed */
+    void (*wifi_restart)(void);                   /* 1.5b: stop/start the driver, then reconnect */
     void (*wifi_get)(char *ssid, char *pass);     /* MUSE_SSID_MAX+1 / MUSE_PASS_MAX+1; pass may be NULL */
     void (*wifi_set)(const char *ssid, const char *pass);
     esp_err_t (*wifi_scan)(void);

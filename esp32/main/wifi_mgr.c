@@ -470,10 +470,14 @@ bool wifi_mgr_connect(const char *ssid, const char *password, int timeout_ms) {
         s_events, BIT_GOT_IP | BIT_FAIL,
         pdFALSE, pdFALSE, remaining);
     connected = (bits & BIT_GOT_IP) != 0;
-    if (!connected && have_bssid) {
-        // Cached BSSID didn't work — invalidate so next attempt does a full
-        // scan (AP may have changed channel or gone away).
+    if (!connected) {
+        // 1.5b: any failed or timed-out attempt invalidates both shortcuts,
+        // not just a failed attempt with a cached BSSID. A timed-out join
+        // chasing a stale channel hint used to repeat the same fast scan
+        // forever; the next attempt does a full scan (AP may have changed
+        // channel or gone away).
         s_bssid_cache_count = 0;
+        memset(&s_channel_hint, 0, sizeof(s_channel_hint));
     }
 
 done:
@@ -515,6 +519,39 @@ void wifi_mgr_disconnect(void) {
     if (s_reconnect_timer) xTimerStop(s_reconnect_timer, 0);
     esp_wifi_disconnect();
     xEventGroupClearBits(s_events, BIT_CONNECTED | BIT_GOT_IP);
+}
+
+void wifi_mgr_restart(void)
+{
+    if (!s_inited) return;
+    if (s_reconnect_timer) xTimerStop(s_reconnect_timer, 0);
+    s_keep_connected = false;      // no auto-reconnect from the old state
+    s_connecting = false;
+    portENTER_CRITICAL(&s_join_lock);
+    s_join_ssid[0] = '\0';
+    portEXIT_CRITICAL(&s_join_lock);
+    esp_wifi_disconnect();
+    esp_err_t err = esp_wifi_stop();
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "wifi restart: stop failed: %s", esp_err_to_name(err));
+    }
+    err = esp_wifi_start();
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "wifi restart: start failed: %s", esp_err_to_name(err));
+    } else {
+        // Back to the state wifi_mgr_init() leaves the driver in; the
+        // link's power level is re-applied by its owner afterwards.
+        esp_wifi_set_ps(WIFI_PS_NONE);
+    }
+    // A wedged join may be chasing a stale AP: drop both shortcuts so the
+    // next join scans fully instead of fast-scanning a dead BSSID/channel.
+    s_bssid_cache_count = 0;
+    memset(&s_channel_hint, 0, sizeof(s_channel_hint));
+    s_retry = 0;
+    s_reconnect_backoff_ms = RECONNECT_BACKOFF_MIN_MS;
+    atomic_store(&s_sta_idle, true);
+    xEventGroupClearBits(s_events, BIT_CONNECTED | BIT_GOT_IP | BIT_FAIL);
+    ESP_LOGI(TAG, "wifi restart: stop/start driver");
 }
 
 bool wifi_mgr_joining(char *ssid, size_t cap) {
