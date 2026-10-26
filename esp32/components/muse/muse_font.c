@@ -38,10 +38,17 @@ const lv_font_t *muse_font_cjk(void)
 
 const lv_font_t *muse_font_caption(void)
 {
-    static lv_font_t font;
+    /* 1.5b: the antialiased face leads, so Chinese and the digits/spaces that
+     * sit inside a Chinese line share one visual size. ASCII has no glyph in
+     * either CJK face, so it lands on Montserrat 14 -- a size down from
+     * unscii_16, whose blocky digits read a size larger than the hanzi beside
+     * them (user, 1.5b). */
+    static lv_font_t ascii, font;
     if (!font.get_glyph_dsc) {
-        font = lv_font_unscii_16;
-        font.fallback = muse_font_cjk();
+        ascii = muse_font_cjk_16;
+        ascii.fallback = &lv_font_montserrat_14;
+        font = muse_font_ui_16;
+        font.fallback = &ascii;
     }
     return &font;
 }

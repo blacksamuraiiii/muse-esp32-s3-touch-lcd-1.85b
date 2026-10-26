@@ -994,7 +994,9 @@ static void build_screen(void)
      * one more row; Muse and the meter move up to make room for it.
      */
     int ring_in = (s_w < s_h ? s_w : s_h) / 2 - 10;   /* the ring's inner edge */
-    int cap_h = 3 * lv_font_get_line_height(muse_font_caption()) + 2 * CAPTION_LINE_SPACE;
+    /* +4: three 20 px lines with 2 px between them need 64, and the band used
+     * to be sized to the pixel -- the third row's descenders were clipped. */
+    int cap_h = 3 * lv_font_get_line_height(muse_font_caption()) + 2 * CAPTION_LINE_SPACE + 4;
     int cap_bottom = 179;                              /* a 466 px circle's; fine for rectangles */
     if (muse_board->round) {
         cap_bottom = (int)sqrtf((float)(ring_in * ring_in - CAPTION_W * CAPTION_W / 4)) - 3;
