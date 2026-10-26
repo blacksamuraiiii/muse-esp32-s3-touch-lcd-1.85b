@@ -15,6 +15,8 @@
  */
 
 #include "muse_ui.h"
+#include "muse_font.h"    /* muse_font_caption(), the one CJK chain (1.5b) */
+#include "muse_theme.h"   /* MUSE_THEME_*, the one colour table (1.5b) */
 #include "muse_input.h"   /* muse_input_request_power_off, from the power icon */
 
 #include <math.h>
@@ -71,13 +73,6 @@ static const char *TAG = "muse_ui";
 #define SPEAKER_GROW_PX 8       /* how much the speaker button swells while held */
 #define SPEAKER_HOLD_MS 400     /* LVGL's long press */
 
-#define COLOR_DIM 0x8b84a8
-#define COLOR_CAPTION 0xd8d2ff
-#define COLOR_RING_BG 0x140f22
-#define COLOR_METER_OFF 0x1d1733
-#define COLOR_ACCENT 0xa77dff
-#define COLOR_DOT_OFF 0x3a3358
-#define COLOR_LIT 0xf2efff
 #define SETTINGS_TICK_S 0.25f
 
 /* Text on 128 px screens, as in the button menu (muse_menu.c). */
@@ -495,7 +490,7 @@ static void build_button_icons(lv_obj_t *face)
         lv_obj_set_style_transform_scale_x(s_mic_icon, t->scale, 0);
         lv_obj_set_style_transform_scale_y(s_mic_icon, t->scale, 0);
     }
-    set_mic_color(COLOR_DIM);
+    set_mic_color(MUSE_THEME_DIM);
     if (muse_board->touch_talk) {
         lv_obj_add_flag(s_mic_icon, LV_OBJ_FLAG_CLICKABLE);
         lv_obj_set_ext_click_area(s_mic_icon, 12);
@@ -510,7 +505,7 @@ static void build_button_icons(lv_obj_t *face)
     if (a->align == LV_ALIGN_DEFAULT) {
         return;
     }
-    s_aux_icon = make_label(face, s_small ? &lv_font_montserrat_14 : &lv_font_montserrat_28, COLOR_DIM);
+    s_aux_icon = make_label(face, s_small ? &lv_font_montserrat_14 : &lv_font_montserrat_28, MUSE_THEME_DIM);
     lv_label_set_text(s_aux_icon, muse_board->touch ? LV_SYMBOL_POWER : LV_SYMBOL_LIST);
     lv_obj_align(s_aux_icon, a->align, a->x, a->y);
     if (a->scale) {
@@ -585,74 +580,12 @@ static const lv_font_t *font_pick(const lv_font_t *full, const lv_font_t *compac
     return s_small ? compact : full;
 }
 
-#if CONFIG_MUSE_CJK_FONT
-LV_FONT_DECLARE(muse_font_cjk_16)
-LV_FONT_DECLARE(muse_font_cjk_20)
-LV_FONT_DECLARE(muse_font_ui_16)
-#endif
-
-#if CONFIG_MUSE_CJK_FONT
-/* Full-coverage CJK: Unifont's 16x16 bitmap, plus Montserrat for the ASCII the
- * CJK faces do not carry. Only reached for characters outside the UI subset. */
-static const lv_font_t *cjk_face(void)
-{
-    static lv_font_t font;
-    if (!font.get_glyph_dsc) {
-        font = muse_font_cjk_16;
-        font.fallback = &lv_font_montserrat_16;
-    }
-    return &font;
-}
-
-/* The antialiased UI subset (tools/muse/gen_ui_font.sh). Unifont is 1bpp, so at
- * 16 px its Hanzi are hard one-pixel strokes next to unscii's smooth Latin --
- * that is what made the caption copy look blurry (user report 2026-10-25). */
-static const lv_font_t *ui_cjk_face(void)
-{
-    static lv_font_t font;
-    if (!font.get_glyph_dsc) {
-        font = muse_font_ui_16;
-        font.fallback = cjk_face();
-    }
-    return &font;
-}
-#endif
-
-/* unscii-16 for captions and replies; with CONFIG_MUSE_CJK_FONT, a copy that
- * falls back to the 16 px antialiased CJK subset, the same cell, for what
- * unscii lacks. */
-static const lv_font_t *caption_font(void)
-{
-#if CONFIG_MUSE_CJK_FONT
-    static lv_font_t font;
-    if (!font.get_glyph_dsc) {
-        font = lv_font_unscii_16;
-        font.fallback = ui_cjk_face();
-    }
-    return &font;
-#else
-    return &lv_font_unscii_16;
-#endif
-}
-
-/* A Chinese reply at unscii-16's cell is too small to read on a 360 px screen,
- * so replies carrying CJK use Unifont at 20 px instead: 12 columns, two lines,
- * inside the box the three unscii lines already reserve. Hanzi outside GB2312
- * fall back to the 16 px face, so a rare character still shows, just smaller. */
-static const lv_font_t *reply_font(bool cjk)
-{
-#if CONFIG_MUSE_CJK_FONT
-    static lv_font_t font;
-    if (!font.get_glyph_dsc) {
-        font = muse_font_cjk_20;
-        font.fallback = ui_cjk_face();
-    }
-    return cjk ? &font : caption_font();
-#else
-    (void)cjk;
-    return caption_font();
-#endif
-}
+/* Captions and replies share one font chain since 1.5b: unscii-16 with the
+ * 16 px antialiased CJK face as fallback (muse_font_caption() in
+ * muse_font.h). The old local helpers (cjk_face / ui_cjk_face /
+ * caption_font / reply_font) are gone, and with them the 20 px reply face:
+ * reply_font() was the copy f0af50b missed, which is how replies kept the
+ * old 1bpp look while captions went antialiased. */
 
 static lv_obj_t *make_label(lv_obj_t *parent, const lv_font_t *font, uint32_t color)
 {
@@ -667,8 +600,8 @@ static lv_obj_t *make_label(lv_obj_t *parent, const lv_font_t *font, uint32_t co
 static void show_speaker(bool on)
 {
     /* Off is the one that stands out, like a lit flashlight button. */
-    lv_obj_set_style_bg_color(s_speaker, lv_color_hex(on ? COLOR_METER_OFF : COLOR_LIT), 0);
-    lv_obj_set_style_text_color(s_speaker_icon, lv_color_hex(on ? COLOR_DIM : 0x000000), 0);
+    lv_obj_set_style_bg_color(s_speaker, lv_color_hex(on ? MUSE_THEME_METER_OFF : MUSE_THEME_TEXT), 0);
+    lv_obj_set_style_text_color(s_speaker_icon, lv_color_hex(on ? MUSE_THEME_DIM : 0x000000), 0);
     lv_label_set_text(s_speaker_icon, on ? LV_SYMBOL_VOLUME_MAX : LV_SYMBOL_MUTE);
     s_shown_speaker = on;
 }
@@ -735,7 +668,7 @@ static void build_speaker(lv_obj_t *face, int x, int y)
     for (size_t i = 0; i < sizeof(EVENTS) / sizeof(EVENTS[0]); i++) {
         lv_obj_add_event_cb(s_speaker, on_speaker_event, EVENTS[i], NULL);
     }
-    s_speaker_icon = make_label(s_speaker, &lv_font_montserrat_28, COLOR_DIM);
+    s_speaker_icon = make_label(s_speaker, &lv_font_montserrat_28, MUSE_THEME_DIM);
     lv_obj_center(s_speaker_icon);
     lv_obj_align(s_speaker, LV_ALIGN_CENTER, x, y);
     show_speaker(muse_settings_speaker_on());
@@ -886,7 +819,7 @@ static void build_answer(lv_obj_t *face, int ring_in)
             spk_x = -(int)sqrtf((float)(d * d - spk_y * spk_y));
         }
     }
-    const lv_font_t *font = caption_font();
+    const lv_font_t *font = muse_font_caption();
     int cw = lv_font_get_glyph_width(font, 'M', ' ');
     int pitch = lv_font_get_line_height(font) + CAPTION_LINE_SPACE;
 
@@ -934,7 +867,7 @@ static void build_answer(lv_obj_t *face, int ring_in)
     ESP_LOGI(TAG, "reply pages: %d x %d heard, %d x %d read", s_answers[ANSWER_HEARD].cols,
              s_answers[ANSWER_HEARD].lines, l->cols, l->lines);
 
-    s_reply_lbl = make_label(face, font, COLOR_CAPTION);
+    s_reply_lbl = make_label(face, font, MUSE_THEME_CAPTION);
     lv_obj_set_style_text_line_space(s_reply_lbl, CAPTION_LINE_SPACE, 0);
     /* Pages come wrapped to fit; the transcript while thinking doesn't. */
     lv_label_set_long_mode(s_reply_lbl, LV_LABEL_LONG_MODE_WRAP);
@@ -1047,7 +980,7 @@ static void build_screen(void)
         lv_obj_remove_style(s_ring, NULL, LV_PART_KNOB);
         lv_obj_remove_flag(s_ring, LV_OBJ_FLAG_CLICKABLE);
         lv_obj_set_style_arc_width(s_ring, 6, LV_PART_MAIN);
-        lv_obj_set_style_arc_color(s_ring, lv_color_hex(COLOR_RING_BG), LV_PART_MAIN);
+        lv_obj_set_style_arc_color(s_ring, lv_color_hex(MUSE_THEME_RING_BG), LV_PART_MAIN);
         lv_obj_set_style_arc_width(s_ring, 6, LV_PART_INDICATOR);
         lv_obj_set_style_arc_rounded(s_ring, false, LV_PART_INDICATOR);
         lv_obj_add_event_cb(s_ring, on_ring_draw, LV_EVENT_DRAW_MAIN | LV_EVENT_PREPROCESS, NULL);
@@ -1130,12 +1063,12 @@ static void build_screen(void)
     lv_obj_set_flex_flow(conn, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(conn, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_set_style_pad_column(conn, s_small ? 4 : 8, 0);
-    s_wifi_icon = make_label(conn, &lv_font_montserrat_14, COLOR_DIM);
-    s_ble_icon = make_label(conn, &lv_font_montserrat_14, COLOR_DIM);
+    s_wifi_icon = make_label(conn, &lv_font_montserrat_14, MUSE_THEME_DIM);
+    s_ble_icon = make_label(conn, &lv_font_montserrat_14, MUSE_THEME_DIM);
     /* Middle: the clock. Empty until there is a time worth showing, which is
      * how a board without an RTC says so. */
-    s_clock_lbl = make_label(status, STATUS_CLOCK_FONT, COLOR_DIM);
-    s_power_lbl = make_label(status, STATUS_POWER_FONT, COLOR_DIM);
+    s_clock_lbl = make_label(status, STATUS_CLOCK_FONT, MUSE_THEME_DIM);
+    s_power_lbl = make_label(status, STATUS_POWER_FONT, MUSE_THEME_DIM);
 
     /* The compact layout leaves the state to the avatar and the caption,
      * unless the screen is tall enough to fit it in small type above Muse. */
@@ -1148,7 +1081,7 @@ static void build_screen(void)
      * more than one on the bench, the screen says which one to pick in the
      * Muse app. update_chrome() fills it in, shortens it to the hex tail on a
      * screen too narrow for the whole thing, and empties it once paired. */
-    s_name_lbl = make_label(face, s_small ? &lv_font_unscii_8 : &lv_font_unscii_16, COLOR_DIM);
+    s_name_lbl = make_label(face, s_small ? &lv_font_unscii_8 : &lv_font_unscii_16, MUSE_THEME_DIM);
     lv_obj_align(s_name_lbl, LV_ALIGN_TOP_MID, 0, muse_board->rim_controls ? 88 : s_small ? 32 : 74 + s_dy);
     if (muse_board->rim_controls) {
         /* Safe chord below the round panel's top, not the full 466 px width. */
@@ -1161,7 +1094,7 @@ static void build_screen(void)
      * these rows, so there's nowhere to put this without covering the face. */
     lv_obj_set_flag(s_name_lbl, LV_OBJ_FLAG_HIDDEN, s_small && !s_tall && s_h < 200);
 
-    s_caption_lbl = make_label(face, font_pick(caption_font(), &lv_font_unscii_8), COLOR_CAPTION);
+    s_caption_lbl = make_label(face, font_pick(muse_font_caption(), &lv_font_unscii_8), MUSE_THEME_CAPTION);
     if (s_small) {
         /* Two lines over the bottom of the face, on a dark band so they stay
          * legible. A tall screen has room to keep them above the mic icon. */
@@ -1176,7 +1109,7 @@ static void build_screen(void)
 #if CONFIG_MUSE_CJK_FONT
         /* CJK doesn't fit unscii-8's cell, so a reply with CJK in it fills the
          * band one line at a time in the 16 px caption font instead. */
-        muse_state_set_cjk_page(s_w / lv_font_get_glyph_width(caption_font(), 'M', ' '), 1);
+        muse_state_set_cjk_page(s_w / lv_font_get_glyph_width(muse_font_caption(), 'M', ' '), 1);
 #endif
 
         s_bar = lv_obj_create(face);
@@ -1192,10 +1125,11 @@ static void build_screen(void)
     lv_label_set_long_mode(s_caption_lbl, LV_LABEL_LONG_MODE_DOTS);
     lv_obj_align(s_caption_lbl, LV_ALIGN_CENTER, 0, cap_top + cap_h / 2);
 #if CONFIG_MUSE_CJK_FONT
-    /* A Chinese reply pages two 20 px lines at a time. The reply box below is
+    /* A Chinese reply pages two 16 px lines at a time (1.5b: replies share
+     * the caption chain, no separate 20 px face). The reply box below is
      * sized for three unscii lines, which is the same 52 px, so nothing else
-     * moves: 12 columns of 20 px fill the 256 px caption width. */
-    muse_state_set_cjk_page(CAPTION_W / lv_font_get_glyph_width(reply_font(true), 0x4E2D, ' '), 2);
+     * moves: 16 columns of 16 px fill the 256 px caption width. */
+    muse_state_set_cjk_page(CAPTION_W / lv_font_get_glyph_width(muse_font_caption(), 0x4E2D, ' '), 2);
 #endif
 
     /* Chunky level meter. */
@@ -1206,7 +1140,7 @@ static void build_screen(void)
         lv_obj_remove_flag(seg, LV_OBJ_FLAG_SCROLLABLE);
         lv_obj_set_size(seg, METER_SEG_PX, METER_SEG_PX);
         lv_obj_set_style_bg_opa(seg, LV_OPA_COVER, 0);
-        lv_obj_set_style_bg_color(seg, lv_color_hex(COLOR_METER_OFF), 0);
+        lv_obj_set_style_bg_color(seg, lv_color_hex(MUSE_THEME_METER_OFF), 0);
         int x = -span / 2 + i * (METER_SEG_PX + METER_GAP_PX) + METER_SEG_PX / 2;
         lv_obj_align(seg, LV_ALIGN_CENTER, x, meter_y);
         s_meter[i] = seg;
@@ -1349,7 +1283,7 @@ static void build_overlays(void)
         lv_obj_set_size(d, 8, 8);
         lv_obj_set_style_radius(d, LV_RADIUS_CIRCLE, 0);
         lv_obj_set_style_bg_opa(d, LV_OPA_COVER, 0);
-        lv_obj_set_style_bg_color(d, lv_color_hex(COLOR_DOT_OFF), 0);
+        lv_obj_set_style_bg_color(d, lv_color_hex(MUSE_THEME_DOT_OFF), 0);
         lv_obj_remove_flag(d, LV_OBJ_FLAG_CLICKABLE);
         lv_obj_align(d, LV_ALIGN_BOTTOM_MID, (i - 1) * 16, -14);
         s_dots[i] = d;
@@ -1367,7 +1301,7 @@ static void build_overlays(void)
     lv_obj_align(s_camera_hint, LV_ALIGN_BOTTOM_MID, 0, -20);
     lv_obj_set_style_bg_color(s_camera_hint, lv_color_hex(0x201a35), 0);
     lv_obj_set_style_bg_opa(s_camera_hint, LV_OPA_90, 0);
-    lv_obj_set_style_border_color(s_camera_hint, lv_color_hex(COLOR_ACCENT), 0);
+    lv_obj_set_style_border_color(s_camera_hint, lv_color_hex(MUSE_THEME_ACCENT), 0);
     lv_obj_set_style_border_width(s_camera_hint, 2, 0);
     lv_obj_set_style_radius(s_camera_hint, 18, 0);
     lv_obj_add_flag(s_camera_hint, LV_OBJ_FLAG_HIDDEN);
@@ -1400,15 +1334,15 @@ static void build_overlays(void)
     lv_obj_set_style_radius(s_pair, s_small ? 10 : 24, 0);
     lv_obj_set_style_bg_opa(s_pair, LV_OPA_COVER, 0);
     lv_obj_set_style_bg_color(s_pair, lv_color_hex(0x1a1530), 0);
-    lv_obj_set_style_border_color(s_pair, lv_color_hex(COLOR_ACCENT), 0);
+    lv_obj_set_style_border_color(s_pair, lv_color_hex(MUSE_THEME_ACCENT), 0);
     lv_obj_set_style_border_width(s_pair, 2, 0);
     lv_obj_remove_flag(s_pair, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_flag(s_pair, LV_OBJ_FLAG_HIDDEN);
-    s_pair_title = make_label(s_pair, font_pick(&lv_font_montserrat_20, FONT_COMPACT), COLOR_LIT);
+    s_pair_title = make_label(s_pair, font_pick(&lv_font_montserrat_20, FONT_COMPACT), MUSE_THEME_TEXT);
     lv_label_set_text(s_pair_title, "Pairing code");
-    s_pair_code = make_label(s_pair, font_pick(&lv_font_montserrat_28, &lv_font_montserrat_20), COLOR_ACCENT);
+    s_pair_code = make_label(s_pair, font_pick(&lv_font_montserrat_28, &lv_font_montserrat_20), MUSE_THEME_ACCENT);
     lv_obj_set_style_text_letter_space(s_pair_code, s_small ? 2 : 6, 0);
-    s_pair_hint = make_label(s_pair, font_pick(&lv_font_montserrat_14, FONT_COMPACT), COLOR_DIM);
+    s_pair_hint = make_label(s_pair, font_pick(&lv_font_montserrat_14, FONT_COMPACT), MUSE_THEME_DIM);
     lv_label_set_text(s_pair_hint, s_small ? "Enter on phone" : "Enter it on your phone");
     /* Wraps: "bottom right button" is wider than the AIPI's card. */
     lv_obj_set_width(s_pair_hint, lv_pct(100));
@@ -1520,7 +1454,7 @@ static void update_chrome(float now)
         int shown = page * 3 + (subpage ? 1 : 0);
         if (shown != s_shown_page) {
             for (int i = 0; i < 3; i++) {
-                lv_obj_set_style_bg_color(s_dots[i], lv_color_hex(i == page ? COLOR_ACCENT : COLOR_DOT_OFF), 0);
+                lv_obj_set_style_bg_color(s_dots[i], lv_color_hex(i == page ? MUSE_THEME_ACCENT : MUSE_THEME_DOT_OFF), 0);
                 /* Dots hide ONLY on a settings subpage. An interaction
                  * subpage is not a top-level tile change, so the dots stay. */
                 lv_obj_set_flag(s_dots[i], LV_OBJ_FLAG_HIDDEN, page == 2 && subpage);
@@ -1549,7 +1483,7 @@ static void update_chrome(float now)
     const char *ble = b.state != MUSE_BLE_OFF ? LV_SYMBOL_BLUETOOTH : "";
     if (strcmp(ble, lv_label_get_text(s_ble_icon)) != 0) {
         lv_label_set_text(s_ble_icon, ble);
-        lv_obj_set_style_text_color(s_ble_icon, lv_color_hex(b.state == MUSE_BLE_CONNECTED ? COLOR_ACCENT : COLOR_DIM), 0);
+        lv_obj_set_style_text_color(s_ble_icon, lv_color_hex(b.state == MUSE_BLE_CONNECTED ? MUSE_THEME_ACCENT : MUSE_THEME_DIM), 0);
     }
 
     /* Paired, the name has done its job (picking this one out in the Muse
@@ -1703,7 +1637,7 @@ static void update_status(muse_mode_t mode, float now)
         } else {
             lv_obj_set_style_bg_color(s_bar, lv_color_hex(accent), 0);
         }
-        set_mic_color(mode == MUSE_MODE_LISTENING ? accent : COLOR_DIM);   /* legacy face icon */
+        set_mic_color(mode == MUSE_MODE_LISTENING ? accent : MUSE_THEME_DIM);   /* legacy face icon */
         s_shown_state = (int)mode;
         s_shown_lit = -1;
     }
@@ -1751,7 +1685,7 @@ static void update_status(muse_mode_t mode, float now)
                 /* Outer segments light last, like a centred VU. */
                 int rank = abs(2 * i - (METER_SEGS - 1)) / 2;
                 bool on = rank < (lit + 1) / 2;
-                lv_obj_set_style_bg_color(s_meter[i], lv_color_hex(on ? accent : COLOR_METER_OFF), 0);
+                lv_obj_set_style_bg_color(s_meter[i], lv_color_hex(on ? accent : MUSE_THEME_METER_OFF), 0);
             }
             s_shown_lit = lit;
             s_shown_accent = accent;
@@ -1780,11 +1714,12 @@ static void update_status(muse_mode_t mode, float now)
         lv_obj_t *lbl = answer >= 0 ? s_reply_lbl : s_caption_lbl;
 #if CONFIG_MUSE_CJK_FONT
         if (s_small) {
-            lv_obj_set_style_text_font(s_caption_lbl, muse_text_has_cjk(caption) ? caption_font() : &lv_font_unscii_8, 0);
+            lv_obj_set_style_text_font(s_caption_lbl, muse_text_has_cjk(caption) ? muse_font_caption() : &lv_font_unscii_8, 0);
         } else if (s_reply_lbl) {
-            /* Chinese replies get the 20 px face, English keeps unscii-16. */
+            /* Chinese replies get the shared 16 px caption chain (1.5b),
+             * English keeps unscii-16. */
             lv_obj_set_style_text_font(s_reply_lbl,
-                                       muse_text_has_cjk(caption) ? reply_font(true) : caption_font(), 0);
+                                       muse_text_has_cjk(caption) ? muse_font_caption() : muse_font_caption(), 0);
         }
 #endif
         lv_label_set_text(lbl, caption);

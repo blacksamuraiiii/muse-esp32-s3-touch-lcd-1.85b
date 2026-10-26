@@ -656,6 +656,14 @@ static void set_cpu_low(bool low)
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "power management: %s", esp_err_to_name(err));
     }
+    if (low && err == ESP_OK) {
+        /* 1.5b: entering light sleep with the modem fully awake (PS_NONE)
+         * leaves the radio up while the CPU sleeps. REST lets it sleep
+         * between beacons. The voice task re-applies its own level
+         * (FULL while talking, DOZE/REST while idle) on its next pass,
+         * and the 2-minute nap disconnect path is untouched. */
+        muse_wifi_power(MUSE_WIFI_REST);
+    }
     if (s_cpu_pd && low && s_awake_held && err == ESP_OK) {
         esp_pm_lock_release(s_awake);
         s_awake_held = false;
@@ -1112,6 +1120,11 @@ static void set_face(const char *name)
     fflush(stdout);
 }
 
+#if CONFIG_MUSE_BUILD_TEST
+/* 1.5b: the mutating pet.* console commands are Test-gated like pet.reset,
+ * so these helpers are too (otherwise a Release build warns about them
+ * being unused). pet_console_snapshot() below stays always-compiled: the
+ * read-only pet.status command uses it. */
 static const char *pet_result_name(muse_pet_result_t r)
 {
     switch (r) {
@@ -1147,6 +1160,7 @@ static bool pet_console_wait(muse_pet_action_t action, muse_pet_feedback_t *out)
     }
     return false;
 }
+#endif
 
 static void pet_console_snapshot(void)
 {
@@ -1165,6 +1179,7 @@ static void pet_console_snapshot(void)
     fflush(stdout);
 }
 
+#if CONFIG_MUSE_BUILD_TEST
 /* Send one action and print its result + snapshot. Returns false on
  * not-ready / queue-full / timeout, so the caller prints nothing further. */
 static bool pet_console_do(muse_pet_action_t action, const char *what)
@@ -1186,6 +1201,7 @@ static bool pet_console_do(muse_pet_action_t action, const char *what)
     pet_console_snapshot();
     return true;
 }
+#endif /* CONFIG_MUSE_BUILD_TEST: mutating pet.* helpers */
 
 /*
  * Console-only commands; false for setup commands. Their buffers are taken
@@ -1526,9 +1542,11 @@ static bool console_command(char *line, bool whole)
     }
     if (!strncmp(line, "pet.", 4)) {
         if (!strcmp(line, "pet.status")) {
-            /* Read-only, always compiled (design §3.3: only pet.reset is
-             * Test-gated). Never invents numbers: without a snapshot it
-             * prints ready/storage_error and nothing else. */
+            /* Read-only, always compiled. Since 1.5b every mutating pet.*
+             * command (touch/feed/fortune/game/reset) is Test-gated;
+             * status is the only pet.* command a Release build answers.
+             * Never invents numbers: without a snapshot it prints
+             * ready/storage_error and nothing else. */
             if (!muse_pet_ready()) {
                 printf("@pet status ready=0 storage_error=%d\n",
                        (int)muse_pet_storage_error());
@@ -1538,6 +1556,9 @@ static bool console_command(char *line, bool whole)
             fflush(stdout);
             return true;
         }
+#if CONFIG_MUSE_BUILD_TEST
+        /* 1.5b: mutating commands, Test only. In a Release build these
+         * fall through to "@pet unknown command" below and move no coins. */
         if (!strcmp(line, "pet.touch")) {
             pet_console_do(PET_TOUCH, "touch");
             return true;
@@ -1588,6 +1609,7 @@ static bool console_command(char *line, bool whole)
             pet_console_snapshot();
             return true;
         }
+#endif /* CONFIG_MUSE_BUILD_TEST: mutating pet.* commands */
 #if CONFIG_MUSE_BUILD_TEST
         if (!strcmp(line, "pet.reset")) {
             /* Destructive, Test only (design §3.3). Two paths:
@@ -1613,8 +1635,9 @@ static bool console_command(char *line, bool whole)
             return true;
         }
 #endif
-        /* In a Release build, pet.reset falls through to here (the #if block
-         * above is compiled out) instead of silently doing nothing. */
+        /* In a Release build, the Test-gated pet.* commands fall through
+         * to here (the #if blocks above are compiled out) instead of
+         * silently doing nothing. */
         printf("@pet unknown command\n");
         fflush(stdout);
         return true;

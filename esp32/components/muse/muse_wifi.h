@@ -61,6 +61,10 @@ typedef struct {
 esp_err_t muse_wifi_start(void);
 /* Re-reads on/off and credentials from settings and (re)connects. */
 void muse_wifi_apply(void);
+/* 1.5b: restarts the Wi-Fi driver itself (stop -> start) and then
+ * reconnects. Unlike apply(), which re-kicks the keeper on the same
+ * driver instance, this clears a wedged driver. */
+void muse_wifi_restart(void);
 void muse_wifi_status(muse_wifi_status_t *out);
 bool muse_wifi_connected(void);
 typedef enum {

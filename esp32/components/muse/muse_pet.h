@@ -55,6 +55,12 @@ bool muse_pet_request(muse_pet_action_t action);
  * balance is below the 5-coin stake. */
 bool muse_pet_request_game(int outcome);
 
+/* Acknowledge the living-cost notice for one day (1.5b). The worker only
+ * clears a notice whose decay_day matches `day`, so an ACK that arrives
+ * after a midnight rollover cannot silently clear a new notice. The bare
+ * muse_pet_request(PET_DECAY_ACK) is refused. */
+bool muse_pet_decay_ack(int32_t day);
+
 /* Copy the latest published snapshot. Returns false when not ready. */
 bool muse_pet_snapshot(muse_pet_model_t *out);
 

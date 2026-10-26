@@ -15,14 +15,11 @@
  */
 
 #include "muse_keypad.h"
+#include "muse_theme.h"   /* MUSE_THEME_*, the one colour table (1.5b) */
 
 #include <ctype.h>
 #include <string.h>
 
-#define COLOR_TEXT 0xf2efff
-#define COLOR_CARD 0x1a1530
-#define COLOR_CARD_PRESSED 0x2e2552
-#define COLOR_ACCENT 0xa77dff
 
 #define TAP_MS 1000    /* a second tap on the same key within this steps to its next character */
 #define HOLD_MS 600    /* holding a letter key this long types its digit */
@@ -270,11 +267,11 @@ lv_obj_t *muse_keypad_create(lv_obj_t *parent, lv_obj_t *ta, bool round)
     lv_obj_remove_style_all(s_kp);
     lv_obj_set_style_pad_gap(s_kp, 6, 0);
     lv_obj_set_style_text_font(s_kp, &lv_font_montserrat_20, LV_PART_ITEMS);
-    lv_obj_set_style_text_color(s_kp, lv_color_hex(COLOR_TEXT), LV_PART_ITEMS);
+    lv_obj_set_style_text_color(s_kp, lv_color_hex(MUSE_THEME_TEXT), LV_PART_ITEMS);
     lv_obj_set_style_bg_opa(s_kp, LV_OPA_COVER, LV_PART_ITEMS);
-    lv_obj_set_style_bg_color(s_kp, lv_color_hex(COLOR_CARD), LV_PART_ITEMS);
-    lv_obj_set_style_bg_color(s_kp, lv_color_hex(COLOR_CARD_PRESSED), LV_PART_ITEMS | LV_STATE_PRESSED);
-    lv_obj_set_style_bg_color(s_kp, lv_color_hex(COLOR_ACCENT), LV_PART_ITEMS | LV_STATE_CHECKED);
+    lv_obj_set_style_bg_color(s_kp, lv_color_hex(MUSE_THEME_CARD), LV_PART_ITEMS);
+    lv_obj_set_style_bg_color(s_kp, lv_color_hex(MUSE_THEME_CARD_PRESSED), LV_PART_ITEMS | LV_STATE_PRESSED);
+    lv_obj_set_style_bg_color(s_kp, lv_color_hex(MUSE_THEME_ACCENT), LV_PART_ITEMS | LV_STATE_CHECKED);
     lv_obj_set_style_radius(s_kp, 12, LV_PART_ITEMS);
     /* A swipe across the keys is sloppy typing, not "back": it would lose the text. */
     lv_obj_remove_flag(s_kp, LV_OBJ_FLAG_GESTURE_BUBBLE);

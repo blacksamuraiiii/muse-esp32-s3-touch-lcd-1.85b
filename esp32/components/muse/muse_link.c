@@ -169,6 +169,13 @@ void muse_wifi_apply(void)
     }
 }
 
+void muse_wifi_restart(void)
+{
+    if (s_ops && s_ops->wifi_restart) {
+        s_ops->wifi_restart();
+    }
+}
+
 void muse_wifi_status(muse_wifi_status_t *out)
 {
     if (s_ops && s_ops->wifi_status) {
