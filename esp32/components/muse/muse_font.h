@@ -23,4 +23,5 @@
 
 const lv_font_t *muse_font_cjk(void);
 const lv_font_t *muse_font_caption(void);
+const lv_font_t *muse_font_reply(void);
 const lv_font_t *muse_font_btn(void);
