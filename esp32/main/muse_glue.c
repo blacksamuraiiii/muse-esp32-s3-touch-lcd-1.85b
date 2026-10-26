@@ -58,6 +58,7 @@ static const char *TAG = "link.muse";
 #define KEEP_SAVE       BIT2    // remember s_ssid/s_pass first
 #define KEEP_RELOAD     BIT3    // Link may have changed the saved networks
 #define KEEP_FORGET     BIT4    // forget the networks marked in s_saved
+#define KEEP_WIFI_RESTART BIT5  // 1.5b: stop/start the driver, then reconnect
 
 #define CONNECT_TIMEOUT_MS 20000
 #define RETRY_MIN_US (5LL * 1000 * 1000)
@@ -215,6 +216,10 @@ static void op_wifi_status(muse_wifi_status_t *out) {
 
 static void op_wifi_apply(void) {
     keeper_kick(KEEP_WIFI);
+}
+
+static void op_wifi_restart(void) {
+    keeper_kick(KEEP_WIFI_RESTART);
 }
 
 static void op_wifi_nap(bool nap) {
@@ -408,6 +413,7 @@ static void op_ota_status(char *buf, size_t n) {
 static const muse_link_ops_t s_ops = {
     .wifi_status = op_wifi_status,
     .wifi_apply = op_wifi_apply,
+    .wifi_restart = op_wifi_restart,
     .wifi_get = op_wifi_get,
     .wifi_set = op_wifi_set,
     .wifi_scan = op_wifi_scan,
@@ -507,6 +513,10 @@ static void keeper_task(void *arg) {
     int64_t next_try = 0;
     int64_t backoff = RETRY_MIN_US;
     int64_t away_backoff = AWAY_MIN_US;
+    // 1.5b: consecutive failed joins since the last success, and driver
+    // restarts spent on them. NOT_NEARBY is not a failure and never counts.
+    int fail_joins = 0;
+    int restarts = 0;
     uint32_t pending = KEEP_BLE;
     bool napped = false;
     bool setup_done = config_setup_complete();
@@ -552,6 +562,16 @@ static void keeper_task(void *arg) {
                 next_try = 0;
                 away_backoff = AWAY_MIN_US;
             }
+        }
+        if (pending & KEEP_WIFI_RESTART) {
+            // 1.5b: an explicit restart (the settings switch off -> on, or
+            // the failure budget below) stops and starts the driver, then
+            // looks again at once. It runs before the chain below, so the
+            // join in this same pass already uses the fresh driver.
+            ESP_LOGI(TAG, "wifi restart requested; restarting driver");
+            wifi_mgr_restart();
+            backoff = RETRY_MIN_US;
+            next_try = 0;
         }
 
         bool have = s_ssid[0] != '\0' || WIFI_OVERRIDE;
@@ -608,6 +628,8 @@ static void keeper_task(void *arg) {
                 reload_creds(&joined_gen);
                 backoff = RETRY_MIN_US;
                 away_backoff = AWAY_MIN_US;
+                fail_joins = 0;
+                restarts = 0;
             } else if (r == APP_WIFI_NOT_NEARBY) {
                 // Quietly: nothing here touches the screen. Waking it or a
                 // talk press looks again at once (muse_wifi_apply), unless
@@ -622,11 +644,27 @@ static void keeper_task(void *arg) {
             } else if (r == APP_WIFI_FAILED) {
                 set_fail("Can't join; retrying");
                 s_away = false;
-                // Waking the screen or a talk press retries at once
-                // (muse_wifi_apply).
-                int64_t wait = muse_state_asleep() || backoff < RETRY_AWAKE_MAX_US ? backoff : RETRY_AWAKE_MAX_US;
-                next_try = now + wait;
-                backoff = backoff * 2 > RETRY_MAX_US ? RETRY_MAX_US : backoff * 2;
+                // 1.5b: three failed joins in a row mean the driver, not
+                // the network, is suspect (the user confirmed the network
+                // is fine): restart it once and retry at once. Capped at
+                // three restarts without a success so a truly dead radio
+                // cannot restart forever; a success clears both counters.
+                // NOT_NEARBY never reaches here and never counts.
+                fail_joins++;
+                if (fail_joins >= 3 && restarts < 3) {
+                    ESP_LOGI(TAG, "3 failed joins; restarting wifi driver");
+                    wifi_mgr_restart();
+                    restarts++;
+                    fail_joins = 0;
+                    backoff = RETRY_MIN_US;
+                    next_try = 0;
+                } else {
+                    // Waking the screen or a talk press retries at once
+                    // (muse_wifi_apply).
+                    int64_t wait = muse_state_asleep() || backoff < RETRY_AWAKE_MAX_US ? backoff : RETRY_AWAKE_MAX_US;
+                    next_try = now + wait;
+                    backoff = backoff * 2 > RETRY_MAX_US ? RETRY_MAX_US : backoff * 2;
+                }
             } else {
                 // Another setup operation had the radio; soon, as it was.
                 s_chosen = s_chosen || first;

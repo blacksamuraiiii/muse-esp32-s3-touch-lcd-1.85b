@@ -223,12 +223,16 @@ static void worker(void *arg)
             }
         }
         if (command && action != PET_DECAY_ACK) {
-            /* Feedback queue is drained by the consumer (phase-2 UI tick, or
-             * the console wait loop). TamaMe's portMAX_DELAY is kept: a full
-             * feedback queue stalls this task, which is why the consumer
-             * MUST drain it every tick (see PHASE1-NOTES.md §6). */
+            /* Feedback is only a UI notification -- the snapshot is the
+             * authority -- so a full queue must never stall this task.
+             * 1.5b: send with a 100 ms timeout and drop on timeout
+             * instead of TamaMe's portMAX_DELAY (the UI tick drains every
+             * frame, so a drop means the consumer stopped, not that the
+             * state is wrong; the next snapshot refresh still lands). */
             muse_pet_feedback_t feedback = {action, result, state.fortune};
-            xQueueSend(s_feedback, &feedback, portMAX_DELAY);
+            if (xQueueSend(s_feedback, &feedback, pdMS_TO_TICKS(100)) != pdTRUE) {
+                ESP_LOGW(TAG, "feedback dropped (queue full)");
+            }
         }
     }
 }
@@ -281,7 +285,18 @@ static bool request_cmd(muse_pet_action_t action, int32_t arg)
 
 bool muse_pet_request(muse_pet_action_t action)
 {
+    /* 1.5b: PET_DECAY_ACK takes a day (see muse_pet_decay_ack()). The
+     * bare request would carry arg 0, which never matches a real
+     * decay_day, so refuse it rather than silently ACKing nothing. */
+    if (action == PET_DECAY_ACK) {
+        return false;
+    }
     return request_cmd(action, 0);
+}
+
+bool muse_pet_decay_ack(int32_t day)
+{
+    return request_cmd(PET_DECAY_ACK, day);
 }
 
 bool muse_pet_request_game(int outcome)

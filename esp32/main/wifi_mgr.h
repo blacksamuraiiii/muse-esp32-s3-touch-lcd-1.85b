@@ -69,6 +69,13 @@ bool wifi_mgr_get_connected_channel(uint8_t *channel);
 
 void wifi_mgr_disconnect(void);
 
+// Restart the Wi-Fi driver itself (stop -> start). 1.5b: disconnect +
+// reconnect alone cannot clear a wedged driver -- the settings toggle used
+// to only re-kick the keeper on the same driver instance, which is why it
+// did nothing after a disconnect left the driver stuck joining. Restart
+// also drops the cached BSSID / channel hint so the next join scans fully.
+void wifi_mgr_restart(void);
+
 bool wifi_mgr_is_connected(void);
 
 // While wifi_mgr_connect() is joining a network, copies its name out and

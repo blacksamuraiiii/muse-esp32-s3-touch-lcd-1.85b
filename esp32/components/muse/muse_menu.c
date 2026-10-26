@@ -15,6 +15,7 @@
  */
 
 #include "muse_menu.h"
+#include "muse_theme.h"   /* MUSE_THEME_*, the one colour table (1.5b) */
 
 #include <stdio.h>
 #include <string.h>
@@ -42,12 +43,6 @@
 
 static const char *TAG = "muse_menu";
 
-#define COLOR_TEXT 0xf2efff
-#define COLOR_DIM 0x8b84a8
-#define COLOR_ACCENT 0xa77dff
-#define COLOR_SELECTED 0x2e2552
-#define COLOR_RULE 0x2a2345
-#define COLOR_DANGER 0xff5c5c
 
 /* 128 px screens want a smaller face than the 14 px every board has. */
 #if LV_FONT_MONTSERRAT_12
@@ -359,7 +354,7 @@ static void show(view_t view)
     lv_obj_set_flag(s_list, LV_OBJ_FLAG_HIDDEN, view != VIEW_LIST);
     lv_obj_set_flag(s_page, LV_OBJ_FLAG_HIDDEN, view == VIEW_LIST);
     bool danger = view == VIEW_POWER || view == VIEW_RESET;
-    lv_obj_set_style_text_color(s_hint_select, lv_color_hex(danger ? COLOR_DANGER : COLOR_TEXT), 0);
+    lv_obj_set_style_text_color(s_hint_select, lv_color_hex(danger ? MUSE_THEME_DANGER : MUSE_THEME_TEXT), 0);
 
     switch (view) {
     case VIEW_STATUS:
@@ -565,7 +560,7 @@ void muse_menu_build(lv_obj_t *parent, int w, int h)
     lv_obj_remove_flag(s_root, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_flag(s_root, LV_OBJ_FLAG_HIDDEN);
 
-    s_title = label(s_root, fine, COLOR_DIM, "MENU");
+    s_title = label(s_root, fine, MUSE_THEME_DIM, "MENU");
     lv_obj_set_style_text_letter_space(s_title, 1, 0);
     lv_obj_align(s_title, LV_ALIGN_TOP_MID, 0, small ? 3 : 12);
 
@@ -583,16 +578,16 @@ void muse_menu_build(lv_obj_t *parent, int w, int h)
         lv_obj_set_size(r, lv_pct(100), s_row_h);
         lv_obj_set_style_pad_hor(r, small ? 3 : 10, 0);
         lv_obj_set_style_radius(r, small ? 3 : 8, 0);
-        lv_obj_set_style_bg_color(r, lv_color_hex(COLOR_SELECTED), 0);
+        lv_obj_set_style_bg_color(r, lv_color_hex(MUSE_THEME_SELECTED), 0);
         lv_obj_remove_flag(r, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
-        uint32_t color = i == ITEM_POWER ? COLOR_DANGER : COLOR_TEXT;
+        uint32_t color = i == ITEM_POWER ? MUSE_THEME_DANGER : MUSE_THEME_TEXT;
         lv_obj_align(label(r, font, color, ITEM_NAMES[i]), LV_ALIGN_LEFT_MID, 0, 0);
-        s_values[i] = label(r, font, COLOR_ACCENT, "");
+        s_values[i] = label(r, font, MUSE_THEME_ACCENT, "");
         lv_obj_align(s_values[i], LV_ALIGN_RIGHT_MID, 0, 0);
         s_rows[i] = r;
     }
 
-    s_page = label(s_root, fine, COLOR_TEXT, "");
+    s_page = label(s_root, fine, MUSE_THEME_TEXT, "");
     lv_obj_set_width(s_page, w - 4 * pad - strip);
     lv_obj_set_style_text_line_space(s_page, small ? 3 : 8, 0);
     lv_label_set_long_mode(s_page, LV_LABEL_LONG_MODE_WRAP);
@@ -603,10 +598,10 @@ void muse_menu_build(lv_obj_t *parent, int w, int h)
     lv_obj_t *rule = lv_obj_create(s_root);
     lv_obj_remove_style_all(rule);
     lv_obj_set_size(rule, w, 1);
-    lv_obj_set_style_bg_color(rule, lv_color_hex(COLOR_RULE), 0);
+    lv_obj_set_style_bg_color(rule, lv_color_hex(MUSE_THEME_RULE), 0);
     lv_obj_set_style_bg_opa(rule, LV_OPA_COVER, 0);
     lv_obj_align(rule, LV_ALIGN_BOTTOM_MID, 0, -hint_h);
-    s_hint_down = label(s_root, font, COLOR_TEXT, "");
+    s_hint_down = label(s_root, font, MUSE_THEME_TEXT, "");
     if (aux_side) {
         /* Reads downwards, the arrow pointing down; centred on the icon's
          * spot so it stays put as the text changes. */
@@ -619,7 +614,7 @@ void muse_menu_build(lv_obj_t *parent, int w, int h)
         s_down_text = muse_board->keyboard ? "Esc Back" : LV_SYMBOL_DOWN " Down";
         align_on_bar(s_hint_down, aux->align == LV_ALIGN_RIGHT_MID ? LV_ALIGN_BOTTOM_LEFT : aux->align, pad);
     }
-    s_hint_select = label(s_root, font, COLOR_TEXT, "");
+    s_hint_select = label(s_root, font, MUSE_THEME_TEXT, "");
     align_on_bar(s_hint_select, talk->align, pad);
 }
 

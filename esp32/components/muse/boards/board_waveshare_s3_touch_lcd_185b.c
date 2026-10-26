@@ -66,6 +66,7 @@
 #include "esp_log.h"
 #include "esp_lv_adapter.h"
 #include "esp_sleep.h"
+#include "esp_wifi.h"   /* power_off() stops Wi-Fi before deep sleep (1.5b) */
 #include "i2c_bus.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -1406,6 +1407,15 @@ static void send_disp_off(void *arg)
 
 static esp_err_t power_off(void)
 {
+    /* 1.5b: leave Wi-Fi cleanly before deep sleep. The driver used to be
+     * left associated when the chip folded, and the next boot's join could
+     * then spin against the AP's stale association. A failure here only
+     * logs: it must never block powering off. */
+    esp_wifi_disconnect();
+    esp_err_t wifi_err = esp_wifi_stop();
+    if (wifi_err != ESP_OK) {
+        ESP_LOGW(TAG, "deep sleep: wifi stop failed: %s", esp_err_to_name(wifi_err));
+    }
     set_brightness(0);
     /* SLPIN, not just DISPOFF: DISPOFF blanks the picture and leaves the
      * panel's charge pump and bias running. GRAM is lost either way and the

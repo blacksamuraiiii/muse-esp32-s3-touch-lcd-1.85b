@@ -24,19 +24,18 @@
  *     interaction tile, so swiping away from a subpage is legal and
  *     muse_interact_ui_on_hidden() resets it.
  *
- * Colours: taken from 1.4d muse_settings_ui.c / muse_ui.c, NOT invented:
- *   TEXT 0xf2efff, DIM 0x8b84a8, CARD 0x1a1530, PRESSED 0x2e2552,
- *   ACCENT 0xa77dff, OK 0x6ff0bf, GOLD 0xf6cb4b (fortune grade, and the
- *   upstream HUD coin colour). DANGER: 1.4d settings uses 0xff5c5c;
- *   the phase-2 brief listed 0xff6b6b. This file uses the in-repo value
- *   (0xff5c5c) so the game "you lost" red matches the settings pages;
- *   if the brief value is preferred, change ONE #define below.
- * Fonts: title/body use the repo CJK font (muse_font_cjk_16 under
- *   CONFIG_MUSE_CJK_FONT, else montserrat_16). The mockups' "18号" body
- *   is a design size, not a font file in the repo: the code renders the
- *   fortune body at the CJK font with 26px line spacing and the
- *   per-card on-screen check (design §8) is the arbiter of fit. Do NOT
- *   invent an 18px font symbol to make the code look exact.
+ * Colours: the shared table in muse_theme.h (1.5b), values taken from 1.4d
+ *   muse_settings_ui.c / muse_ui.c, NOT invented. DANGER is the in-repo
+ *   value 0xff5c5c (the phase-2 brief listed 0xff6b6b) so the game
+ *   "you lost" red matches the settings pages; to change it, change
+ *   MUSE_THEME_DANGER in muse_theme.h, nowhere else.
+ * Fonts: title/body use the shared chain in muse_font.h (1.5b):
+ *   muse_font_cjk() for interface copy, muse_font_btn() for buttons.
+ *   The mockups' "18号" body is a design size, not a font file in the
+ *   repo: the code renders the fortune body at the CJK font with 26px
+ *   line spacing and the per-card on-screen check (design §8) is the
+ *   arbiter of fit. Do NOT invent an 18px font symbol to make the code
+ *   look exact.
  * Game hand images: see muse_interact_hand_assets.h (generated assets,
  *   Game-icons, CC BY 3.0, rotated CCW 90 degrees). Feed food images:
  *   see muse_interact_food_art.h (upstream 16x16 pixel art, drawn by
@@ -59,20 +58,14 @@
 #include "esp_random.h"
 #include "muse_interact_food_art.h"
 #include "muse_interact_hand_assets.h"
+#include "muse_font.h"    /* muse_font_cjk() / muse_font_btn(), the one CJK chain (1.5b) */
+#include "muse_theme.h"   /* MUSE_THEME_*, the one colour table (1.5b) */
 #include "muse_pet.h"
 #include "muse_pet_text.h"
 #include "muse_state.h"
 #include "muse_ui.h"
 
-/* --- colours (see file header for the DANGER note) --- */
-#define IC_TEXT 0xf2efff
-#define IC_DIM 0x8b84a8
-#define IC_CARD 0x1a1530
-#define IC_PRESSED 0x2e2552
-#define IC_ACCENT 0xa77dff
-#define IC_OK 0x6ff0bf
-#define IC_DANGER 0xff5c5c
-#define IC_GOLD 0xf6cb4b
+/* --- colours: muse_theme.h (see file header for the DANGER note) --- */
 
 /* --- layout --- */
 #define IC_BACK_W 56
@@ -125,6 +118,13 @@ static lv_obj_t *s_btn_feed, *s_btn_game, *s_btn_fortune;
 static lv_obj_t *s_btn_feed_lbl, *s_btn_game_lbl, *s_btn_fortune_lbl;
 static int s_last_feed_idx;
 static uint32_t s_last_feed_before;
+/* 1.5b: one feed at a time. A second tap while the first request is still
+ * outstanding used to overwrite s_last_feed_idx / s_last_feed_before, so
+ * the second feedback worded "+10" for a feed that paid nothing (the mask
+ * bit was already set). While pending, taps are ignored; the 5 s timeout
+ * in the tick is the backstop if a feedback is ever dropped. */
+static bool s_feed_pending;
+static uint32_t s_feed_pending_ms;
 static lv_obj_t *s_status1;
 static lv_obj_t *s_feed_cards[3];
 static lv_obj_t *s_feed_note;   /* result line on the feed subpage itself */
@@ -165,54 +165,10 @@ static uint32_t s_caption_read_version = 0xFFFFFFFFu;
 static muse_pet_model_t s_snap;
 static bool s_have_snap;
 
-#if CONFIG_MUSE_CJK_FONT
-LV_FONT_DECLARE(muse_font_cjk_16)
-LV_FONT_DECLARE(muse_font_ui_16)
-/* Long-tail CJK, and the ASCII the CJK faces lack: Unifont's 16x16 bitmap
- * starts at U+3000, so every space, digit and '+' in a Chinese line used to
- * draw as a tofu box (user photo, 1.5a). Montserrat fills exactly those. */
-static const lv_font_t *cjk_fallback_font(void)
-{
-    static lv_font_t font;
-    if (!font.get_glyph_dsc) {
-        font = muse_font_cjk_16;
-        font.fallback = &lv_font_montserrat_16;
-    }
-    return &font;
-}
-
-/* Interface copy: 16 px WenQuanYi Micro Hei at 4bpp, antialiased, subset to
- * the characters the sources actually use (tools/muse/gen_ui_font.sh). Unifont
- * is 1bpp, i.e. hard one-pixel strokes -- that is why the Hanzi looked rougher
- * than the Latin text next to it (user report 2026-10-25). A character outside
- * the subset falls back to the full Unifont face, so new copy never shows a
- * box, it only looks less smooth until the subset is regenerated. */
-static const lv_font_t *cjk_font(void)
-{
-    static lv_font_t font;
-    if (!font.get_glyph_dsc) {
-        font = muse_font_ui_16;
-        font.fallback = cjk_fallback_font();
-    }
-    return &font;
-}
-
-/* Button copy mixes both scripts ("喂饭 ｜ +10金币"): Montserrat 20 first,
- * the CJK face for what it lacks. Same copy-with-fallback trick muse_ui.c
- * uses for captions. */
-static const lv_font_t *btn_font(void)
-{
-    static lv_font_t font;
-    if (!font.get_glyph_dsc) {
-        font = lv_font_montserrat_20;
-        font.fallback = cjk_font();
-    }
-    return &font;
-}
-#else
-static const lv_font_t *cjk_font(void) { return &lv_font_montserrat_16; }
-static const lv_font_t *btn_font(void) { return &lv_font_montserrat_20; }
-#endif
+/* Fonts come from the one shared chain (muse_font.h, 1.5b): interface copy
+ * uses muse_font_cjk(), buttons muse_font_btn(). The old local helpers
+ * (cjk_fallback_font / cjk_font / btn_font) are gone; the chain lives in
+ * muse_font.c so a fix can no longer land in one file and miss the other. */
 
 static lv_obj_t *label(lv_obj_t *parent, const lv_font_t *font, uint32_t color,
                        const char *text)
@@ -242,11 +198,11 @@ static void page_header(lv_obj_t *page, const char *title, lv_event_cb_t back_cb
         lv_obj_set_size(back, IC_BACK_W, IC_BACK_H);
         lv_obj_align(back, LV_ALIGN_TOP_MID, -112, 28);
         lv_obj_add_event_cb(back, back_cb, LV_EVENT_CLICKED, NULL);
-        lv_obj_t *arrow = label(back, &lv_font_montserrat_20, IC_ACCENT, LV_SYMBOL_LEFT);
+        lv_obj_t *arrow = label(back, &lv_font_montserrat_20, MUSE_THEME_ACCENT, LV_SYMBOL_LEFT);
         lv_obj_center(arrow);
     }
 
-    lv_obj_t *t = label(page, cjk_font(), IC_ACCENT, title);
+    lv_obj_t *t = label(page, muse_font_cjk(), MUSE_THEME_ACCENT, title);
     lv_obj_align(t, LV_ALIGN_TOP_MID, 0, 44);
 }
 
@@ -286,7 +242,7 @@ static void game_hint(const char *text)
     if (!s_game_result_lbl) {
         return;
     }
-    lv_obj_set_style_text_color(s_game_result_lbl, lv_color_hex(IC_DIM), 0);
+    lv_obj_set_style_text_color(s_game_result_lbl, lv_color_hex(MUSE_THEME_DIM), 0);
     lv_label_set_text(s_game_result_lbl, text);
     lv_obj_remove_flag(s_game_result_lbl, LV_OBJ_FLAG_HIDDEN);
 }
@@ -321,11 +277,11 @@ static void refresh_status(void)
     lv_label_set_text(s_btn_feed_lbl,
                       feed_done ? "喂饭 ｜ 今日已领满" : "喂饭 ｜ 每种 +10金币");
     lv_obj_set_style_text_color(s_btn_feed_lbl,
-                                lv_color_hex(feed_done ? IC_DIM : IC_TEXT), 0);
+                                lv_color_hex(feed_done ? MUSE_THEME_DIM : MUSE_THEME_TEXT), 0);
     lv_label_set_text(s_btn_game_lbl,
                       s_snap.coins < 5 ? "小游戏 ｜ 金币不够" : "小游戏 ｜ 石头剪刀布");
     lv_obj_set_style_text_color(s_btn_game_lbl,
-                                lv_color_hex(s_snap.coins < 5 ? IC_DIM : IC_TEXT), 0);
+                                lv_color_hex(s_snap.coins < 5 ? MUSE_THEME_DIM : MUSE_THEME_TEXT), 0);
     if (s_snap.fortune_day >= 0) {
         const char *grade = muse_pet_fortune_grade(s_snap.fortune);
         char fbuf[48];
@@ -346,10 +302,10 @@ static lv_obj_t *main_button(lv_obj_t *parent, int y, const char *text,
      * explicit COVER the row is just text on black (the settings page
      * sets the same line on its rows). */
     lv_obj_set_style_bg_opa(b, LV_OPA_COVER, 0);
-    lv_obj_set_style_bg_color(b, lv_color_hex(IC_CARD), 0);
-    lv_obj_set_style_bg_color(b, lv_color_hex(IC_PRESSED), LV_STATE_PRESSED);
+    lv_obj_set_style_bg_color(b, lv_color_hex(MUSE_THEME_CARD), 0);
+    lv_obj_set_style_bg_color(b, lv_color_hex(MUSE_THEME_CARD_PRESSED), LV_STATE_PRESSED);
     lv_obj_set_style_radius(b, IC_RADIUS, 0);
-    lv_obj_t *l = label(b, btn_font(), IC_TEXT, text);
+    lv_obj_t *l = label(b, muse_font_btn(), MUSE_THEME_TEXT, text);
     lv_obj_center(l);
     lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, NULL);
     if (lbl_out) {
@@ -465,6 +421,9 @@ static void on_feed_food(lv_event_t *e)
     muse_pet_action_t act = PET_FEED_RICE;
     if (idx == 1) act = PET_FEED_CAKE;
     if (idx == 2) act = PET_FEED_COFFEE;
+    if (s_feed_pending) {
+        return; /* 1.5b: one feed at a time -- see s_feed_pending. */
+    }
     s_last_feed_idx = idx;
     /* 1.5a: each food pays on its own, so remember whether THIS food was
      * already paid (mask bit), not the old single daily counter. */
@@ -474,6 +433,8 @@ static void on_feed_food(lv_event_t *e)
         feed_note("互动未就绪");
         return;
     }
+    s_feed_pending = true;
+    s_feed_pending_ms = lv_tick_get();
     /* Stay on the feed page (user decision 2026-10-25): the result lands
      * in the page's own line, so a second food is one tap away instead of
      * a re-entry. The wording still comes from the worker's feedback,
@@ -513,7 +474,7 @@ static void set_choice_dim(bool dim)
 {
     for (int i = 0; i < 3; i++) {
         lv_obj_set_style_bg_color(s_game_choices[i],
-                                  lv_color_hex(dim ? IC_PRESSED : IC_CARD), 0);
+                                  lv_color_hex(dim ? MUSE_THEME_CARD_PRESSED : MUSE_THEME_CARD), 0);
     }
 }
 
@@ -533,24 +494,24 @@ static void show_game_result(void)
     lv_image_set_src(s_game_house_img, hand_img(s_game_house));
     lv_obj_set_style_border_width(s_game_you_img, 0, 0);
     lv_obj_set_style_border_width(s_game_house_img, 0, 0);
-    lv_obj_set_style_image_recolor(s_game_you_img, lv_color_hex(IC_TEXT), 0);
-    lv_obj_set_style_image_recolor(s_game_house_img, lv_color_hex(IC_TEXT), 0);
+    lv_obj_set_style_image_recolor(s_game_you_img, lv_color_hex(MUSE_THEME_TEXT), 0);
+    lv_obj_set_style_image_recolor(s_game_house_img, lv_color_hex(MUSE_THEME_TEXT), 0);
     if (s_game_result > 0) {
         lv_obj_set_style_border_width(s_game_you_img, 3, 0);
-        lv_obj_set_style_border_color(s_game_you_img, lv_color_hex(IC_ACCENT), 0);
-        lv_obj_set_style_image_recolor(s_game_house_img, lv_color_hex(IC_DIM), 0);
-        lv_obj_set_style_text_color(s_game_result_lbl, lv_color_hex(IC_OK), 0);
+        lv_obj_set_style_border_color(s_game_you_img, lv_color_hex(MUSE_THEME_ACCENT), 0);
+        lv_obj_set_style_image_recolor(s_game_house_img, lv_color_hex(MUSE_THEME_DIM), 0);
+        lv_obj_set_style_text_color(s_game_result_lbl, lv_color_hex(MUSE_THEME_OK), 0);
         lv_label_set_text(s_game_result_lbl, "你赢了！");
     } else if (s_game_result < 0) {
         lv_obj_set_style_border_width(s_game_house_img, 3, 0);
-        lv_obj_set_style_border_color(s_game_house_img, lv_color_hex(IC_ACCENT), 0);
-        lv_obj_set_style_image_recolor(s_game_you_img, lv_color_hex(IC_DIM), 0);
+        lv_obj_set_style_border_color(s_game_house_img, lv_color_hex(MUSE_THEME_ACCENT), 0);
+        lv_obj_set_style_image_recolor(s_game_you_img, lv_color_hex(MUSE_THEME_DIM), 0);
         /* No error shake on losing (design §5.5): the loser dims, it
          * does not jitter. */
-        lv_obj_set_style_text_color(s_game_result_lbl, lv_color_hex(IC_DANGER), 0);
+        lv_obj_set_style_text_color(s_game_result_lbl, lv_color_hex(MUSE_THEME_DANGER), 0);
         lv_label_set_text(s_game_result_lbl, "你输了");
     } else {
-        lv_obj_set_style_text_color(s_game_result_lbl, lv_color_hex(IC_DIM), 0);
+        lv_obj_set_style_text_color(s_game_result_lbl, lv_color_hex(MUSE_THEME_DIM), 0);
         lv_label_set_text(s_game_result_lbl, "平局，再来一局");
     }
     lv_obj_remove_flag(s_game_result_lbl, LV_OBJ_FLAG_HIDDEN);
@@ -785,6 +746,9 @@ static void drain_feedback(void)
         case PET_FEED_RICE:
         case PET_FEED_CAKE:
         case PET_FEED_COFFEE: {
+            /* 1.5b: the request is answered, whatever the result, so the
+             * next tap may go through. */
+            s_feed_pending = false;
             /* PET_OK means "settled"; whether coins moved is read from the
              * snapshot's feed_mask for THIS food vs the bit at click time
              * (design §4.3) -- the result code alone does not say. */
@@ -906,7 +870,7 @@ static void build_main(void)
      * (-22) which read as too low. 302 splits the gap: 28 px below the card,
      * 42 px above the bezel, and the circle's chord there is ~264 px, well over
      * the width of "金币 100/100". */
-    s_status1 = label(s_main_page, cjk_font(), IC_TEXT, "金币 --/100");
+    s_status1 = label(s_main_page, muse_font_cjk(), MUSE_THEME_TEXT, "金币 --/100");
     lv_obj_align(s_status1, LV_ALIGN_TOP_MID, 0, 302);
 }
 
@@ -926,8 +890,8 @@ static void build_feed(void)
         lv_obj_set_size(card, IC_FEED_CARD, IC_FEED_CARD);
         lv_obj_set_pos(card, x0 + i * (IC_FEED_CARD + 8), y);
         lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
-        lv_obj_set_style_bg_color(card, lv_color_hex(IC_CARD), 0);
-        lv_obj_set_style_bg_color(card, lv_color_hex(IC_PRESSED), LV_STATE_PRESSED);
+        lv_obj_set_style_bg_color(card, lv_color_hex(MUSE_THEME_CARD), 0);
+        lv_obj_set_style_bg_color(card, lv_color_hex(MUSE_THEME_CARD_PRESSED), LV_STATE_PRESSED);
         lv_obj_set_style_radius(card, IC_RADIUS, 0);
         lv_obj_set_style_border_width(card, 0, 0);
         lv_obj_remove_flag(card, LV_OBJ_FLAG_SCROLLABLE);
@@ -947,16 +911,16 @@ static void build_feed(void)
         lv_obj_add_event_cb(icon, draw_food_cb, LV_EVENT_DRAW_MAIN_BEGIN, (void *)(intptr_t)i);
         lv_obj_add_event_cb(card, on_feed_food, LV_EVENT_CLICKED, (void *)(intptr_t)i);
         s_feed_cards[i] = card;
-        lv_obj_t *nm = label(s_feed_page, cjk_font(), IC_DIM,
+        lv_obj_t *nm = label(s_feed_page, muse_font_cjk(), MUSE_THEME_DIM,
                              MUSE_INTERACT_FOODS[i].name);
         lv_obj_align(nm, LV_ALIGN_TOP_MID,
                      x0 + i * (IC_FEED_CARD + 8) + IC_FEED_CARD / 2 - 180, y + IC_FEED_CARD + 8);
     }
-    lv_obj_t *hint = label(s_feed_page, cjk_font(), IC_DIM, "喂饭不花币，每种食物每天 +10");
+    lv_obj_t *hint = label(s_feed_page, muse_font_cjk(), MUSE_THEME_DIM, "喂饭不花币，每种食物每天 +10");
     lv_obj_align(hint, LV_ALIGN_TOP_MID, 0, 262);
     /* Result line: same chord rule as the main page's status line (240 px
      * at y = 292 keeps it inside the 360 circle). */
-    s_feed_note = label(s_feed_page, cjk_font(), IC_TEXT, "");
+    s_feed_note = label(s_feed_page, muse_font_cjk(), MUSE_THEME_TEXT, "");
     lv_obj_align(s_feed_note, LV_ALIGN_TOP_MID, 0, 292);
     lv_label_set_long_mode(s_feed_note, LV_LABEL_LONG_DOT);
     lv_obj_set_width(s_feed_note, 240);
@@ -966,7 +930,7 @@ static void build_feed(void)
 static void build_game(void)
 {
     page_header(s_game_page, "小游戏", on_back);
-    lv_obj_t *coins = label(s_game_page, cjk_font(), IC_TEXT, "金币 --/100");
+    lv_obj_t *coins = label(s_game_page, muse_font_cjk(), MUSE_THEME_TEXT, "金币 --/100");
     lv_obj_align(coins, LV_ALIGN_TOP_MID, 0, 84);
     /* The coin line is a live status, not a static label: refresh_status
      * rewrites s_status1 only, so the game page keeps its own pointer
@@ -987,8 +951,8 @@ static void build_game(void)
         lv_obj_set_size(b, IC_GAME_CHOICE, IC_GAME_CHOICE);
         lv_obj_set_pos(b, x0 + i * (IC_GAME_CHOICE + 8), 120);
         lv_obj_set_style_bg_opa(b, LV_OPA_COVER, 0);
-        lv_obj_set_style_bg_color(b, lv_color_hex(IC_CARD), 0);
-        lv_obj_set_style_bg_color(b, lv_color_hex(IC_PRESSED), LV_STATE_PRESSED);
+        lv_obj_set_style_bg_color(b, lv_color_hex(MUSE_THEME_CARD), 0);
+        lv_obj_set_style_bg_color(b, lv_color_hex(MUSE_THEME_CARD_PRESSED), LV_STATE_PRESSED);
         lv_obj_set_style_radius(b, IC_RADIUS, 0);
         lv_obj_t *img = lv_image_create(b);
         lv_image_set_src(img, hand_img(hand));
@@ -1024,10 +988,10 @@ static void build_game(void)
     lv_obj_set_style_image_recolor_opa(s_game_you_img, LV_OPA_COVER, 0);
     lv_obj_set_style_image_recolor_opa(s_game_house_img, LV_OPA_COVER, 0);
     /* Result area below the row slot. */
-    s_game_chant_lbl = label(s_game_page, cjk_font(), IC_TEXT, "石头！");
+    s_game_chant_lbl = label(s_game_page, muse_font_cjk(), MUSE_THEME_TEXT, "石头！");
     lv_obj_align(s_game_chant_lbl, LV_ALIGN_TOP_MID, 0, 240);
     lv_obj_add_flag(s_game_chant_lbl, LV_OBJ_FLAG_HIDDEN);
-    s_game_result_lbl = label(s_game_page, cjk_font(), IC_TEXT, "");
+    s_game_result_lbl = label(s_game_page, muse_font_cjk(), MUSE_THEME_TEXT, "");
     lv_obj_align(s_game_result_lbl, LV_ALIGN_TOP_MID, 0, 240);
     /* Also carries the "金币不够" refusal now, which is a full sentence: cap
      * the width to the circle's chord and centre it instead of letting a long
@@ -1036,10 +1000,10 @@ static void build_game(void)
     lv_label_set_long_mode(s_game_result_lbl, LV_LABEL_LONG_DOT);
     lv_obj_set_style_text_align(s_game_result_lbl, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_add_flag(s_game_result_lbl, LV_OBJ_FLAG_HIDDEN);
-    s_game_streak_lbl = label(s_game_page, cjk_font(), IC_DIM, "");
+    s_game_streak_lbl = label(s_game_page, muse_font_cjk(), MUSE_THEME_DIM, "");
     lv_obj_align(s_game_streak_lbl, LV_ALIGN_TOP_MID, 0, 272);
     lv_obj_add_flag(s_game_streak_lbl, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_t *hint = label(s_game_page, cjk_font(), IC_DIM, "点一张手出拳，每局 -5 金币");
+    lv_obj_t *hint = label(s_game_page, muse_font_cjk(), MUSE_THEME_DIM, "点一张手出拳，每局 -5 金币");
     lv_obj_align(hint, LV_ALIGN_TOP_MID, 0, 300);
 }
 
@@ -1054,21 +1018,21 @@ static void build_fortune(void)
     lv_obj_set_size(card, IC_FORTUNE_CARD_W, IC_FORTUNE_CARD_H);
     lv_obj_set_pos(card, (360 - IC_FORTUNE_CARD_W) / 2, 105);
     lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
-    lv_obj_set_style_bg_color(card, lv_color_hex(IC_CARD), 0);
+    lv_obj_set_style_bg_color(card, lv_color_hex(MUSE_THEME_CARD), 0);
     lv_obj_set_style_radius(card, IC_RADIUS, 0);
     lv_obj_set_style_border_width(card, 0, 0);
     lv_obj_remove_flag(card, LV_OBJ_FLAG_SCROLLABLE);
-    s_fortune_grade = label(card, cjk_font(), IC_GOLD, "-");
+    s_fortune_grade = label(card, muse_font_cjk(), MUSE_THEME_GOLD, "-");
     lv_obj_align(s_fortune_grade, LV_ALIGN_TOP_MID, 0, 12);
-    s_fortune_body = label(card, cjk_font(), IC_TEXT, "");
+    s_fortune_body = label(card, muse_font_cjk(), MUSE_THEME_TEXT, "");
     lv_label_set_long_mode(s_fortune_body, LV_LABEL_LONG_WRAP);
     lv_obj_set_width(s_fortune_body, IC_FORTUNE_CARD_W - 32);
     lv_obj_set_style_text_line_space(s_fortune_body, 6, 0);
     lv_obj_set_style_text_align(s_fortune_body, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_align(s_fortune_body, LV_ALIGN_TOP_MID, 0, 52);
-    lv_obj_t *n1 = label(s_fortune_page, cjk_font(), IC_DIM, "每天 +20 金币");
+    lv_obj_t *n1 = label(s_fortune_page, muse_font_cjk(), MUSE_THEME_DIM, "每天 +20 金币");
     lv_obj_align(n1, LV_ALIGN_TOP_MID, 0, 270);
-    lv_obj_t *n2 = label(s_fortune_page, cjk_font(), IC_DIM, "同日再抽显示同一张");
+    lv_obj_t *n2 = label(s_fortune_page, muse_font_cjk(), MUSE_THEME_DIM, "同日再抽显示同一张");
     lv_obj_align(n2, LV_ALIGN_TOP_MID, 0, 294);
 }
 
@@ -1157,6 +1121,12 @@ void muse_interact_ui_tick(bool active)
         }
     }
 
+    /* 1.5b backstop: if a feed feedback was ever dropped, the pending flag
+     * must not wedge the feed buttons forever. */
+    if (s_feed_pending && (int32_t)(lv_tick_get() - s_feed_pending_ms) > 5000) {
+        s_feed_pending = false;
+    }
+
     /* Decay notice: announce once, then ACK. Only while IDLE (same gate
      * as any pet caption) and only once per decay_day: a notice that
      * arrives while a dialog runs waits for the next IDLE frame instead
@@ -1171,10 +1141,11 @@ void muse_interact_ui_tick(bool active)
         s_decay_announced_day = s_snap.decay_day;
         /* ACK after showing, not before: if the ACK raced the caption,
          * the next snapshot would have notice 0 and the amount would
-         * be lost from the caption path. The worker clears decay_notice
-         * on ACK; the next snapshot then has 0 and this block stops
-         * firing (guarded also by decay_day). */
-        muse_pet_request(PET_DECAY_ACK);
+         * be lost from the caption path. 1.5b: the ACK carries the day
+         * it announced, and the worker only clears a notice for that
+         * day -- an ACK that arrives after a midnight rollover created
+         * a new notice must not silently clear the new one. */
+        muse_pet_decay_ack(s_snap.decay_day);
     }
 
     if (s_touch_failed) {
