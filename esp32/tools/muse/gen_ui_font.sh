@@ -53,6 +53,16 @@ for a, b in [(0x3000, 0x303F), (0x3040, 0x30FF),
              (0xFF00, 0xFFEF), (0x2000, 0x206F)]:
     for cp in range(a, b + 1):
         chars.add(chr(cp))
+# ASCII and the symbols a reply actually prints. Without these the digits came
+# from Montserrat's fallback, which reads a size larger than the 16 px hanzi
+# beside them, and "°C"/"℃" had no glyph at all (the band showed "OC").
+for cp in range(0x20, 0x7F):
+    chars.add(chr(cp))
+for cp in (0x00A0, 0x00B0, 0x00B1, 0x00B5, 0x00D7, 0x00F7,
+           0x2013, 0x2014, 0x2018, 0x2019, 0x201C, 0x201D, 0x2026,
+           0x2030, 0x2032, 0x2033, 0x2103, 0x2109, 0x2116,
+           0x2190, 0x2191, 0x2192, 0x2193, 0x25CF, 0x25CB):
+    chars.add(chr(cp))
 for ws in ("\n", "\r", "\t"):
     chars.discard(ws)
 # Drop format/control characters: the U+202A..U+202E and U+2066..U+2069 bidi
