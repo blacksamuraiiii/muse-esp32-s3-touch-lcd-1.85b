@@ -600,23 +600,33 @@ static void keeper_task(void *arg) {
             backoff = RETRY_MIN_US;
             away_backoff = AWAY_MIN_US;
             s_away = false;
-        } else if (!WIFI_OVERRIDE && !s_editing && esp_timer_get_time() >= next_try) {
+        } else if (!s_editing && esp_timer_get_time() >= next_try) {
             // NVS has Muse's changes (s_editing is clear), so Link joins from
-            // the same list the settings show.
+            // the same list the settings show (or, with a build-time override,
+            // the network that override names).
             uint32_t gen = s_creds_gen;
             bool first = s_chosen;
             s_chosen = false;
             app_wifi_join_t r;
-            if (!first && none_nearby_lately()) {
+            if (!WIFI_OVERRIDE && !first && none_nearby_lately()) {
                 r = APP_WIFI_NOT_NEARBY;   // Link's join at boot just looked
             } else {
                 s_joining = true;
-                if (first) {
-                    ESP_LOGI(TAG, "joining %s", s_ssid);
+                if (WIFI_OVERRIDE) {
+                    // 1.5b: the override network is not in NVS, so the saved
+                    // list cannot reach it. Rejoining it here is what keeps a
+                    // nap, the settings switch and a driver restart from
+                    // leaving Wi-Fi down until the next reboot.
+                    ESP_LOGI(TAG, "rejoining wifi override %s", CONFIG_HOMEHUB_WIFI_SSID);
+                    r = app_wifi_join_override(CONNECT_TIMEOUT_MS);
                 } else {
-                    ESP_LOGI(TAG, "looking for a saved wifi network");
+                    if (first) {
+                        ESP_LOGI(TAG, "joining %s", s_ssid);
+                    } else {
+                        ESP_LOGI(TAG, "looking for a saved wifi network");
+                    }
+                    r = app_wifi_join_saved(CONNECT_TIMEOUT_MS, first);
                 }
-                r = app_wifi_join_saved(CONNECT_TIMEOUT_MS, first);
                 s_joining = false;
             }
             int64_t now = esp_timer_get_time();

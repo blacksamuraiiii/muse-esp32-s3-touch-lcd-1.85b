@@ -2376,6 +2376,32 @@ app_wifi_join_t app_wifi_join_saved(int timeout_ms, bool first_only) {
     return result;
 }
 
+// 1.5b: the override network is not in the saved list, so joining it needs its
+// own path. Before this, only the boot connect and wifi_mgr's own
+// auto-reconnect ever joined it, and a nap, the settings switch or a driver
+// restart all clear those: the driver stayed started with nobody joining and
+// the screen sat on "connecting" until a reboot.
+app_wifi_join_t app_wifi_join_override(int timeout_ms) {
+    const char *ssid = CONFIG_HOMEHUB_WIFI_SSID;
+    if (!ssid[0]) return APP_WIFI_FAILED;
+    if (!operation_gate_take(0, "Muse override Wi-Fi connect")) return APP_WIFI_BUSY;
+    s_muse_napping = false;
+    bool paired = config_is_provisioned();
+    app_wifi_join_t result =
+        wifi_mgr_connect(ssid, CONFIG_HOMEHUB_WIFI_PASSWORD, timeout_ms)
+            ? APP_WIFI_JOINED : APP_WIFI_FAILED;
+    if (result == APP_WIFI_JOINED) {
+        ui_set_wifi(ssid);
+        ui_set_status("wifi_connected");
+        if (paired) xSemaphoreGive(s_muse_joined);   // muse_keep_vm_session()
+    } else {
+        ui_set_status("wifi_failed");
+        if (paired) led_status_set_state(LED_STATE_WS_DISCONNECTED);
+    }
+    operation_gate_give();
+    return result;
+}
+
 int64_t app_wifi_none_nearby_at(void) {
     return s_none_nearby_us;
 }
