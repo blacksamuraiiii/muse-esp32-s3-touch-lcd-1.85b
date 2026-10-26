@@ -987,12 +987,14 @@ static void build_screen(void)
     }
 
     /*
-     * Full layout, from the bottom up (offsets from the centre): two caption
+     * Full layout, from the bottom up (offsets from the centre): three caption
      * lines as low as the ring leaves them room, the level meter, then Muse,
-     * whose blank bottom rows can tuck in behind the meter.
+     * whose blank bottom rows can tuck in behind the meter. 1.5b: the caption
+     * is 16 px antialiased text now, not 17 px Unifont, so the same band holds
+     * one more row; Muse and the meter move up to make room for it.
      */
     int ring_in = (s_w < s_h ? s_w : s_h) / 2 - 10;   /* the ring's inner edge */
-    int cap_h = 2 * lv_font_get_line_height(&lv_font_unscii_16) + CAPTION_LINE_SPACE;
+    int cap_h = 3 * lv_font_get_line_height(muse_font_caption()) + 2 * CAPTION_LINE_SPACE;
     int cap_bottom = 179;                              /* a 466 px circle's; fine for rectangles */
     if (muse_board->round) {
         cap_bottom = (int)sqrtf((float)(ring_in * ring_in - CAPTION_W * CAPTION_W / 4)) - 3;
@@ -1125,11 +1127,11 @@ static void build_screen(void)
     lv_label_set_long_mode(s_caption_lbl, LV_LABEL_LONG_MODE_DOTS);
     lv_obj_align(s_caption_lbl, LV_ALIGN_CENTER, 0, cap_top + cap_h / 2);
 #if CONFIG_MUSE_CJK_FONT
-    /* A Chinese reply pages two 16 px lines at a time (1.5b: replies share
-     * the caption chain, no separate 20 px face). The reply box below is
-     * sized for three unscii lines, which is the same 52 px, so nothing else
-     * moves: 16 columns of 16 px fill the 256 px caption width. */
-    muse_state_set_cjk_page(CAPTION_W / lv_font_get_glyph_width(muse_font_caption(), 0x4E2D, ' '), 2);
+    /* A Chinese reply pages three 16 px lines at a time (1.5b: replies share
+     * the caption chain, no separate 20 px face). Three rows is what the
+     * caption band and the heard-reply box are both sized for; the read layout
+     * gets four. 16 columns of 16 px fill the 256 px caption width. */
+    muse_state_set_cjk_page(CAPTION_W / lv_font_get_glyph_width(muse_font_caption(), 0x4E2D, ' '), 3);
 #endif
 
     /* Chunky level meter. */
