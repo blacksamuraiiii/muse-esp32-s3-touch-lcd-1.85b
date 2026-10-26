@@ -45,6 +45,11 @@ bool app_wifi_forget(const char *ssid);
 // one just chosen). If paired, the heartbeat then reaches the VM (retrying
 // until the session runs). Nothing here wakes the screen.
 app_wifi_join_t app_wifi_join_saved(int timeout_ms, bool first_only);
+// 1.5b: joins the CONFIG_HOMEHUB_WIFI_SSID override network, which is not in
+// NVS and so is invisible to app_wifi_join_saved(). Same gate, screen and LED
+// bookkeeping as that one, so the keeper can rejoin it after a nap, the
+// settings switch or a driver restart. A no-op failure without an override.
+app_wifi_join_t app_wifi_join_override(int timeout_ms);
 // When the last join that scanned, this one or the one at boot, found no saved
 // network nearby (esp_timer_get_time()); 0 if it found one.
 int64_t app_wifi_none_nearby_at(void);
