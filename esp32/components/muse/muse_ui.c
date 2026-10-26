@@ -1079,7 +1079,9 @@ static void build_screen(void)
      * unless the screen is tall enough to fit it in small type above Muse. */
     s_state_lbl = make_label(face, s_small ? &lv_font_unscii_8 : &lv_font_unscii_16, 0xffffff);
     lv_obj_set_style_text_letter_space(s_state_lbl, s_small ? 1 : 2, 0);
-    lv_obj_align(s_state_lbl, LV_ALIGN_TOP_MID, 0, muse_board->rim_controls ? 64 : s_small ? 22 : 54 + s_dy);
+    /* 1.5b: 4 px higher than before the reply band lost a row -- Muse moved
+     * up with the taller band, and its hair ended up 1-2 px under READY. */
+    lv_obj_align(s_state_lbl, LV_ALIGN_TOP_MID, 0, muse_board->rim_controls ? 64 : s_small ? 22 : 50 + s_dy);
     lv_obj_set_flag(s_state_lbl, LV_OBJ_FLAG_HIDDEN, s_small && !s_tall && s_h < 200);
 
     /* This gadget's own name, dim under the state while it's unpaired: with
