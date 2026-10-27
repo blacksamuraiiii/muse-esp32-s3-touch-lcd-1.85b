@@ -15,6 +15,8 @@
 import os
 from pathlib import Path
 import re
+import shlex
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -358,8 +360,11 @@ int main(int argc,char **argv) {
         c.write_text(code)
         cls.binary = c.with_suffix('')
         cjson = ROOT / 'managed_components/espressif__cjson/cJSON'
+        cc = shlex.split(os.environ.get('CC', 'cc'))
+        if not cc or shutil.which(cc[0]) is None:
+            raise unittest.SkipTest('C compiler not available: install gcc or set CC')
         compiled = subprocess.run([
-            os.environ.get('CC', 'cc'), '-std=gnu11', '-Wall', '-Wextra', '-Werror',
+            *cc, '-std=gnu11', '-Wall', '-Wextra', '-Werror',
             '-I', str(cjson), '-I', str(ROOT / 'tests'), '-I', str(ROOT / 'components/muse'),
             str(c), str(cjson / 'cJSON.c'), '-o', str(cls.binary)
         ], capture_output=True, text=True)

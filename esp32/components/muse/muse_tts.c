@@ -59,6 +59,12 @@ static StreamBufferHandle_t s_ring;   /* storage in PSRAM: internal RAM is the s
 static TaskHandle_t s_task;           /* one long-lived worker; its stack lives in PSRAM */
 static volatile bool s_fetch_done;    /* the worker has finished every request */
 static volatile bool s_abort;
+/* Bumped by every muse_tts_speak() and muse_tts_cancel(). A fetch remembers the
+ * generation it started in; once that no longer matches, its bytes are dropped
+ * instead of being pushed into the ring of whatever is playing now. */
+static volatile uint32_t s_gen;
+static volatile uint32_t s_fetch_gen;
+static portMUX_TYPE s_lock = portMUX_INITIALIZER_UNLOCKED;  /* s_pending/s_busy handoff */
 static volatile bool s_busy;          /* a reply is being fetched right now */
 static char *volatile s_pending;      /* text handed to the worker by muse_tts_speak */
 static volatile size_t s_bytes;       /* bytes of the request being read */
@@ -119,10 +125,17 @@ static bool break_before(const char *p, size_t i)
         || prev == ';' || prev == ':' || prev == '!' || prev == '?') {
         return true;
     }
-    /* 。！？ and their fullwidth forms end in 0x82 / 0x81 / 0x9F. */
-    if ((prev == 0x82 || prev == 0x81 || prev == 0x9f) && i >= 3
-        && (unsigned char)p[i - 3] == 0xE0 + ((unsigned char)p[i - 2] >> 4)) {
-        return true;
+    /* 。 U+3002 is E3 80 82; ！ U+FF01 and ？ U+FF1F are EF BC 81 / EF BC 9F.
+     * Compare the leading bytes as they are. The arithmetic guess that used to
+     * be here (0xE0 + (lead >> 4)) matched none of them, so a Chinese reply was
+     * always cut at the byte limit instead of on a full stop. */
+    if (i >= 3) {
+        unsigned char lead = (unsigned char)p[i - 3];
+        unsigned char mid = (unsigned char)p[i - 2];
+        if ((lead == 0xE3 && mid == 0x80 && prev == 0x82)
+            || (lead == 0xEF && mid == 0xBC && (prev == 0x81 || prev == 0x9f))) {
+            return true;
+        }
     }
     return false;
 }
@@ -192,6 +205,13 @@ static esp_err_t on_http_data(esp_http_client_event_t *ev)
     if (ev->event_id != HTTP_EVENT_ON_DATA || ev->data_len <= 0) {
         return ESP_OK;
     }
+    /* Cancelled (barge-in) or taken over by a newer reply: drop these bytes.
+     * Returning an error here would not help - esp_http_client's http_on_body()
+     * ignores what the handler returns - so the socket is left to drain on its
+     * own, in the background, while the next turn speaks over it. */
+    if (s_abort || s_fetch_gen != s_gen) {
+        return ESP_OK;
+    }
     if (s_first_byte_us == 0) {
         s_first_byte_us = esp_timer_get_time();
     }
@@ -203,6 +223,9 @@ static esp_err_t on_http_data(esp_http_client_event_t *ev)
 /* A body shorter than the gate: judge it on what arrived and be done. */
 static void gate_finish(void)
 {
+    if (s_abort || s_fetch_gen != s_gen) {
+        return;
+    }
     if (s_payload_open || s_payload_bad || !s_prefix_n) {
         return;
     }
@@ -279,7 +302,7 @@ static bool fetch(const char *url)
     if (fetch_once(url)) {
         return true;
     }
-    if (s_bytes == 0) {
+    if (s_bytes == 0 && !s_abort && s_fetch_gen == s_gen) {
         ESP_LOGW(TAG, "nothing delivered, retrying once");
         vTaskDelay(pdMS_TO_TICKS(400));
         if (fetch_once(url)) {
@@ -299,7 +322,8 @@ static void fetch_reply(char *text)
 
     size_t pos = 0;
     size_t total = strlen(text);
-    while (pos < total && !s_abort) {
+    s_fetch_gen = s_gen;   /* from here on, bytes of an older generation stop here */
+    while (pos < total && !s_abort && s_fetch_gen == s_gen) {
         size_t n = chunk_len(text + pos, total - pos);
         if (url_encode(encoded, sizeof(encoded), text + pos, n) == 0) {
             ESP_LOGW(TAG, "TTS text chunk does not fit the URL");
@@ -325,14 +349,25 @@ static void tts_task(void *arg)
     (void)arg;
     for (;;) {
         ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
-        char *text = s_pending;
-        s_pending = NULL;
-        if (text) {
+        /* Drain whatever was queued: a barge-in leaves the old fetch in flight,
+         * so the reply that replaces it waits here rather than go silent. */
+        for (;;) {
+            taskENTER_CRITICAL(&s_lock);
+            char *text = s_pending;
+            s_pending = NULL;
+            taskEXIT_CRITICAL(&s_lock);
+            if (!text) {
+                break;
+            }
             fetch_reply(text);
             free(text);
         }
-        s_fetch_done = true;
-        s_busy = false;
+        taskENTER_CRITICAL(&s_lock);
+        if (!s_pending) {   /* a reply queued meanwhile keeps the worker busy */
+            s_busy = false;
+            s_fetch_done = true;
+        }
+        taskEXIT_CRITICAL(&s_lock);
     }
 }
 
@@ -361,12 +396,17 @@ bool muse_tts_speak(const char *text)
         }
     }
     xStreamBufferReset(s_ring);
-    s_abort = false;
-    s_fetch_done = false;
     char *copy = strdup(text);
     if (!copy) return false;
+    taskENTER_CRITICAL(&s_lock);
+    char *stale = s_pending;   /* a cancelled fetch may have left one behind */
     s_pending = copy;
+    s_abort = false;
+    s_fetch_done = false;
     s_busy = true;
+    s_gen++;
+    taskEXIT_CRITICAL(&s_lock);
+    free(stale);
     xTaskNotifyGive(s_task);
     return true;
 }
@@ -389,7 +429,15 @@ bool muse_tts_active(void)
 
 void muse_tts_cancel(void)
 {
+    /* Barge-in. The fetch already on the wire cannot be stopped from here (the
+     * IDF event handler's return value is ignored), but bumping the generation
+     * makes it stop feeding the ring, and clearing s_busy lets the reply that
+     * replaces it speak at once instead of coming out as a silent turn. */
     s_abort = true;
+    s_gen++;
+    taskENTER_CRITICAL(&s_lock);
+    s_busy = false;
     s_fetch_done = true;
+    taskEXIT_CRITICAL(&s_lock);
     if (s_ring) xStreamBufferReset(s_ring);
 }

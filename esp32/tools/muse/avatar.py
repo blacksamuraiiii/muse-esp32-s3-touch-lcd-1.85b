@@ -192,7 +192,12 @@ def ask(board, text, what):
 
 def extract_c(reply):
     """The C file in a reply: the largest fenced block with the whole API, or the reply itself."""
-    blocks = re.findall(r"^```[ \t]*[\w+]*[ \t]*\n(.*?)^```", reply, re.S | re.M)
+    # The closing fence usually sits on a line of its own, but Muse may just as
+    # well glue it to the last line of the file - and the default avatar in
+    # esp32/avatar/muse_pixel.c has no trailing newline, so "last line + fence"
+    # is the normal case. Ask for the fence itself, not for a line start
+    # before it.
+    blocks = re.findall(r"^```[ \t]*[\w+]*[ \t]*\n(.*?)```", reply, re.S | re.M)
     if reply.count("```") % 2:
         last = reply.rfind("```")
         blocks.append(reply[reply.find("\n", last) + 1:] if "\n" in reply[last:] else "")   # never closed
