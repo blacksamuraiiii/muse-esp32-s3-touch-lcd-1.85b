@@ -22,6 +22,7 @@ import json
 import os
 import random
 import shlex
+import shutil
 import struct
 import subprocess
 import tempfile
@@ -66,6 +67,8 @@ def expected_parts(wav_len, part_pcm, part_chars):
 
 def compile_c(out, sources):
     cc = shlex.split(os.environ.get('CC', 'cc'))
+    if not cc or shutil.which(cc[0]) is None:
+        raise unittest.SkipTest('C compiler not available: install gcc or set CC')
     result = subprocess.run(
         [*cc, '-std=gnu11', '-Wall', '-Wextra', '-Werror', *SANITIZE,
          '-include', str(ROOT / 'tests/host_compat.h'), '-I', str(MUSE),
@@ -335,6 +338,9 @@ typedef struct fake_stream *StreamBufferHandle_t;
                  '-I', str(ROOT / 'components/minimp3/include')]
         cc = shlex.split(os.environ.get('CC', 'cc'))
         cxx = shlex.split(os.environ.get('CXX', 'c++'))
+        for tool in (cc, cxx):
+            if not tool or shutil.which(tool[0]) is None:
+                raise unittest.SkipTest('C/C++ compiler not available: install gcc/g++ or set CC/CXX')
         commands = [
             [*cc, '-std=gnu11', *flags, '-include', str(ROOT / 'tests/host_compat.h'),
              '-c', str(MUSE / 'muse_chat_text.c'), '-o', str(out / 'text.o')],

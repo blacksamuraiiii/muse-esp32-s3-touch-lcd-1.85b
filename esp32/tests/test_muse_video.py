@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import os
 import shlex
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -38,6 +39,8 @@ class MuseVideoTest(unittest.TestCase):
         if not (JSON / "cJSON.c").exists():
             self.skipTest("cJSON not found: run idf.py build once, or set CJSON_SOURCE_DIR")
         cc = shlex.split(os.environ.get("CC", "cc"))
+        if not cc or shutil.which(cc[0]) is None:
+            self.skipTest("C compiler not available: install gcc or set CC")
         with tempfile.TemporaryDirectory() as tmp:
             exe = Path(tmp, "video")
             build = subprocess.run(
@@ -120,6 +123,8 @@ int main(void)
 }
 '''
         cc = shlex.split(os.environ.get("CC", "cc"))
+        if not cc or shutil.which(cc[0]) is None:
+            self.skipTest("C compiler not available: install gcc or set CC")
         with tempfile.TemporaryDirectory() as tmp:
             src, exe = Path(tmp, "restart.c"), Path(tmp, "restart")
             src.write_text(harness)

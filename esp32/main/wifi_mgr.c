@@ -266,11 +266,7 @@ static void event_handler(void *arg, esp_event_base_t base,
 
         xEventGroupClearBits(s_events, BIT_CONNECTED | BIT_GOT_IP);
         atomic_store(&s_sta_idle, true);
-        const wifi_event_sta_disconnected_t *event =
-            (const wifi_event_sta_disconnected_t *)data;
-        ESP_LOGW(TAG, "disconnected reason=%u", event ? event->reason : 0u);
-
-        bool floor_dropped = event && drop_rssi_floor(event->reason);
+        bool floor_dropped = ev && drop_rssi_floor(ev->reason);
         if (s_connecting) {
             // Initial connect: retry up to MAX_INITIAL_RETRY, then fail.
             // Dropping the RSSI floor starts a fresh scan, not a retry.

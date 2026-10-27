@@ -4,6 +4,7 @@
 import os
 from pathlib import Path
 import shlex
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -142,10 +143,15 @@ int main(int argc, char **argv) {
         flags = ['-Wall', '-Wextra', '-Werror', '-I', str(JSON),
                  '-I', str(ROOT / 'tests'), '-I', str(ROOT / 'components/muse'),
                  '-I', str(ROOT / 'components/minimp3/include')]
+        cc = shlex.split(os.environ.get('CC', 'cc'))
+        cxx = shlex.split(os.environ.get('CXX', 'c++'))
+        for tool in (cc, cxx):
+            if not tool or shutil.which(tool[0]) is None:
+                raise unittest.SkipTest('C/C++ compiler not available: install gcc/g++ or set CC/CXX')
         commands = [
-            [*shlex.split(os.environ.get('CC', 'cc')), '-std=c11', *flags,
+            [*cc, '-std=c11', *flags,
              '-c', str(JSON / 'cJSON.c'), '-o', str(out / 'cjson.o')],
-            [*shlex.split(os.environ.get('CXX', 'c++')), '-std=gnu++17', *flags,
+            [*cxx, '-std=gnu++17', *flags,
              str(out / 'session.cpp'), str(out / 'cjson.o'), '-o', str(out / 'session')],
         ]
         for command in commands:
