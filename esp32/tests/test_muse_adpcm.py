@@ -16,6 +16,7 @@
 from pathlib import Path
 import os
 import shlex
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -30,6 +31,8 @@ class MuseAdpcmTest(unittest.TestCase):
         cls.addClassCleanup(cls.temp.cleanup)
         cls.binary = Path(cls.temp.name) / "muse_adpcm"
         cc = shlex.split(os.environ.get("CC", "cc"))
+        if not cc or shutil.which(cc[0]) is None:
+            raise unittest.SkipTest('C compiler not available: install gcc or set CC')
         compiled = subprocess.run(
             [*cc, "-std=c11", "-Wall", "-Wextra", "-Werror", "-O1", "-g",
              "-fsanitize=address,undefined", "-fno-omit-frame-pointer",

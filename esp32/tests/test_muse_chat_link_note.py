@@ -19,6 +19,7 @@ checked against CPython's base64."""
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -157,6 +158,8 @@ class LinkVoiceNote(NoteRequestAssertions, unittest.TestCase):
         (out / 'link.c').write_text(CODE.replace('{source}', source))
         cjson = ROOT / 'managed_components/espressif__cjson/cJSON'
         cc = [*shlex.split(os.environ.get('CC', 'cc')), '-std=gnu11', '-Wall', '-Wextra', '-Werror']
+        if not cc or shutil.which(cc[0]) is None:
+            raise unittest.SkipTest('C compiler not available: install gcc or set CC')
         helpers = ['-include', str(ROOT / 'tests/host_compat.h'), '-I', str(MUSE)]
         commands = [
             # As in test_muse_chat_session.py: cJSON on its own, unsanitized,

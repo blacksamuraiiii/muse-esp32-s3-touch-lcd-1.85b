@@ -7,8 +7,9 @@
  * not the other, which is how replies kept the old 20 px face. There is
  * now exactly one chain, and every page uses it:
  *
- *   muse_font_cjk()     -- 16 px WenQuanYi Micro Hei at 4bpp (the level-1
- *                          face from tools/muse/gen_ui_font.sh), falling
+ *   muse_font_cjk()     -- 16 px Source Han Sans SC Regular at 4bpp (the
+ *                          level-1 face from tools/muse/gen_ui_font.sh; 1.5c
+ *                          replaced 16 px WenQuanYi Micro Hei with it), falling
  *                          back to Unifont 16 px 1bpp, then Montserrat 16.
  *   muse_font_caption() -- unscii-16, falling back to muse_font_cjk().
  *                          This is what captions AND replies use since
