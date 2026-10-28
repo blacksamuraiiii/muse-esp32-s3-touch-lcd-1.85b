@@ -13,8 +13,10 @@
 # limitations under the License.
 
 """Sentence units for streaming TTS (muse_sentence.c): a unit ends at ASCII
-.!?;: or CJK 。！？, commas and spaces never split one, and a long run
-without a boundary is cut at 180 bytes on a UTF-8 character boundary."""
+.!?;: or CJK 。！？, commas and spaces never split one, an ASCII mark only
+counts when whitespace follows it (so "1.5c", "3.14" and "10:30" stay whole),
+a closing quote stays with its sentence, and a long run without a boundary is
+cut at 180 bytes on a UTF-8 character boundary."""
 
 from __future__ import annotations
 
@@ -133,6 +135,37 @@ class SentenceTest(unittest.TestCase):
         self.assertEqual(len(units[0]), 179)
         units[0].decode("utf-8")
         self.assertEqual(rest, text.encode()[179:])
+
+    def test_decimal_version_time_and_url_stay_whole(self) -> None:
+        # A mark inside a number, a time or a URL is not a sentence end; before
+        # the whitespace rule these were spoken in pieces ("版本 1." / "5c").
+        for text in (
+            "圆周率约 3.14。",
+            "版本 1.5c 已经发布。",
+            "会议在 10:30 开始。",
+            "详见 http://10.168.2.7:5050/tts 这里。",
+        ):
+            units, rest = self.units(text)
+            self.assertEqual(units, [text.encode()], text)
+            self.assertEqual(rest, b"")
+
+    def test_sentence_at_the_end_of_a_delta(self) -> None:
+        # Whitespace is not there yet, but a digit in front of the mark means
+        # more of the number may still arrive: wait instead of splitting.
+        units, rest = self.units("Hello world.")
+        self.assertEqual(units, [b"Hello world."])
+        self.assertEqual(rest, b"")
+        units, rest = self.units("版本 1.")
+        self.assertEqual(units, [])
+        self.assertEqual(rest, "版本 1.".encode())
+
+    def test_cjk_closing_quote_stays_with_its_sentence(self) -> None:
+        units, rest = self.units("他说「明天见。」然后就走了。")
+        self.assertEqual(
+            units,
+            ["他说「明天见。」".encode(), "然后就走了。".encode()],
+        )
+        self.assertEqual(rest, b"")
 
     def test_empty_and_whitespace_only(self) -> None:
         units, rest = self.units("")

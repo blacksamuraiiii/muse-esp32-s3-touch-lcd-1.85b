@@ -38,10 +38,12 @@ bool muse_sentence_break_before(const char *p, size_t i);
 
 /* Length of the next speakable unit at the start of `p` (up to `len` bytes),
  * or 0 when there is not yet enough buffered text to speak. A unit ends at
- * a sentence boundary: ASCII . ! ? ; : or CJK 。！？. Leading ASCII
- * whitespace is skipped and counted in the length, so the caller advances
- * its cursor by exactly the returned value. When no boundary is found but
- * at least MUSE_SENTENCE_CHUNK bytes are buffered, the unit is a forced cut
- * at that limit, backed off to a UTF-8 boundary and preferably to an
- * earlier break, the same cut the request splitter makes. */
+ * a sentence boundary: ASCII . ! ? ; : or CJK 。！？. An ASCII mark only ends a
+ * sentence when whitespace follows it, so "1.5c", "3.14" and "10:30" stay
+ * whole; a mark that closes a CJK sentence takes the closing quote with it.
+ * Leading ASCII whitespace is skipped and counted in the length, so the
+ * caller advances its cursor by exactly the returned value. When no boundary
+ * is found but at least MUSE_SENTENCE_CHUNK bytes are buffered, the unit is
+ * a forced cut at that limit, backed off to a UTF-8 boundary and preferably
+ * to an earlier break, the same cut the request splitter makes. */
 size_t muse_sentence_next_unit(const char *p, size_t len);
