@@ -1672,7 +1672,7 @@ static bool console_command(char *line, bool whole)
  * the BLE CMD characteristic, or one of the console's own: "status" prints
  * the device's state, "power" the battery meter (muse_battery.h) and
  * "power.reset" starts it over, "nap" sleeps and leaves Wi-Fi at once (as
- * two minutes asleep on battery would; 'w' rejoins), "tp" dumps the wake
+ * ten minutes asleep on battery would; 'w' rejoins), "tp" dumps the wake
  * lines and the light-sleep counters, "batt" dumps the fuel gauge through the
  * bq27220 component's getters, "ota" starts the same GitHub
  * update check the settings page's Update button does, "face=" shows a face
