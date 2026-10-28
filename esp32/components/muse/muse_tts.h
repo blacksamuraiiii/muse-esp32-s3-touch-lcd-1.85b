@@ -48,6 +48,13 @@
 // task could not be started. The text is copied, so the caller may free it.
 bool muse_tts_speak(const char *text);
 
+// Queue `text` behind the request in flight, so its audio starts arriving while
+// the current one is still being read out. Meant for the streaming speaker's
+// next sentence. The buffered audio is kept, unlike muse_tts_speak(), which
+// starts a fresh reply. The queue is one deep: false while a request is in
+// flight (muse_tts_active()) or when nothing has fetched yet.
+bool muse_tts_enqueue(const char *text);
+
 // Copy up to `cap` bytes of MP3 out of the fetch, without blocking. Returns how
 // many were copied, 0 when nothing is ready.
 size_t muse_tts_read(uint8_t *out, size_t cap);
