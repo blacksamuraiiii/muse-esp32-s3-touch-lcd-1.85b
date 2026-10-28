@@ -56,6 +56,12 @@ static const char *TAG = "muse.tts";
 #define TTS_TASK_PRIO 4
 #define TTS_SEND_TIMEOUT_MS 3000
 #define TTS_HTTP_TIMEOUT_MS 8000
+/* The reply's first request is the one the listener is waiting for: give up
+ * on it this soon instead, so a stalled connect or a service that has not
+ * started answering costs three seconds before the retry, not eight. Once
+ * the headers are in, the rest of the body gets the full timeout again. */
+#define TTS_HTTP_FIRST_MS 3000
+#define TTS_RETRY_DELAY_MS 150
 
 static StreamBufferHandle_t s_ring;   /* storage in PSRAM: internal RAM is the scarce one */
 static TaskHandle_t s_task;           /* one long-lived worker; its stack lives in PSRAM */
@@ -68,6 +74,8 @@ static volatile uint32_t s_gen;
 static volatile uint32_t s_fetch_gen;
 static portMUX_TYPE s_lock = portMUX_INITIALIZER_UNLOCKED;  /* s_pending/s_busy handoff */
 static volatile bool s_busy;          /* a reply is being fetched right now */
+static bool s_short_wait;            /* this fetch started on TTS_HTTP_FIRST_MS */
+static bool s_reply_first;           /* the next fetch_reply() is a reply's first */
 static char *volatile s_pending;      /* text handed to the worker by muse_tts_speak */
 static volatile size_t s_bytes;       /* bytes of the request being read */
 static volatile int64_t s_first_byte_us; /* when the first body byte arrived */
@@ -179,6 +187,17 @@ static void gate_feed(const uint8_t *d, size_t len)
 
 static esp_err_t on_http_data(esp_http_client_event_t *ev)
 {
+    if (ev->event_id == HTTP_EVENT_ON_HEADER || ev->event_id == HTTP_EVENT_ON_DATA) {
+        if (s_short_wait && ev->client) {
+            /* The wait that matters is over: the body may stream for as long as
+             * synthesising it takes. */
+            s_short_wait = false;
+            esp_http_client_set_timeout_ms(ev->client, TTS_HTTP_TIMEOUT_MS);
+        }
+        if (ev->event_id == HTTP_EVENT_ON_HEADER) {
+            return ESP_OK;
+        }
+    }
     if (ev->event_id != HTTP_EVENT_ON_DATA || ev->data_len <= 0) {
         return ESP_OK;
     }
@@ -215,7 +234,7 @@ static void gate_finish(void)
     }
 }
 
-static bool fetch_once(const char *url)
+static bool fetch_once(const char *url, int timeout_ms)
 {
     /* Some TTS endpoints refuse a request with no browser User-Agent. */
     const esp_app_desc_t *app = esp_app_get_description();
@@ -225,7 +244,7 @@ static bool fetch_once(const char *url)
     const esp_http_client_config_t cfg = {
         .url = url,
         .method = HTTP_METHOD_GET,
-        .timeout_ms = TTS_HTTP_TIMEOUT_MS,
+        .timeout_ms = timeout_ms,
         .buffer_size = TTS_HTTP_BUF,
         .buffer_size_tx = TTS_HTTP_TX_BUF,
         .crt_bundle_attach = esp_crt_bundle_attach,
@@ -275,15 +294,18 @@ static bool fetch_once(const char *url)
  * page that counts as bytes yet never opened the payload, so it is retried;
  * re-requesting after a partial stream instead would feed the decoder the same
  * audio twice. */
-static bool fetch(const char *url)
+static bool fetch(const char *url, int timeout_ms)
 {
-    if (fetch_once(url)) {
+    s_short_wait = timeout_ms < TTS_HTTP_TIMEOUT_MS;
+    bool ok = fetch_once(url, timeout_ms);
+    s_short_wait = false;
+    if (ok) {
         return true;
     }
     if (!s_payload_open && !s_abort && s_fetch_gen == s_gen) {
         ESP_LOGW(TAG, "nothing decoded (%u bytes), retrying once", (unsigned)s_bytes);
-        vTaskDelay(pdMS_TO_TICKS(400));
-        if (fetch_once(url)) {
+        vTaskDelay(pdMS_TO_TICKS(TTS_RETRY_DELAY_MS));
+        if (fetch_once(url, TTS_HTTP_TIMEOUT_MS)) {
             return true;
         }
     }
@@ -300,6 +322,8 @@ static void fetch_reply(char *text)
 
     size_t pos = 0;
     size_t total = strlen(text);
+    int timeout_ms = s_reply_first ? TTS_HTTP_FIRST_MS : TTS_HTTP_TIMEOUT_MS;
+    s_reply_first = false;
     s_fetch_gen = s_gen;   /* from here on, bytes of an older generation stop here */
     while (pos < total && !s_abort && s_fetch_gen == s_gen) {
         size_t n = chunk_len(text + pos, total - pos);
@@ -311,7 +335,8 @@ static void fetch_reply(char *text)
         char *u = (char *)malloc(need);
         if (!u) break;
         snprintf(u, need, "%.*s%s%s", (int)prefix_len, url, encoded, suffix);
-        bool ok = fetch(u);
+        bool ok = fetch(u, timeout_ms);
+        timeout_ms = TTS_HTTP_TIMEOUT_MS;
         free(u);
         if (!ok) break;
         pos += n;
@@ -374,6 +399,7 @@ bool muse_tts_speak(const char *text)
         }
     }
     xStreamBufferReset(s_ring);
+    s_reply_first = true;
     char *copy = strdup(text);
     if (!copy) return false;
     taskENTER_CRITICAL(&s_lock);
@@ -400,6 +426,7 @@ bool muse_tts_enqueue(const char *text)
     }
     char *copy = strdup(text);
     if (!copy) return false;
+    s_reply_first = false;     /* queued behind audio already playing: no rush */
     taskENTER_CRITICAL(&s_lock);
     char *stale = s_pending;   /* the queue is one deep: this is a leftover */
     s_pending = copy;
