@@ -20,6 +20,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "muse_sentence.h"
+
 #include "esp_app_desc.h"
 #include "esp_crt_bundle.h"
 #include "esp_heap_caps.h"
@@ -46,7 +48,7 @@ static const char *TAG = "muse.tts";
 #define TTS_HTTP_TX_BUF 2048
 /* Per request. Short enough that any proxy in the path is happy with the URL,
  * and that playback starts before a long reply has finished synthesising. */
-#define TTS_TEXT_CHUNK 180
+#define TTS_TEXT_CHUNK MUSE_SENTENCE_CHUNK
 /* The TLS handshake runs on this task, and mbedtls wants more than the 8 KB
  * the endpoint itself needs; a short stack shows up as an unexplained
  * "TTS request failed". */
@@ -115,38 +117,13 @@ static size_t url_encode(char *out, size_t cap, const char *in, size_t in_len)
     return n;
 }
 
-/* True when a cut just before `i` lands after punctuation, so a request does
- * not end mid-clause. ASCII punctuation, plus the three-byte CJK marks. */
-static bool break_before(const char *p, size_t i)
-{
-    if (i == 0) return false;
-    unsigned char prev = (unsigned char)p[i - 1];
-    if (prev == ' ' || prev == '\n' || prev == '\t' || prev == ',' || prev == '.'
-        || prev == ';' || prev == ':' || prev == '!' || prev == '?') {
-        return true;
-    }
-    /* 。 U+3002 is E3 80 82; ！ U+FF01 and ？ U+FF1F are EF BC 81 / EF BC 9F.
-     * Compare the leading bytes as they are. The arithmetic guess that used to
-     * be here (0xE0 + (lead >> 4)) matched none of them, so a Chinese reply was
-     * always cut at the byte limit instead of on a full stop. */
-    if (i >= 3) {
-        unsigned char lead = (unsigned char)p[i - 3];
-        unsigned char mid = (unsigned char)p[i - 2];
-        if ((lead == 0xE3 && mid == 0x80 && prev == 0x82)
-            || (lead == 0xEF && mid == 0xBC && (prev == 0x81 || prev == 0x9f))) {
-            return true;
-        }
-    }
-    return false;
-}
-
 static size_t chunk_len(const char *p, size_t left)
 {
     if (left <= TTS_TEXT_CHUNK) return left;
     size_t cut = TTS_TEXT_CHUNK;
     while (cut > 1 && ((unsigned char)p[cut] & 0xC0) == 0x80) cut--;
     for (size_t i = cut; i > cut / 2; i--) {
-        if (break_before(p, i)) return i;
+        if (muse_sentence_break_before(p, i)) return i;
     }
     return cut;
 }

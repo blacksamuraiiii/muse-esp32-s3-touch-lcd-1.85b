@@ -69,6 +69,7 @@ extern "C" {
 #include "muse_account_api.h"
 #include "muse_link.h"
 #include "muse_settings.h"
+#include "muse_sentence.h"
 #include "muse_tts.h"
 #include "muse_wifi.h"
 }
@@ -205,6 +206,7 @@ enum tts_t : uint8_t { TTS_NONE, TTS_QUEUED, TTS_ACTIVE, TTS_FINISHED };
 struct msg_t {
     char id[80];
     size_t len;              /* reply text length so far */
+    size_t spoken;           /* bytes already handed to muse_tts_speak; the rest is still to speak */
     char tail[128];          /* its last characters, for the caption */
     bool done;
     tts_t tts;
@@ -1510,11 +1512,80 @@ static void on_chat_ack(stream_t *s)
 
 /* ---- Turn: speech ---- */
 
+#if CONFIG_MUSE_STREAMING_TTS
+/*
+ * Streaming speech: speak the first unfinished message's next sentence as
+ * soon as it is complete, without waiting for message_done. Order is strict:
+ * a later message never starts while an earlier one still has unspoken
+ * buffered text or has not finished arriving, so replies never overtake
+ * each other. A finished message flushes its tail even without a boundary.
+ */
+static void start_tts_streaming(void)
+{
+    for (int i = 0; i < s_turn.nmsgs; i++) {
+        msg_t &m = s_turn.msgs[i];
+        if (m.tts == TTS_FINISHED) {
+            continue;
+        }
+        const char *text = s_turn.texts + i * TEXT_MAX;
+        size_t buffered = strlen(text);
+        if (m.done && m.spoken >= buffered) {
+            m.tts = TTS_FINISHED;   /* empty, or already fully spoken */
+            continue;
+        }
+        size_t unit = 0;
+        if (m.done) {
+            unit = buffered - m.spoken;
+        } else {
+            unit = muse_sentence_next_unit(text + m.spoken, buffered - m.spoken);
+        }
+        if (!unit) {
+            return;   /* nothing speakable yet; later messages wait too */
+        }
+        bool first = (m.spoken == 0);   /* nothing handed to TTS yet, whether NONE or QUEUED */
+        if (first) {
+            m.pcm_start = s_turn.pcm_out;
+        }
+        m.tts = TTS_ACTIVE;
+        s_turn.tts_msg = i;
+        s_turn.silent = false;
+        s_turn.mp3_len = 0;   /* decode() only frees the slot once drained */
+        s_turn.mp3_ended = false;
+        s_turn.kbps = 0;
+        s_turn.down_rate = 0;
+        mp3dec_init(&s_turn.dec);
+        char unit_text[TEXT_MAX + 1];
+        memcpy(unit_text, text + m.spoken, unit);
+        unit_text[unit] = '\0';
+        ESP_LOGI(TAG, "speaking message %s sentence %u chars (%u/%u buffered)", m.id, (unsigned)unit,
+                 (unsigned)(m.spoken + unit), (unsigned)buffered);
+        if (!muse_tts_speak(unit_text)) {
+            /* Nothing is coming back: read the rest at reading pace so the
+             * turn still ends on its own. pace_silently() finishes it. */
+            s_turn.silent = true;
+            m.pcm_frames = (uint32_t)(m.len * MIC_RATE / TEXT_CHARS_PER_S);
+        } else {
+            m.spoken += unit;
+        }
+        if (first) {
+            show_reply_start(m);
+        }
+        return;
+    }
+}
+#endif
+
 static void start_tts(void)
 {
     if (s_turn.tts_msg >= 0) {
         return;
     }
+#if CONFIG_MUSE_STREAMING_TTS
+    if (!s_turn.text && CONFIG_MUSE_TTS_URL[0] && s_turn.texts) {
+        start_tts_streaming();
+        return;
+    }
+#endif
     for (int i = 0; i < s_turn.nmsgs; i++) {
         msg_t &m = s_turn.msgs[i];
         if (m.tts != TTS_QUEUED) {
@@ -1547,6 +1618,10 @@ static void start_tts(void)
                  * the turn still ends on its own. */
                 s_turn.silent = true;
                 m.pcm_frames = (uint32_t)(m.len * MIC_RATE / TEXT_CHARS_PER_S);
+            } else {
+                /* The whole message is handed at once; the caption clamp below
+                 * is a no-op for it, as it is for streaming's handed sentences. */
+                m.spoken = strlen(s_turn.texts + i * TEXT_MAX);
             }
         } else {
             m.pcm_frames = (uint32_t)(m.len * MIC_RATE / TEXT_CHARS_PER_S);
@@ -1681,6 +1756,33 @@ static void decode(void)
         s_turn.mp3_len -= off;
     }
     msg_t &m = s_turn.msgs[s_turn.tts_msg];
+#if CONFIG_MUSE_STREAMING_TTS
+    if (s_turn.mp3_ended) {
+        if (!s_turn.mp3_len) {
+            const char *text = s_turn.texts ? s_turn.texts + s_turn.tts_msg * TEXT_MAX : "";
+            if (s_turn.kbps == 0) {
+                /* The sentence's fetch drained without a single frame: bad
+                 * payload or no service. Read the rest at reading pace so
+                 * the turn still ends on its own; pace_silently() finishes it. */
+                s_turn.silent = true;
+                m.pcm_frames = (uint32_t)(m.len * MIC_RATE / TEXT_CHARS_PER_S);
+            } else if (m.done && m.spoken >= strlen(text)) {
+                m.pcm_frames = s_turn.pcm_out - m.pcm_start;
+                m.tts = TTS_FINISHED;
+                s_turn.tts_msg = -1;
+            } else {
+                /* Sentence done, message continues: free the slot for the next
+                 * sentence (or for waiting on more text). pcm_frames stays 0
+                 * so the captions stay time-paced, not ahead of the speech. */
+                s_turn.tts_msg = -1;
+                s_turn.mp3_ended = false;
+            }
+        }
+        /* Still draining (output full): the bitrate estimate below would put
+         * the captions ahead of the speech, so it is skipped while streaming. */
+        return;
+    }
+#endif
     if (s_turn.mp3_ended && s_turn.kbps > 0) {
         /* All of it is here: what's decoded plus what the bitrate says the rest holds. */
         uint32_t rest = (uint32_t)((uint64_t)s_turn.mp3_len * 8 * MIC_RATE / (s_turn.kbps * 1000));
@@ -2227,6 +2329,12 @@ extern "C" bool muse_hatch_turn_caption(size_t played, char *out, size_t cap)
     size_t len = strlen(text);
     uint32_t frames = m->pcm_frames ? m->pcm_frames : (uint32_t)(len * MIC_RATE / SPEECH_CHARS_PER_S);
     size_t at = frames ? (size_t)((uint64_t)(played - m->pcm_start) * len / frames) : 0;
+    if (!s_turn.silent && at > m->spoken) {
+        /* Time-paced captions can run ahead when the voice is faster than the
+         * estimate; never show text from a sentence that has not started.
+         * Silent pacing skips this: there is no speech to stay behind. */
+        at = m->spoken;
+    }
     if (at >= len) {
         at = len ? len - 1 : 0;
     }

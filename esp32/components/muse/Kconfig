@@ -269,6 +269,17 @@ menu "Muse"
             Long replies are split into several requests, so the header must
             stay short enough for whatever proxies the request.
 
+    config MUSE_STREAMING_TTS
+        bool "Speak sentences as they arrive instead of waiting for the whole reply"
+        default y
+        help
+            The gateway already streams replies sentence by sentence, but the
+            board waits for message_done and then speaks the whole message.
+            With this on, the first complete sentence starts playing as soon
+            as it has arrived, and the rest follows sentence by sentence in
+            order. Off restores the 1.5c behaviour: speak only once a message
+            is done, whole message at a time.
+
     config MUSE_POWER_TEST
         bool "Isolated board BSP power-characterization firmware"
         # Test only: this replaces app_main, so it can never sit beside the
