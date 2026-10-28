@@ -1519,57 +1519,88 @@ static void on_chat_ack(stream_t *s)
  * a later message never starts while an earlier one still has unspoken
  * buffered text or has not finished arriving, so replies never overtake
  * each other. A finished message flushes its tail even without a boundary.
+ *
+ * The sentences of one message are one continuous MP3 stream: the next one is
+ * queued while the one playing still has audio left (muse_tts_enqueue), so the
+ * gap between them is the service's first byte rather than its whole synthesis
+ * time. The decoder and the MP3 buffer are therefore reset once per message,
+ * not once per sentence.
  */
+
+/* Hands one sentence to the speech service. `first` starts the message: it owns
+ * pcm_start, the MP3 buffer and the decoder, so that the sentences after it
+ * simply append to the stream already being played. */
+static void hand_sentence(int i, const char *text, size_t unit, size_t buffered)
+{
+    msg_t &m = s_turn.msgs[i];
+    bool first = (s_turn.tts_msg < 0);
+    char unit_text[TEXT_MAX + 1];
+    memcpy(unit_text, text, unit);
+    unit_text[unit] = '\0';
+    ESP_LOGI(TAG, "speaking message %s sentence %u chars (%u/%u buffered)", m.id, (unsigned)unit,
+             (unsigned)(m.spoken + unit), (unsigned)buffered);
+    bool ok = first ? muse_tts_speak(unit_text) : muse_tts_enqueue(unit_text);
+    if (!ok) {
+        if (!first) {
+            return;   /* queue full or no fetch: try again on the next pass */
+        }
+        /* Nothing is coming back: read the rest at reading pace so the turn
+         * still ends on its own. pace_silently() finishes it. */
+        m.pcm_start = s_turn.pcm_out;
+        s_turn.tts_msg = i;
+        m.tts = TTS_ACTIVE;
+        s_turn.silent = true;
+        m.pcm_frames = (uint32_t)(m.len * MIC_RATE / TEXT_CHARS_PER_S);
+        return;
+    }
+    if (first) {
+        /* The message starts here: it owns the MP3 buffer, the decoder and the
+         * caption clock, so the sentences after it only append to the stream. */
+        m.pcm_start = s_turn.pcm_out;
+        s_turn.tts_msg = i;
+        m.tts = TTS_ACTIVE;
+        s_turn.silent = false;
+        s_turn.mp3_len = 0;
+        s_turn.mp3_ended = false;
+        s_turn.kbps = 0;
+        s_turn.down_rate = 0;
+        mp3dec_init(&s_turn.dec);
+        show_reply_start(m);
+    }
+    m.spoken += unit;
+}
+
 static void start_tts_streaming(void)
 {
+    /* One request in flight at a time: the queue is one deep, and the audio of
+     * a queued sentence must not overtake the one being played. */
+    if (muse_tts_active()) {
+        return;
+    }
     for (int i = 0; i < s_turn.nmsgs; i++) {
         msg_t &m = s_turn.msgs[i];
         if (m.tts == TTS_FINISHED) {
             continue;
         }
+        if (s_turn.tts_msg >= 0 && s_turn.tts_msg != i) {
+            return;   /* the message before this one is still speaking */
+        }
         const char *text = s_turn.texts + i * TEXT_MAX;
         size_t buffered = strlen(text);
-        if (m.done && m.spoken >= buffered) {
-            m.tts = TTS_FINISHED;   /* empty, or already fully spoken */
-            continue;
-        }
         size_t unit = 0;
         if (m.done) {
-            unit = buffered - m.spoken;
+            unit = buffered - m.spoken;   /* the tail, boundary or not */
         } else {
             unit = muse_sentence_next_unit(text + m.spoken, buffered - m.spoken);
         }
         if (!unit) {
+            if (m.done && s_turn.tts_msg < 0) {
+                m.tts = TTS_FINISHED;   /* empty, or already fully spoken */
+                continue;
+            }
             return;   /* nothing speakable yet; later messages wait too */
         }
-        bool first = (m.spoken == 0);   /* nothing handed to TTS yet, whether NONE or QUEUED */
-        if (first) {
-            m.pcm_start = s_turn.pcm_out;
-        }
-        m.tts = TTS_ACTIVE;
-        s_turn.tts_msg = i;
-        s_turn.silent = false;
-        s_turn.mp3_len = 0;   /* decode() only frees the slot once drained */
-        s_turn.mp3_ended = false;
-        s_turn.kbps = 0;
-        s_turn.down_rate = 0;
-        mp3dec_init(&s_turn.dec);
-        char unit_text[TEXT_MAX + 1];
-        memcpy(unit_text, text + m.spoken, unit);
-        unit_text[unit] = '\0';
-        ESP_LOGI(TAG, "speaking message %s sentence %u chars (%u/%u buffered)", m.id, (unsigned)unit,
-                 (unsigned)(m.spoken + unit), (unsigned)buffered);
-        if (!muse_tts_speak(unit_text)) {
-            /* Nothing is coming back: read the rest at reading pace so the
-             * turn still ends on its own. pace_silently() finishes it. */
-            s_turn.silent = true;
-            m.pcm_frames = (uint32_t)(m.len * MIC_RATE / TEXT_CHARS_PER_S);
-        } else {
-            m.spoken += unit;
-        }
-        if (first) {
-            show_reply_start(m);
-        }
+        hand_sentence(i, text + m.spoken, unit, buffered);
         return;
     }
 }
@@ -1577,15 +1608,17 @@ static void start_tts_streaming(void)
 
 static void start_tts(void)
 {
-    if (s_turn.tts_msg >= 0) {
-        return;
-    }
 #if CONFIG_MUSE_STREAMING_TTS
     if (!s_turn.text && CONFIG_MUSE_TTS_URL[0] && s_turn.texts) {
+        /* Runs while a message is still speaking too: that is where the next
+         * sentence is queued behind the one playing. */
         start_tts_streaming();
         return;
     }
 #endif
+    if (s_turn.tts_msg >= 0) {
+        return;
+    }
     for (int i = 0; i < s_turn.nmsgs; i++) {
         msg_t &m = s_turn.msgs[i];
         if (m.tts != TTS_QUEUED) {
@@ -1757,31 +1790,32 @@ static void decode(void)
     }
     msg_t &m = s_turn.msgs[s_turn.tts_msg];
 #if CONFIG_MUSE_STREAMING_TTS
-    if (s_turn.mp3_ended) {
-        if (!s_turn.mp3_len) {
-            const char *text = s_turn.texts ? s_turn.texts + s_turn.tts_msg * TEXT_MAX : "";
-            if (s_turn.kbps == 0) {
-                /* The sentence's fetch drained without a single frame: bad
-                 * payload or no service. Read the rest at reading pace so
-                 * the turn still ends on its own; pace_silently() finishes it. */
-                s_turn.silent = true;
-                m.pcm_frames = (uint32_t)(m.len * MIC_RATE / TEXT_CHARS_PER_S);
-            } else if (m.done && m.spoken >= strlen(text)) {
-                m.pcm_frames = s_turn.pcm_out - m.pcm_start;
-                m.tts = TTS_FINISHED;
-                s_turn.tts_msg = -1;
-            } else {
-                /* Sentence done, message continues: free the slot for the next
-                 * sentence (or for waiting on more text). pcm_frames stays 0
-                 * so the captions stay time-paced, not ahead of the speech. */
-                s_turn.tts_msg = -1;
-                s_turn.mp3_ended = false;
-            }
-        }
-        /* Still draining (output full): the bitrate estimate below would put
-         * the captions ahead of the speech, so it is skipped while streaming. */
+    if (!s_turn.mp3_ended || s_turn.mp3_len) {
+        /* Mid-stream: more sentences may still be queued behind this one, and
+         * the bitrate estimate below would put the captions ahead of the
+         * speech, so nothing is settled here. */
         return;
     }
+    const char *text = s_turn.texts ? s_turn.texts + s_turn.tts_msg * TEXT_MAX : "";
+    if (m.done && m.spoken >= strlen(text) && !muse_tts_active()) {
+        if (s_turn.kbps == 0) {
+            /* Not one frame came back (bad payload, or no service): read the
+             * rest at reading pace so the turn still ends on its own;
+             * pace_silently() finishes it. */
+            s_turn.silent = true;
+            m.pcm_frames = (uint32_t)(m.len * MIC_RATE / TEXT_CHARS_PER_S);
+            return;
+        }
+        m.pcm_frames = s_turn.pcm_out - m.pcm_start;
+        m.tts = TTS_FINISHED;
+        s_turn.tts_msg = -1;
+        return;
+    }
+    /* The fetch queue ran dry while the message still has text to say: take the
+     * end back, so the next sentence's stream is decoded with its trailing
+     * frame intact. */
+    s_turn.mp3_ended = false;
+    return;
 #endif
     if (s_turn.mp3_ended && s_turn.kbps > 0) {
         /* All of it is here: what's decoded plus what the bitrate says the rest holds. */

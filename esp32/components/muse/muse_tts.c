@@ -389,6 +389,28 @@ bool muse_tts_speak(const char *text)
     return true;
 }
 
+/* Queue one more request behind the one in flight: the next sentence's audio
+ * arrives while this one is still being read out, so the gap between sentences
+ * is only the service's first byte, not its whole synthesis time. The ring is
+ * deliberately not reset - the bytes of the sentence playing are in it. */
+bool muse_tts_enqueue(const char *text)
+{
+    if (!CONFIG_MUSE_TTS_URL[0] || s_busy || !s_ring || !s_task || !text || !text[0]) {
+        return false;
+    }
+    char *copy = strdup(text);
+    if (!copy) return false;
+    taskENTER_CRITICAL(&s_lock);
+    char *stale = s_pending;   /* the queue is one deep: this is a leftover */
+    s_pending = copy;
+    s_fetch_done = false;
+    s_busy = true;
+    taskEXIT_CRITICAL(&s_lock);
+    free(stale);
+    xTaskNotifyGive(s_task);
+    return true;
+}
+
 size_t muse_tts_read(uint8_t *out, size_t cap)
 {
     if (!s_ring) return 0;
