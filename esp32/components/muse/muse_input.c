@@ -75,7 +75,7 @@ static const char *TAG = "muse_input";
 #define NAP_WAIT_MS 10000      /* ... and Wi-Fi napping */
 #define POWER_MS 2000          /* refresh battery */
 #define REST_POWER_MS 10000    /* ... while paused */
-#define WIFI_NAP_MS (2 * 60 * 1000)   /* low power this long: Wi-Fi off until it ends */
+#define WIFI_NAP_MS (10 * 60 * 1000)  /* low power this long: Wi-Fi off until it ends */
 #define DOUBLE_TICKS 35        /* 350 ms: a second aux press within this toggles phone setup */
 
 #define GOODBYE_MS 1500        /* let the goodbye animation play */
@@ -661,7 +661,7 @@ static void set_cpu_low(bool low)
          * leaves the radio up while the CPU sleeps. REST lets it sleep
          * between beacons. The voice task re-applies its own level
          * (FULL while talking, DOZE/REST while idle) on its next pass,
-         * and the 2-minute nap disconnect path is untouched. */
+         * and the 10-minute nap disconnect path is untouched. */
         muse_wifi_power(MUSE_WIFI_REST);
     }
     if (s_cpu_pd && low && s_awake_held && err == ESP_OK) {
