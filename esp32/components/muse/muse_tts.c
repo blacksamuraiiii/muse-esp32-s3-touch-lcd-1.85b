@@ -271,16 +271,17 @@ static bool fetch_once(const char *url)
     return true;
 }
 
-/* One retry, but only when nothing was delivered: re-requesting after a partial
- * stream would feed the decoder the same audio twice, and a bad payload would
- * just come back. */
+/* One retry, but only when nothing reached the decoder. A 502 carries an error
+ * page that counts as bytes yet never opened the payload, so it is retried;
+ * re-requesting after a partial stream instead would feed the decoder the same
+ * audio twice. */
 static bool fetch(const char *url)
 {
     if (fetch_once(url)) {
         return true;
     }
-    if (s_bytes == 0 && !s_abort && s_fetch_gen == s_gen) {
-        ESP_LOGW(TAG, "nothing delivered, retrying once");
+    if (!s_payload_open && !s_abort && s_fetch_gen == s_gen) {
+        ESP_LOGW(TAG, "nothing decoded (%u bytes), retrying once", (unsigned)s_bytes);
         vTaskDelay(pdMS_TO_TICKS(400));
         if (fetch_once(url)) {
             return true;
