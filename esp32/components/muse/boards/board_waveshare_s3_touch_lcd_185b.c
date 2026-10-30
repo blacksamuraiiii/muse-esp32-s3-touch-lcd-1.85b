@@ -1208,6 +1208,7 @@ static unsigned poll_buttons(void)
     static bool tp_talking = false;       /* hold threshold reached */
     static TickType_t tp_press_tick = 0;  /* when the current press began */
     static bool tp_on_face = false;       /* the press started on the face tile */
+    static bool tp_blocked = false;       /* this press began outside IDLE: no talk */
 
     bool pressed = false;
     if (s_touch_indev != NULL) {
@@ -1224,6 +1225,12 @@ static unsigned poll_buttons(void)
         tp_on_face = muse_ui_face_active() && !muse_ui_face_control_at(p.x, p.y);
         tp_press_tick = xTaskGetTickCount();
         tp_talking = false;
+        /* A reply or a take is in progress: the glass is not an interrupt key.
+         * Interrupting stays on BOOT, so a palm, a pocket or a face-down press
+         * cannot cut a reply short. Latched here, so the whole press is one
+         * decision - a press that began mid-reply never talks, even if the
+         * reply ends before the hold threshold passes. */
+        tp_blocked = (muse_state_mode(NULL) != MUSE_MODE_IDLE);
     } else if (!pressed && tp_down) {
         /* Release: end the talk if one started. */
         if (tp_talking) {
@@ -1231,7 +1238,7 @@ static unsigned poll_buttons(void)
         }
         tp_down = false;
         tp_talking = false;
-    } else if (pressed && tp_down && tp_on_face && !tp_talking) {
+    } else if (pressed && tp_down && tp_on_face && !tp_talking && !tp_blocked) {
         /* Still held on the face: start talking once the threshold passes. */
         if ((xTaskGetTickCount() - tp_press_tick) >= pdMS_TO_TICKS(TOUCH_HOLD_MS)) {
             tp_talking = true;

@@ -399,6 +399,7 @@ static unsigned poll_buttons(void)
     static bool tp_talking = false;       /* hold threshold reached */
     static TickType_t tp_press_tick = 0;  /* when the current press began */
     static bool tp_on_face = false;       /* press started on the face tile */
+    static bool tp_blocked = false;       /* this press began outside IDLE: no talk */
 
     bool pressed = false;
     if (s_touch_indev) {
@@ -406,11 +407,15 @@ static unsigned poll_buttons(void)
     }
 
     if (pressed && !tp_down) {
-        /* New press: only a hold that starts on the face tile can talk. */
+        /* New press: only a hold that starts on the face tile can talk. A press
+         * that begins while Muse is replying, thinking or listening is not an
+         * interrupt - that stays on BOOT, as on the 1.85B. Latched here, so the
+         * whole press is one decision. */
         tp_down = true;
         tp_on_face = muse_ui_face_active();
         tp_press_tick = xTaskGetTickCount();
         tp_talking = false;
+        tp_blocked = (muse_state_mode(NULL) != MUSE_MODE_IDLE);
     } else if (!pressed && tp_down) {
         /* Release: end the talk if one started. */
         if (tp_talking) {
@@ -418,7 +423,7 @@ static unsigned poll_buttons(void)
         }
         tp_down = false;
         tp_talking = false;
-    } else if (pressed && tp_down && tp_on_face && !tp_talking) {
+    } else if (pressed && tp_down && tp_on_face && !tp_talking && !tp_blocked) {
         /* Still held on the face: start talking once the hold threshold passes. */
         if ((xTaskGetTickCount() - tp_press_tick) >= pdMS_TO_TICKS(TOUCH_HOLD_MS)) {
             tp_talking = true;
