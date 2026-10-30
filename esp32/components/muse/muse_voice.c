@@ -544,6 +544,11 @@ static void go_idle(const char *caption)
 {
     muse_state_set_progress(0);
     muse_state_set_mode(MUSE_MODE_IDLE);
+    /* The turn just ended: the idle clock must start here, not halfway
+     * through the turn. Nothing pokes it while a reply is playing, so
+     * without this a turn longer than the sleep setting sleeps the
+     * screen the moment the reply ends, mid-conversation. */
+    muse_state_poke();
     muse_state_set_caption("%s", caption);
 }
 
