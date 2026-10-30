@@ -469,13 +469,28 @@ static void set_mic_color(uint32_t color)
 
 static void on_touch_mic(lv_event_t *e)
 {
+    /* Paired press/release: a release is only sent when this press was, so
+     * a brush that never started a talk can never end one - in particular
+     * it can never cut short a talk the physical button is holding. */
+    static bool pressed;
     switch (lv_event_get_code(e)) {
     case LV_EVENT_PRESSED:
+        /* Screen talk starts a conversation when idle, but it must not
+         * barge into one already running: only the physical talk button
+         * interrupts a reply, so a brush against the mic icon mid-turn
+         * does nothing instead of ending the reply. */
+        if (muse_state_mode(NULL) != MUSE_MODE_IDLE) {
+            break;
+        }
+        pressed = true;
         muse_input_touch_talk(true);
         break;
     case LV_EVENT_RELEASED:
     case LV_EVENT_PRESS_LOST:
-        muse_input_touch_talk(false);
+        if (pressed) {
+            pressed = false;
+            muse_input_touch_talk(false);
+        }
         break;
     default:
         break;
