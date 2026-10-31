@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 /*
- * muse_interact_ui.c -- 1.5a interaction tile + feed / game / fortune
- * subpages. See muse_interact_ui.h for the threading contract.
+ * muse_interact_ui.c -- 1.5a interaction tile + feed / game / fortune /
+ * sudoku subpages. See muse_interact_ui.h for the threading contract.
  *
  * Layout (design §5.2, mockups v11/v17/v18/v22; all coordinates are
  * 360x360-circle coordinates, NOT the 466x466 TamaMe coordinates):
@@ -9,14 +9,13 @@
  *     button is 56x48 with its top at y = 28, so its centre is x = 68
  *     (NOT x = 28: at y = 52 the circle chord starts near x = 54 and a
  *     button centred at 28 would be clipped by the round edge).
- *   - Main page: three buttons, LIST_W 330, ROW_H 58, first row at
- *     LIST_TOP 84, 8px gaps (84 / 150 / 216). Status line 1 at y ~285,
- *     status line 2 at y ~308; the result note SHARES the line-2 slot
- *     while a result exists (see game_hint() -- the circle
- *     chord at the bottom cannot fit buttons + two status lines + a
- *     separate note line, and the note must not be a third line that
- *     gets clipped. On leaving the tile the note is cleared and line 2
- *     returns to the摸摸/喂饭 counts).
+ *   - Main page (mockup v15, 2026-10-31): four cards in a 2x2 grid,
+ *     each 146x80, 8px gutters both ways: row 1 at y = 86 (game /
+ *     sudoku), row 2 at y = 174 (feed / fortune), columns at x = 30 /
+ *     184. Status line 1 (coins) at y = 290, line 2 (touch / feed
+ *     counts) at y = 312. The feed count is foods paid today x 10
+ *     against the shipped 30/day cap (three foods x 10), not the
+ *     draft first-feed-only cap 10 the v15 mockup example showed.
  *   - Subpages are groups inside the interaction tile, all with the same
  *     title/back pattern (title centred y = 52, "<" at centre x = 68).
  *     Tile swipe stays ENABLED inside subpages (unlike settings subpages):
@@ -63,6 +62,7 @@
 #include "muse_pet.h"
 #include "muse_pet_text.h"
 #include "muse_state.h"
+#include "muse_sudoku_ui.h"
 #include "muse_ui.h"
 
 /* --- colours: muse_theme.h (see file header for the DANGER note) --- */
@@ -70,10 +70,13 @@
 /* --- layout --- */
 #define IC_BACK_W 56
 #define IC_BACK_H 48
-#define IC_LIST_W 330
-#define IC_LIST_TOP 84
-#define IC_ROW_H 58
-#define IC_ROW_GAP 8
+#define IC_CARD_W 146
+#define IC_CARD_H 80
+#define IC_CARD_GAP 8
+#define IC_CARD_X0 30
+#define IC_CARD_Y0 86
+#define IC_CARD_Y1 174 /* Y0 + CARD_H + GAP */
+#define IC_CARD_RADIUS 14
 #define IC_RADIUS 18
 #define IC_FEED_CARD 100
 #define IC_FEED_ICON 80
@@ -103,6 +106,7 @@ enum {
     IC_PAGE_FEED,
     IC_PAGE_GAME,
     IC_PAGE_FORTUNE,
+    IC_PAGE_SUDOKU,
 };
 
 enum {
@@ -113,7 +117,7 @@ enum {
 };
 
 static lv_obj_t *s_tile;
-static lv_obj_t *s_main_page, *s_feed_page, *s_game_page, *s_fortune_page;
+static lv_obj_t *s_main_page, *s_feed_page, *s_game_page, *s_fortune_page, *s_sudoku_page;
 static lv_obj_t *s_btn_feed, *s_btn_game, *s_btn_fortune;
 static lv_obj_t *s_btn_feed_lbl, *s_btn_game_lbl, *s_btn_fortune_lbl;
 static int s_last_feed_idx;
@@ -125,7 +129,7 @@ static uint32_t s_last_feed_before;
  * in the tick is the backstop if a feedback is ever dropped. */
 static bool s_feed_pending;
 static uint32_t s_feed_pending_ms;
-static lv_obj_t *s_status1;
+static lv_obj_t *s_status1, *s_status2;
 static lv_obj_t *s_feed_cards[3];
 static lv_obj_t *s_feed_note;   /* result line on the feed subpage itself */
 static lv_obj_t *s_game_choices[3];
@@ -181,15 +185,15 @@ static lv_obj_t *label(lv_obj_t *parent, const lv_font_t *font, uint32_t color,
     return o;
 }
 
-/* Title, and the back arrow only on a subpage (back_cb != NULL).
- *
- * The main interaction page has no arrow: the tile swipe right (and the
- * round dot) already goes back to the face, and a card behind the arrow
- * read as a stray box on the 360 circle. The title takes the settings
- * page's place and look: TOP_MID at y = 44, accent colour -- so "互动"
- * sits exactly where "SETTINGS" does one tile over. Subpages keep an
- * arrow, drawn the settings way: no card, just the glyph over the
- * title's left shoulder. */
+/* Title, and the back arrow when back_cb != NULL. Since mockup v15
+ * (2026-10-31) the main interaction page carries the arrow too (back
+ * to the face via on_back): the approved mockup shows it, and the
+ * earlier no-arrow reasoning (a card behind the arrow read as a stray
+ * box) no longer applies now that the arrow is a bare glyph, drawn
+ * the settings way: no card, just the glyph over the title's left
+ * shoulder. The title takes the settings page's place and look:
+ * TOP_MID at y = 44, accent colour -- so "互动" sits exactly where
+ * "SETTINGS" does one tile over. */
 static void page_header(lv_obj_t *page, const char *title, lv_event_cb_t back_cb)
 {
     if (back_cb) {
@@ -213,10 +217,12 @@ static void show_page(int page)
     lv_obj_add_flag(s_feed_page, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(s_game_page, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(s_fortune_page, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(s_sudoku_page, LV_OBJ_FLAG_HIDDEN);
     lv_obj_t *show = s_main_page;
     if (page == IC_PAGE_FEED) show = s_feed_page;
     if (page == IC_PAGE_GAME) show = s_game_page;
     if (page == IC_PAGE_FORTUNE) show = s_fortune_page;
+    if (page == IC_PAGE_SUDOKU) show = s_sudoku_page;
     lv_obj_remove_flag(show, LV_OBJ_FLAG_HIDDEN);
 }
 
@@ -262,54 +268,71 @@ static void refresh_status(void)
 {
     if (!s_have_snap) {
         lv_label_set_text(s_status1, "金币 --/100");
+        lv_label_set_text(s_status2, "摸摸 --/50 · 喂饭 --/30");
         return;
     }
     char buf[64];
     snprintf(buf, sizeof(buf), "金币 %lu/100", (unsigned long)s_snap.coins);
     lv_label_set_text(s_status1, buf);
+    /* Line 2: touch coins today (cap 50) and feed coins today (one 10
+     * per food paid, cap 30 -- the shipped model pays per food, not the
+     * draft first-feed-only cap 10 the v15 mockup example showed). */
+    unsigned feed_foods = 0;
+    for (unsigned i = 0; i < MUSE_PET_FEED_KINDS; i++) {
+        if (s_snap.feed_mask & (1u << i)) {
+            feed_foods++;
+        }
+    }
+    snprintf(buf, sizeof(buf), "摸摸 %lu/50 · 喂饭 %lu/30",
+             (unsigned long)s_snap.daily_touch_coins,
+             (unsigned long)(feed_foods * MUSE_PET_FEED_COINS));
+    lv_label_set_text(s_status2, buf);
 
-    /* Dynamic button copy (design §5.2). Dimming is a pre-press signal,
-     * not a disable: a fully claimed feed button still works (happy only),
-     * and a poor game button still explains itself on press.
-     * 1.5a: the feed button is done only when ALL three foods paid. */
+    /* Dynamic card copy (design §5.2). Dimming is a pre-press signal,
+     * not a disable: a fully claimed feed card still works (happy only),
+     * and a poor game card still explains itself on press.
+     * 1.5a: the feed card is done only when ALL three foods paid. */
     const uint32_t all_fed = (1u << MUSE_PET_FEED_KINDS) - 1u;
     bool feed_done = (s_snap.feed_mask & all_fed) == all_fed;
     lv_label_set_text(s_btn_feed_lbl,
-                      feed_done ? "喂饭 ｜ 今日已领满" : "喂饭 ｜ 每种 +10金币");
+                      feed_done ? "今日已领满" : "每种 +10金币");
     lv_obj_set_style_text_color(s_btn_feed_lbl,
                                 lv_color_hex(feed_done ? MUSE_THEME_DIM : MUSE_THEME_TEXT), 0);
-    lv_label_set_text(s_btn_game_lbl,
-                      s_snap.coins < 5 ? "小游戏 ｜ 金币不够" : "小游戏 ｜ 石头剪刀布");
+    bool poor = s_snap.coins < MUSE_PET_GAME_STAKE;
+    lv_label_set_text(s_btn_game_lbl, poor ? "金币不够" : "-5 金币");
     lv_obj_set_style_text_color(s_btn_game_lbl,
-                                lv_color_hex(s_snap.coins < 5 ? MUSE_THEME_DIM : MUSE_THEME_TEXT), 0);
+                                lv_color_hex(poor ? MUSE_THEME_DIM : MUSE_THEME_TEXT), 0);
     if (s_snap.fortune_day >= 0) {
         const char *grade = muse_pet_fortune_grade(s_snap.fortune);
-        char fbuf[48];
-        snprintf(fbuf, sizeof(fbuf), "今日运势 ｜ %s", grade ? grade : "已抽");
-        lv_label_set_text(s_btn_fortune_lbl, fbuf);
+        lv_label_set_text(s_btn_fortune_lbl, grade ? grade : "已抽");
     } else {
-        lv_label_set_text(s_btn_fortune_lbl, "今日运势 ｜ 未抽");
+        lv_label_set_text(s_btn_fortune_lbl, "未抽");
     }
 }
 
-static lv_obj_t *main_button(lv_obj_t *parent, int y, const char *text,
-                             lv_event_cb_t cb, lv_obj_t **lbl_out)
+/* One v15 card: title + sub-line, both centred. The title label is
+ * static; the sub label is returned for refresh_status() when it
+ * changes (feed / game / fortune), or NULL for a static card. */
+static lv_obj_t *card_button(lv_obj_t *parent, int x, int y, const char *title,
+                             const char *sub, lv_event_cb_t cb, lv_obj_t **sub_lbl_out)
 {
     lv_obj_t *b = lv_btn_create(parent);
-    lv_obj_set_size(b, IC_LIST_W, IC_ROW_H);
-    lv_obj_set_pos(b, (360 - IC_LIST_W) / 2, y);
+    lv_obj_set_size(b, IC_CARD_W, IC_CARD_H);
+    lv_obj_set_pos(b, x, y);
     /* The theme does not paint these cards on this build: without an
-     * explicit COVER the row is just text on black (the settings page
+     * explicit COVER the card is just text on black (the settings page
      * sets the same line on its rows). */
     lv_obj_set_style_bg_opa(b, LV_OPA_COVER, 0);
     lv_obj_set_style_bg_color(b, lv_color_hex(MUSE_THEME_CARD), 0);
     lv_obj_set_style_bg_color(b, lv_color_hex(MUSE_THEME_CARD_PRESSED), LV_STATE_PRESSED);
-    lv_obj_set_style_radius(b, IC_RADIUS, 0);
-    lv_obj_t *l = label(b, muse_font_btn(), MUSE_THEME_TEXT, text);
-    lv_obj_center(l);
+    lv_obj_set_style_radius(b, IC_CARD_RADIUS, 0);
+    lv_obj_t *t = label(b, muse_font_btn(), MUSE_THEME_TEXT, title);
+    lv_obj_align(t, LV_ALIGN_TOP_MID, 0, 14);
+    lv_obj_t *s = label(b, muse_font_cjk(), MUSE_THEME_TEXT, sub);
+    lv_obj_align(s, LV_ALIGN_TOP_MID, 0, 46);
     lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, NULL);
-    if (lbl_out) {
-        *lbl_out = l;
+    if (sub_lbl_out) {
+        *sub_lbl_out = s;
     }
     return b;
 }
@@ -841,6 +864,13 @@ static void on_open_game(lv_event_t *e)
      * by then (on_hidden reset it when the tile was left). */
 }
 
+static void on_open_sudoku(lv_event_t *e)
+{
+    (void)e;
+    show_page(IC_PAGE_SUDOKU);
+    muse_sudoku_ui_show();
+}
+
 static lv_obj_t *page_group(lv_obj_t *tile)
 {
     lv_obj_t *g = lv_obj_create(tile);
@@ -856,22 +886,22 @@ static lv_obj_t *page_group(lv_obj_t *tile)
 
 static void build_main(void)
 {
-    page_header(s_main_page, "互动", NULL);
-    s_btn_feed = main_button(s_main_page, IC_LIST_TOP, "喂饭 ｜ 每种 +10金币",
-                             on_open_feed, &s_btn_feed_lbl);
-    s_btn_game = main_button(s_main_page, IC_LIST_TOP + IC_ROW_H + IC_ROW_GAP,
-                             "小游戏 ｜ 石头剪刀布", on_open_game, &s_btn_game_lbl);
-    s_btn_fortune = main_button(s_main_page,
-                                IC_LIST_TOP + 2 * (IC_ROW_H + IC_ROW_GAP),
-                                "今日运势 ｜ 未抽", on_fortune_open,
-                                &s_btn_fortune_lbl);
-    /* Coin line, the page's last row. It sat at y = 280 first (6 px under the
-     * 今日运势 card, which ends at 274 -- too tight), then pinned to the bottom
-     * (-22) which read as too low. 302 splits the gap: 28 px below the card,
-     * 42 px above the bezel, and the circle's chord there is ~264 px, well over
-     * the width of "金币 100/100". */
+    page_header(s_main_page, "互动", on_back);
+    /* v15 2x2 cards: row 1 games, row 2 daily. The handlers are the
+     * same subpage openers the old list rows used. */
+    s_btn_game = card_button(s_main_page, IC_CARD_X0, IC_CARD_Y0,
+                             "石头剪刀布", "-5 金币", on_open_game, &s_btn_game_lbl);
+    card_button(s_main_page, IC_CARD_X0 + IC_CARD_W + IC_CARD_GAP, IC_CARD_Y0,
+                "初阶数独", "6×6 · 20 题", on_open_sudoku, NULL);
+    s_btn_feed = card_button(s_main_page, IC_CARD_X0, IC_CARD_Y1,
+                             "喂饭", "每种 +10金币", on_open_feed, &s_btn_feed_lbl);
+    s_btn_fortune = card_button(s_main_page, IC_CARD_X0 + IC_CARD_W + IC_CARD_GAP, IC_CARD_Y1,
+                                "今日运势", "未抽", on_fortune_open, &s_btn_fortune_lbl);
+    /* Status lines (mockup v15): coins, then touch / feed counts. */
     s_status1 = label(s_main_page, muse_font_cjk(), MUSE_THEME_TEXT, "金币 --/100");
-    lv_obj_align(s_status1, LV_ALIGN_TOP_MID, 0, 302);
+    lv_obj_align(s_status1, LV_ALIGN_TOP_MID, 0, 290);
+    s_status2 = label(s_main_page, muse_font_cjk(), MUSE_THEME_TEXT, "摸摸 --/50 · 喂饭 --/30");
+    lv_obj_align(s_status2, LV_ALIGN_TOP_MID, 0, 312);
 }
 
 static void build_feed(void)
@@ -1045,10 +1075,12 @@ void muse_interact_ui_build(lv_obj_t *tile)
     s_feed_page = page_group(tile);
     s_game_page = page_group(tile);
     s_fortune_page = page_group(tile);
+    s_sudoku_page = page_group(tile);
     build_main();
     build_feed();
     build_game();
     build_fortune();
+    muse_sudoku_ui_build(s_sudoku_page, on_back);
     show_page(IC_PAGE_MAIN);
     /* Main page is the only one shown at build; muse_ui.c's tileview
      * hides the whole tile when it is not the active tile, so no extra
@@ -1064,6 +1096,10 @@ void muse_interact_ui_on_hidden(void)
     /* No note line to clear any more: the coin line is a live status and the
      * subpages own their own hint slots (user decision 2026-10-25). */
     reset_game_view();
+    /* Sudoku keeps its puzzle progress (static state in the sudoku UI);
+     * only the pad popup and the win overlay are closed, so a return
+     * visit resumes the puzzle instead of restarting it. */
+    muse_sudoku_ui_hide();
     show_page(IC_PAGE_MAIN);
 }
 
