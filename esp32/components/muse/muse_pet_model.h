@@ -44,7 +44,7 @@
 #define MUSE_PET_FEED_COINS 10u        /* per food, once per food per day */
 #define MUSE_PET_FEED_KINDS 3u         /* rice / cake / coffee */
 #define MUSE_PET_FEED_DAILY_MAX 30u    /* three foods x 10 (user decision 2026-10-25) */
-#define MUSE_PET_GAME_STAKE 5u         /* win +5, lose -5, draw 0 */
+#define MUSE_PET_GAME_STAKE 5u         /* win +5, lose -5, draw 0; also the PET_FEE entry fee */
 #define MUSE_PET_FORTUNE_COINS 20u     /* once a day, paid with the new card */
 #define MUSE_PET_DECAY_PER_DAY 20u     /* living cost, per calendar day */
 #define MUSE_PET_FORTUNES 20u          /* fortune cards in muse_pet_text.c */
@@ -80,7 +80,11 @@ typedef struct {
  * since 1.5b its arg is the announced decay_day, and only a notice for
  * that day is cleared (see muse_pet_decay_ack()).
  * PET_RESET rebuilds the initial state; only the Test-gated console command
- * may send it (see the muse_input.c patch note). */
+ * may send it (see the muse_input.c patch note).
+ * PET_FEE deducts one entry fee (MUSE_PET_GAME_STAKE) for a sudoku puzzle
+ * or a snake game (user decision 2026-10-31): the UI gates on the
+ * snapshot first, and the worker re-checks -- under 5 coins it returns
+ * PET_POOR and settles nothing, exactly like PET_GAME's gate. */
 typedef enum {
     PET_TOUCH = 0,
     PET_FEED_RICE,
@@ -90,6 +94,7 @@ typedef enum {
     PET_FORTUNE,
     PET_DECAY_ACK,
     PET_RESET,
+    PET_FEE,
 } muse_pet_action_t;
 
 /* Results. UI copy must be keyed off these, never guessed (design §4.3).
@@ -101,7 +106,7 @@ typedef enum {
     PET_OK = 0,
     PET_COIN,          /* touch paid */
     PET_CAP,           /* touch daily cap reached: happy only, no coins */
-    PET_POOR,          /* game: coins < 5, not settled, no round started */
+    PET_POOR,          /* game/fee: coins < 5, not settled, no round started */
     PET_FORTUNE_NEW,   /* new card drawn */
     PET_FORTUNE_SAME,  /* same-day (or prior) card shown again */
     PET_STORAGE,       /* NVS write failed: state was NOT changed */

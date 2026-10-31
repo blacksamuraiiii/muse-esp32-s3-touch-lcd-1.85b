@@ -48,6 +48,8 @@ if(CONFIG_MUSE_ENABLED)
         "muse_interact_ui.c"
         "muse_sudoku.c"
         "muse_sudoku_ui.c"
+        "muse_snake.c"
+        "muse_snake_ui.c"
         "muse_interact_hand_rock.c"
         "muse_interact_hand_paper.c"
         "muse_interact_hand_scissors.c"

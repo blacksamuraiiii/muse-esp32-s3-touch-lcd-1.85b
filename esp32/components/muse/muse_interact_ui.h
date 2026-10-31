@@ -1,12 +1,12 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 /*
- * muse_interact_ui.h -- 1.5a interaction tile + four subpages.
+ * muse_interact_ui.h -- 1.5a interaction tile + six subpages.
  *
  * Built by muse_ui_start() on the interaction tile (0,0) of the 3-tile
  * layout (interaction, face, settings). This file owns NO tileview, NO
  * dots and NO caption label: muse_ui.c owns those (see muse_ui_patch.md).
- * It only owns the content of the interaction tile and its four subpages
- * (feed, game, fortune, sudoku), which are groups inside that tile -- NOT top-level
+ * It only owns the content of the interaction tile and its six subpages
+ * (feed, game, fortune, sudoku, minigame, snake), which are groups inside that tile -- NOT top-level
  * tiles, so the bottom dots never change when a subpage opens.
  *
  * Threading, exactly as design §3.1: LVGL callbacks here only SEND actions
@@ -43,7 +43,7 @@ void muse_interact_ui_tick(bool active);
 
 /* Called by muse_ui.c when the visible tile stops being the interaction
  * tile. Clears the result note, cancels any in-flight game animation and
- * closes all three subpages back to the interaction main page, so a
+ * closes all subpages back to the interaction main page, so a
  * return visit never resurrects a stale result (design §5.2). It does
  * NOT clear the global pet caption: the caption is allowed to outlive
  * the tile visit and expires on its own 3-second rule. */
