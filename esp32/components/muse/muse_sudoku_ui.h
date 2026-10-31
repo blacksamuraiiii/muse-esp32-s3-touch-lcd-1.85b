@@ -8,11 +8,12 @@
  *
  * Threading follows the interact contract: LVGL callbacks only touch
  * this module's own objects and the RAM puzzle state (muse_sudoku.c);
- * there is no worker, no NVS and no coin settlement here -- Sudoku
- * costs and pays nothing. Progress lives in static RAM: leaving the
- * tile (muse_sudoku_ui_hide) closes the pad popup and the win overlay
- * but keeps the puzzle, so re-entering the page resumes it; a reboot
- * restarts puzzle #01.
+ * there is no worker and no NVS here -- the only coin movement is the
+ * 5-coin entry fee per puzzle, sent as PET_FEE (see the .c file);
+ * Sudoku never pays coins out. Progress lives in static RAM: leaving
+ * the tile (muse_sudoku_ui_hide) closes the pad popup and the win overlay
+ * but keeps the puzzle and its paid flag, so re-entering the page resumes
+ * it without charging again; a reboot restarts puzzle #01.
  */
 #pragma once
 

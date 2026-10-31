@@ -39,14 +39,19 @@
  * the selected cell again closes the pad. A digit fills immediately
  * and is flagged red on conflict, never rejected. 提示 fills the
  * selected cell when it is fillable and not already right, else the
- * first empty cell. 换一题 cycles 1..20. No coin cost, no 3-strike
- * rule, no pencil marks (v1 scope, see muse_sudoku.h).
+ * first empty cell. 换一题 cycles 1..20. Each puzzle costs 5 coins
+ * (PET_FEE, user decision 2026-10-31): opening a puzzle, 换一题,
+ * 下一题 and 再玩一次 all charge; re-entering a paid puzzle kept in
+ * RAM does not; under 5 coins the load is refused with "金币不够…"
+ * and the current puzzle stays. No 3-strike rule, no pencil marks
+ * (v1 scope, see muse_sudoku.h).
  */
 #include "muse_sudoku_ui.h"
 
 #include <stdio.h>
 
 #include "muse_font.h"
+#include "muse_pet.h"
 #include "muse_sudoku.h"
 #include "muse_theme.h"
 
@@ -77,6 +82,7 @@
 #define SU_PILL_Y0 320
 
 static lv_obj_t *s_counter;
+static lv_obj_t *s_note;
 static lv_obj_t *s_fills[MUSE_SUDOKU_CELLS];
 static lv_obj_t *s_cell_lbls[MUSE_SUDOKU_CELLS];
 static lv_obj_t *s_overlay;
@@ -87,12 +93,20 @@ static muse_sudoku_state_t s_state;
 static int s_selected = -1; /* 0..35, -1 = none */
 static bool s_pad_open;
 static bool s_win_open;
+/* True once the currently displayed puzzle has been paid for. Build
+ * leaves it false (the boot-time load is not a charge); every user
+ * load sets it through charge_for_new_puzzle, and leaving the tile
+ * keeps it, so re-entering a paid puzzle never charges twice. */
+static bool s_current_paid;
 static uint32_t s_start_ms;
 /* 1 once this puzzle's clock is running. The page is built at boot, long
  * before anyone opens it, so building does NOT start the clock: the first
  * muse_sudoku_ui_show() does. Puzzles loaded from the pills (换一题,
  * 下一题, 再玩一次) start theirs at once -- the page is on screen then. */
 static bool s_timed;
+
+static bool try_charge(void);
+static void load_puzzle(int idx);
 
 static lv_obj_t *label(lv_obj_t *parent, const lv_font_t *font, uint32_t color,
                        const char *text)
@@ -210,6 +224,11 @@ static void on_cell(lv_event_t *e)
     /* The pad overlay covers the grid while the pad is open, so a cell
      * tap always means the pad is closed; tapping outside the pad
      * dismisses it through the overlay instead. */
+    if (!try_charge()) {
+        /* Unpaid puzzle (first entry poor, or worker not ready):
+         * retrying the charge on the next tap is the only way in. */
+        return;
+    }
     close_pad();
     s_selected = pos;
     refresh_grid();
@@ -273,6 +292,52 @@ static void on_hint(lv_event_t *e)
     after_fill();
 }
 
+static void show_note(const char *text)
+{
+    lv_label_set_text(s_note, text);
+    lv_obj_remove_flag(s_note, LV_OBJ_FLAG_HIDDEN);
+}
+
+/* The entry fee (user decision 2026-10-31): 5 coins per puzzle, gated
+ * on the pet snapshot and settled by the worker as PET_FEE. True when
+ * the displayed puzzle is already paid for, or when this call just
+ * paid for it; false shows the refusal note and starts nothing. */
+static bool try_charge(void)
+{
+    if (s_current_paid) {
+        return true;
+    }
+    muse_pet_model_t snap;
+    if (!muse_pet_snapshot(&snap)) {
+        show_note("互动未就绪");
+        return false;
+    }
+    if (snap.coins < MUSE_PET_GAME_STAKE) {
+        show_note("金币不够，先摸摸 / 喂饭 / 抽运势");
+        return false;
+    }
+    if (!muse_pet_request(PET_FEE)) {
+        show_note("互动未就绪");
+        return false;
+    }
+    s_current_paid = true;
+    lv_obj_add_flag(s_note, LV_OBJ_FLAG_HIDDEN);
+    return true;
+}
+
+/* Every user load is a new charge, even replaying the same index:
+ * 换一题, 下一题 and 再玩一次 all count as opening a new puzzle.
+ * False leaves the current puzzle on screen. */
+static bool load_puzzle_paid(int idx)
+{
+    s_current_paid = false;
+    if (!try_charge()) {
+        return false;
+    }
+    load_puzzle(idx);
+    return true;
+}
+
 static void load_puzzle(int idx)
 {
     muse_sudoku_load(&s_state, idx);
@@ -287,19 +352,19 @@ static void load_puzzle(int idx)
 static void on_next(lv_event_t *e)
 {
     (void)e;
-    load_puzzle(s_state.idx + 1);
+    load_puzzle_paid(s_state.idx + 1);
 }
 
 static void on_win_next(lv_event_t *e)
 {
     (void)e;
-    load_puzzle(s_state.idx + 1);
+    load_puzzle_paid(s_state.idx + 1);
 }
 
 static void on_win_replay(lv_event_t *e)
 {
     (void)e;
-    load_puzzle(s_state.idx);
+    load_puzzle_paid(s_state.idx);
 }
 
 /* Grid lines: LVGL keeps the point array pointer (it does not copy
@@ -482,11 +547,21 @@ void muse_sudoku_ui_build(lv_obj_t *page, lv_event_cb_t back_cb)
     lv_obj_t *wrl = label(wr, muse_font_cjk(), MUSE_THEME_TEXT, "再玩一次");
     lv_obj_center(wrl);
 
+    /* Refusal note, last so it stays above the dim overlay: a blocked
+     * charge (under 5 coins, or worker not ready) shows here, below
+     * the win card and above the pills, until the next charge succeeds
+     * or the tile is left. */
+    s_note = label(page, muse_font_cjk(), MUSE_THEME_DANGER, "");
+    lv_obj_align(s_note, LV_ALIGN_TOP_MID, 0, 280);
+    lv_obj_add_flag(s_note, LV_OBJ_FLAG_HIDDEN);
+
     load_puzzle(0);
     /* The page is built once, at boot. Loading a puzzle here would start its
      * clock hours before the player opens the page, so the first puzzle waits
-     * for muse_sudoku_ui_show() to start it. */
+     * for muse_sudoku_ui_show() to start it. The boot-time load is not a
+     * charge either: the first entry pays for puzzle #01. */
     s_timed = false;
+    s_current_paid = false;
 }
 
 void muse_sudoku_ui_show(void)
@@ -500,6 +575,10 @@ void muse_sudoku_ui_show(void)
         s_start_ms = lv_tick_get();
         s_timed = true;
     }
+    /* Entering with an unpaid puzzle pays for it here; a paid puzzle
+     * re-enters free, and a refused charge leaves the puzzle on screen
+     * with the note up (cell taps retry the charge). */
+    try_charge();
     refresh_grid();
 }
 
@@ -507,4 +586,5 @@ void muse_sudoku_ui_hide(void)
 {
     close_pad();
     hide_win();
+    lv_obj_add_flag(s_note, LV_OBJ_FLAG_HIDDEN);
 }
