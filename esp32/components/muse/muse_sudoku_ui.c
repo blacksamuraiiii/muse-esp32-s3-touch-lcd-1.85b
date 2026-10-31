@@ -88,6 +88,11 @@ static int s_selected = -1; /* 0..35, -1 = none */
 static bool s_pad_open;
 static bool s_win_open;
 static uint32_t s_start_ms;
+/* 1 once this puzzle's clock is running. The page is built at boot, long
+ * before anyone opens it, so building does NOT start the clock: the first
+ * muse_sudoku_ui_show() does. Puzzles loaded from the pills (换一题,
+ * 下一题, 再玩一次) start theirs at once -- the page is on screen then. */
+static bool s_timed;
 
 static lv_obj_t *label(lv_obj_t *parent, const lv_font_t *font, uint32_t color,
                        const char *text)
@@ -273,6 +278,7 @@ static void load_puzzle(int idx)
     muse_sudoku_load(&s_state, idx);
     s_selected = -1;
     s_start_ms = lv_tick_get();
+    s_timed = true;
     close_pad();
     hide_win();
     refresh_grid();
@@ -477,12 +483,23 @@ void muse_sudoku_ui_build(lv_obj_t *page, lv_event_cb_t back_cb)
     lv_obj_center(wrl);
 
     load_puzzle(0);
+    /* The page is built once, at boot. Loading a puzzle here would start its
+     * clock hours before the player opens the page, so the first puzzle waits
+     * for muse_sudoku_ui_show() to start it. */
+    s_timed = false;
 }
 
 void muse_sudoku_ui_show(void)
 {
     close_pad();
     hide_win();
+    if (!s_timed) {
+        /* First entry since the page was built: start this puzzle's clock now.
+         * Later visits leave it running -- leaving the tile keeps progress, so
+         * the elapsed time a player sees includes the time away. */
+        s_start_ms = lv_tick_get();
+        s_timed = true;
+    }
     refresh_grid();
 }
 
