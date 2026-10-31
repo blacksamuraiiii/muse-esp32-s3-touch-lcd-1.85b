@@ -35,7 +35,23 @@
 
 static const char *TAG = "muse_audio";
 
-#define CHANNELS 2
+/* The speaker is a plain stereo I2S stream: two slots, the codec takes mono and
+ * we duplicate it.
+ *
+ * The microphones are not always. On the 1.85B the ES7210 is given three of its
+ * four inputs - MIC1, MIC2 and MIC3 - and the driver switches the part to TDM
+ * as soon as three are enabled, so one capture frame carries *four* slots, not
+ * two. MIC3 is the speaker/DAC reference the echo canceller needs; without it
+ * there is nothing to subtract the playback from. The slot order is not the
+ * physical mic order: the ES7210 lays TDM out as MIC1, MIC3, MIC2, MIC4, so the
+ * reference lands in slot 1 while MIC1 (the voice mic) stays in slot 0.
+ *
+ * Every other board captures 2-slot stereo, so the slot count is runtime: the
+ * board overlay sets muse_board->mic_slots (0 means the old 2-slot layout) and
+ * the buffer is dimensioned for the widest frame any board produces.
+ * muse_board->mic_slot names the slot to read; -1 mixes the first two. */
+#define OUT_CHANNELS 2
+#define IN_SLOTS_MAX 4
 #define HPF_HZ 80.0f
 
 static esp_codec_dev_handle_t s_spk;
@@ -44,8 +60,11 @@ static bool s_open;
 /* Opening, closing and the volume and gain setters, which other tasks call:
  * with a board-switched codec supply, none may reach a codec mid-switch. */
 static SemaphoreHandle_t s_lock;
-static int16_t s_in_stereo[MUSE_AUDIO_CHUNK * CHANNELS];
-static int16_t s_out_stereo[MUSE_AUDIO_CHUNK * CHANNELS];
+static int16_t s_in_frame[MUSE_AUDIO_CHUNK * IN_SLOTS_MAX];
+static int16_t s_out_stereo[MUSE_AUDIO_CHUNK * OUT_CHANNELS];
+/* Slots per capture frame, from the board at init. 2 until then, so a board
+ * that never sets it keeps the layout every non-TDM board has. */
+static int s_in_slots = 2;
 
 /* One-pole high-pass on the mixed mic signal. */
 static float s_hpf_a;
@@ -104,13 +123,23 @@ static void apply_mic_gain(int db)
 
 static esp_err_t open_codecs(void)
 {
-    esp_codec_dev_sample_info_t fs = {
+    /* Two sample infos, not one: the speaker stream is always 2 slots, the
+     * capture stream is as wide as the board's codec is configured for (4 on
+     * the boards whose ES7210 runs TDM). One shared struct is what made the old
+     * code declare a 2-slot capture and quietly truncate the reference channel
+     * away. */
+    esp_codec_dev_sample_info_t fs_out = {
         .sample_rate = MUSE_AUDIO_RATE,
-        .channel = CHANNELS,
+        .channel = OUT_CHANNELS,
         .bits_per_sample = 16,
     };
-    ESP_RETURN_ON_FALSE(esp_codec_dev_open(s_spk, &fs) == ESP_CODEC_DEV_OK, ESP_FAIL, TAG, "open speaker");
-    if (esp_codec_dev_open(s_mic, &fs) != ESP_CODEC_DEV_OK) {
+    esp_codec_dev_sample_info_t fs_in = {
+        .sample_rate = MUSE_AUDIO_RATE,
+        .channel = s_in_slots,
+        .bits_per_sample = 16,
+    };
+    ESP_RETURN_ON_FALSE(esp_codec_dev_open(s_spk, &fs_out) == ESP_CODEC_DEV_OK, ESP_FAIL, TAG, "open speaker");
+    if (esp_codec_dev_open(s_mic, &fs_in) != ESP_CODEC_DEV_OK) {
         esp_codec_dev_close(s_spk);   /* none open on failure */
         ESP_LOGE(TAG, "open mic");
         return ESP_FAIL;
@@ -123,6 +152,11 @@ esp_err_t muse_audio_init(int volume, int mic_gain_db)
 {
     s_lock = xSemaphoreCreateMutex();
     ESP_RETURN_ON_FALSE(s_lock, ESP_ERR_NO_MEM, TAG, "audio lock");
+    /* Before anything opens a codec: the capture frame width is the board's,
+     * and the ES7210 has to be told the same number the rx channel carries. */
+    s_in_slots = muse_board->mic_slots > 0 ? muse_board->mic_slots : 2;
+    ESP_RETURN_ON_FALSE(s_in_slots <= IN_SLOTS_MAX, ESP_ERR_INVALID_ARG, TAG,
+                        "mic_slots %d exceeds the %d-slot buffer", s_in_slots, IN_SLOTS_MAX);
     esp_err_t err;
     if (muse_board->mic_init) {
         err = muse_board->mic_init();
@@ -154,7 +188,8 @@ esp_err_t muse_audio_init(int volume, int mic_gain_db)
     float dt = 1.0f / MUSE_AUDIO_RATE;
     s_hpf_a = rc / (rc + dt);
 
-    ESP_LOGI(TAG, "audio ready: %d Hz, %d ch, vol %d, mic gain %d dB", MUSE_AUDIO_RATE, CHANNELS, volume, mic_gain_db);
+    ESP_LOGI(TAG, "audio ready: %d Hz, out %d ch, in %d slots (mic slot %d), vol %d, mic gain %d dB",
+             MUSE_AUDIO_RATE, OUT_CHANNELS, s_in_slots, muse_board->mic_slot, volume, mic_gain_db);
     return ESP_OK;
 }
 
@@ -235,16 +270,20 @@ void muse_audio_selftest(void)
     enum { FLUSH = MUSE_AUDIO_RATE / 4, MEASURE = MUSE_AUDIO_RATE / 2 };
 
     /* Capture: drop the DMA backlog, then time a known number of frames. */
+    const size_t frame_bytes = MUSE_AUDIO_CHUNK * s_in_slots * sizeof(int16_t);
     for (int n = 0; n < FLUSH; n += MUSE_AUDIO_CHUNK) {
-        esp_codec_dev_read(s_mic, s_in_stereo, sizeof(s_in_stereo));
+        esp_codec_dev_read(s_mic, s_in_frame, frame_bytes);
     }
     double sl = 0, sr = 0, slr = 0, ml = 0, mr = 0;
     int pl = 0, pr = 0;
     int64_t t0 = esp_timer_get_time();
     for (int n = 0; n < MEASURE; n += MUSE_AUDIO_CHUNK) {
-        esp_codec_dev_read(s_mic, s_in_stereo, sizeof(s_in_stereo));
+        esp_codec_dev_read(s_mic, s_in_frame, frame_bytes);
         for (int i = 0; i < MUSE_AUDIO_CHUNK; i++) {
-            int l = s_in_stereo[2 * i], r = s_in_stereo[2 * i + 1];
+            /* Slots 0 and 1: the voice mic and, on boards with one, the
+             * speaker reference. A high correlation between them during
+             * playback is exactly the echo the AEC has to remove. */
+            int l = s_in_frame[s_in_slots * i], r = s_in_frame[s_in_slots * i + 1];
             ml += l;
             mr += r;
             sl += (double)l * l;
@@ -271,18 +310,20 @@ void muse_audio_selftest(void)
     }
     float play_hz = MEASURE * 1e6f / (float)(esp_timer_get_time() - t0);
 
-    ESP_LOGI(TAG, "self-test @ %d dB: mic L %.1f dBFS (peak %d, dc %d), R %.1f dBFS (peak %d, dc %d), corr %.2f",
+    ESP_LOGI(TAG, "self-test @ %d dB: slot0 %.1f dBFS (peak %d, dc %d), slot1 %.1f dBFS (peak %d, dc %d), corr %.2f",
              muse_settings_mic_gain(), to_db(vl), pl, (int)ml, to_db(vr), pr, (int)mr, corr);
     ESP_LOGI(TAG, "self-test: capture %.0f Hz, playback %.0f Hz (expected %d)", cap_hz, play_hz, MUSE_AUDIO_RATE);
 }
 
-/* Goertzel power of `f` in an interleaved stereo buffer, as dBFS of a sine. */
+/* Goertzel power of `f` in one slot of an interleaved capture frame, as dBFS of
+ * a sine. `ch` is the frame slot, not a "left/right": a frame carries
+ * s_in_slots of them. */
 static float tone_db(const int16_t *st, int ch, size_t frames, float f)
 {
     float k = 2.0f * cosf(2.0f * (float)M_PI * f / MUSE_AUDIO_RATE);
     float s1 = 0, s2 = 0;
     for (size_t i = 0; i < frames; i++) {
-        float s0 = st[2 * i + ch] + k * s1 - s2;
+        float s0 = st[s_in_slots * i + ch] + k * s1 - s2;
         s2 = s1;
         s1 = s0;
     }
@@ -306,7 +347,7 @@ void muse_audio_loopback_test(int volume)
     static const float freqs[] = { 200, 400, 700, 1000, 2000, 3000, 4000, 6000 };
     static const int gains[] = { 0, 6, 12, 18, 24, 30, 33, 36 };
     const float amp = 0.25f * 32767.0f;   /* -12 dBFS tone */
-    int16_t *cap = heap_caps_malloc(MEAS * CHANNELS * sizeof(int16_t), MUSE_BIG_CAPS);
+    int16_t *cap = heap_caps_malloc(MEAS * s_in_slots * sizeof(int16_t), MUSE_BIG_CAPS);
     if (!cap) {
         return;
     }
@@ -330,21 +371,22 @@ void muse_audio_loopback_test(int volume)
                     s_out_stereo[2 * i] = s_out_stereo[2 * i + 1] = v;
                 }
                 esp_codec_dev_write(s_spk, s_out_stereo, sizeof(s_out_stereo));
-                esp_codec_dev_read(s_mic, s_in_stereo, sizeof(s_in_stereo));
+                esp_codec_dev_read(s_mic, s_in_frame, MUSE_AUDIO_CHUNK * s_in_slots * sizeof(int16_t));
                 /* Skip the first SKIP*2 frames: DMA latency plus the previous tone's tail. */
                 if (n >= 2 * SKIP && got + MUSE_AUDIO_CHUNK <= MEAS) {
-                    memcpy(cap + got * CHANNELS, s_in_stereo, sizeof(s_in_stereo));
+                    memcpy(cap + got * s_in_slots, s_in_frame,
+                           MUSE_AUDIO_CHUNK * s_in_slots * sizeof(int16_t));
                     got += MUSE_AUDIO_CHUNK;
                 }
             }
-            for (size_t i = 0; i < got * CHANNELS; i++) {
+            for (size_t i = 0; i < got * s_in_slots; i++) {
                 peak = abs(cap[i]) > peak ? abs(cap[i]) : peak;
             }
             if (t < 0) {
                 double sl = 0, sr = 0;
                 for (size_t i = 0; i < got; i++) {
-                    sl += (double)cap[2 * i] * cap[2 * i];
-                    sr += (double)cap[2 * i + 1] * cap[2 * i + 1];
+                    sl += (double)cap[s_in_slots * i] * cap[s_in_slots * i];
+                    sr += (double)cap[s_in_slots * i + 1] * cap[s_in_slots * i + 1];
                 }
                 len += snprintf(line + len, sizeof(line) - len, " floor %.0f/%.0f |", to_db(sl / got), to_db(sr / got));
                 peak = 0;
@@ -366,13 +408,13 @@ esp_err_t muse_audio_read(int16_t *mono, size_t frames)
         size_t n = frames > MUSE_AUDIO_CHUNK ? MUSE_AUDIO_CHUNK : frames;
         if (muse_board->mic_init) {
             if (muse_board->mic_read(mono, n) != ESP_OK) return ESP_FAIL;
-        } else if (esp_codec_dev_read(s_mic, s_in_stereo, n * CHANNELS * sizeof(int16_t)) != ESP_CODEC_DEV_OK) {
+        } else if (esp_codec_dev_read(s_mic, s_in_frame, n * s_in_slots * sizeof(int16_t)) != ESP_CODEC_DEV_OK) {
             return ESP_FAIL;
         }
         for (size_t i = 0; i < n; i++) {
             float x = muse_board->mic_init ? (float)mono[i] * s_mic_scale
-                     : muse_board->mic_slot < 0 ? 0.5f * ((float)s_in_stereo[2 * i] + (float)s_in_stereo[2 * i + 1])
-                                                : (float)s_in_stereo[2 * i + muse_board->mic_slot];
+                     : muse_board->mic_slot < 0 ? 0.5f * ((float)s_in_frame[s_in_slots * i] + (float)s_in_frame[s_in_slots * i + 1])
+                                                : (float)s_in_frame[s_in_slots * i + muse_board->mic_slot];
             float y = s_hpf_a * (s_hpf_y1 + x - s_hpf_x1);
             s_hpf_x1 = x;
             s_hpf_y1 = y;
@@ -400,7 +442,7 @@ esp_err_t muse_audio_write(const int16_t *mono, size_t frames)
             s_out_stereo[2 * i] = mute ? 0 : mono[i];
             s_out_stereo[2 * i + 1] = mute ? 0 : mono[i];
         }
-        if (esp_codec_dev_write(s_spk, s_out_stereo, n * CHANNELS * sizeof(int16_t)) != ESP_CODEC_DEV_OK) {
+        if (esp_codec_dev_write(s_spk, s_out_stereo, n * OUT_CHANNELS * sizeof(int16_t)) != ESP_CODEC_DEV_OK) {
             return ESP_FAIL;
         }
         mono += n;

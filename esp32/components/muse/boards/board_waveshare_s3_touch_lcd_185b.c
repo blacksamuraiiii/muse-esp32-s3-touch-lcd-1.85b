@@ -53,6 +53,7 @@
 #include "driver/gpio.h"
 #include "driver/i2c_master.h"
 #include "driver/i2s_std.h"
+#include "driver/i2s_tdm.h"
 #include "driver/ledc.h"
 #include "driver/rtc_io.h"
 #include "driver/spi_master.h"
@@ -114,10 +115,10 @@ static const muse_ptest_state_t s_matrix[] = {
     STATE("lcd_black_bl_100", "static black, backlight 100%", MUSE_PTEST_LCD, 80, 100, false),
     STATE("lcd_sleep_post", "paired: SLPIN + backlight 0 (panel charge pump off); CST816S left at its auto-sleep power-on default", MUSE_PTEST_IDLE, 80, -1, false),
     STATE("codecs_closed_pre", "always-on codec rail, no initialized I2S yet or codecs closed; amp GPIO9 low", MUSE_PTEST_IDLE, 80, -1, false),
-    STATE("codecs_open_amp_off", "16kHz stereo-slot codecs open, I2S clocks on, no drain, PA_EN driven low", MUSE_PTEST_CODECS_IDLE, 80, -1, false),
+    STATE("codecs_open_amp_off", "16kHz codecs open (rx TDM 4 slots, tx 2 slots), I2S clocks on, no drain, PA_EN driven low", MUSE_PTEST_CODECS_IDLE, 80, -1, false),
     STATE("codecs_open_amp_on", "same codecs and I2S, PA_EN high, no playback", MUSE_PTEST_CODECS_IDLE, 80, -1, true),
-    STATE("mic_capture_16k", "16kHz stereo I2S drained/discarded, ES7210 MIC1 slot 0, 0dB gain, amp off", MUSE_PTEST_MIC, 80, -1, false),
-    STATE("sine_1k_minus18dbfs", "1kHz sine -18dBFS peak, volume 25/100, 16kHz stereo slots, amp on", MUSE_PTEST_SINE, 80, -1, true),
+    STATE("mic_capture_16k", "16kHz TDM 4-slot I2S drained/discarded, ES7210 MIC1|MIC2|MIC3, voice read from slot 0, 0dB gain, amp off", MUSE_PTEST_MIC, 80, -1, false),
+    STATE("sine_1k_minus18dbfs", "1kHz sine -18dBFS peak, volume 25/100, 16kHz tx 2 slots, amp on", MUSE_PTEST_SINE, 80, -1, true),
     STATE("codecs_closed_post", "paired baseline after codec close and I2S stop", MUSE_PTEST_IDLE, 80, -1, false),
     STATE("battery_divider_unsupported", "skipped: no switchable battery-divider rail - this board gauges over I2C (BQ27220, always powered)", MUSE_PTEST_UNSUPPORTED, 80, -1, false),
     STATE("gauge_sample_1hz", "BQ27220 gauge read over I2C once/second (this board's real battery-read path; no ADC divider exists)", MUSE_PTEST_ADC_SAMPLE, 80, -1, false),
@@ -630,16 +631,26 @@ static lv_indev_t *s_touch_indev;           /* LVGL's input device for the face 
 static muse_gpio_button_t s_talk;
 
 /* The 500 mAh single-cell LiPo this board ships with, written as the CEDV model
- * the BQ27220 gauges from. The capacity terms are this pack's; the
- * voltage/temperature terms are the reference cell the component carries in
- * test_apps/main/bq27220_test.c (they describe cell chemistry, not pack size).
- * They are a sane starting model, not a GPCCEDV-calibrated one - see
- * notes/20261018待办.md. */
+ * the BQ27220 gauges from. Only the two capacity terms are this pack's
+ * (full_charge_cap / design_cap = 500 mAh); every other value - near_full
+ * included - is the reference cell from the component's
+ * test_apps/main/bq27220_test.c, which describes cell chemistry and thresholds,
+ * not pack size. near_full is therefore NOT scaled with capacity: 1.5e carried
+ * it as 150, which was a misreading of "the capacity terms are this pack's".
+ * Both references that exist for this exact board agree on 200: the component's
+ * default_cedv, and Waveshare's own factory firmware, whose CEDV block writes
+ * {0x926B, 200, 2} (0x926B = Near Full) alongside design capacity 500 mAh
+ * (waveshareteam/ESP32-S3-Touch-LCD-1.85B,
+ * examples/esp-idf/01_lvgl_demo/components/esp32_s3_touch_lcd_1_85B/bsp_board.cpp,
+ * battery_profile[]). Near Full feeds the gauge's charge-termination / FC
+ * detection, so a 50 mAh shift moves when the pack is declared full.
+ * The whole set is still a sane starting model, not a GPCCEDV-calibrated one -
+ * see notes/20261018待办.md. */
 static const parameter_cedv_t s_cedv = {
     .full_charge_cap = 500,
     .design_cap = 500,
     .reserve_cap = 0,
-    .near_full = 150,
+    .near_full = 200,
     .self_discharge_rate = 20,
     .EDV0 = 3490,
     .EDV1 = 3511,
@@ -1084,9 +1095,31 @@ static bool s_ptest_i2s_stopped;
 static const audio_codec_if_t *s_ptest_dac_if, *s_ptest_adc_if;
 #endif
 
-/* ES8311 out and ES7210 in on one duplex I2S bus. The ES7210's second
- * channel carries the speaker reference (xiaozhi uses it for echo
- * cancelling); Muse takes slot 0 (MIC1).
+/* ES8311 out and ES7210 in on one duplex I2S bus.
+ *
+ * The capture side is TDM, not stereo. The ES7210 has four inputs and the
+ * board wires three of them: MIC1 and MIC2 are the mic array, MIC3 is the
+ * speaker/DAC reference the echo canceller needs. esp_codec_dev's ES7210
+ * driver switches the part to TDM as soon as three inputs are enabled
+ * (es7210.c: es7210_is_tdm_mode(), ENABLE_TDM_MAX_NUM == 3), and a TDM frame
+ * carries four slots - which is why the RX channel is initialised with
+ * i2s_channel_init_tdm_mode() and muse_audio.c reads four slots per frame.
+ * 1.5e selected MIC1|MIC2 only, which kept the part in 2-slot stereo and left
+ * the board with no reference channel at all; the comment that called slot 1
+ * "the speaker reference" was inherited from board_vn_s3_183.c, a different
+ * board where that happens to be true.
+ *
+ * Both references for this exact board agree on three things: Waveshare's
+ * factory BSP enables MIC1|MIC2|MIC3 ("MIC3 carries the DAC reference. Three
+ * enabled inputs select four-slot TDM", bsp_audio_codec_voice_microphone_init,
+ * examples/esp-idf/01_lvgl_demo/components/esp32_s3_touch_lcd_1_85B), and
+ * xiaozhi-esp32's boards/waveshare/esp32-s3-touch-lcd-1.85b sets
+ * AUDIO_INPUT_REFERENCE=true, which BoxAudioCodec turns into a 4-slot TDM rx
+ * (bclk_div 8, mclk x256) opened with channel = 4. They differ on the fourth
+ * input - Waveshare enables three, xiaozhi enables all four - and this file
+ * follows Waveshare, the board's own vendor: MIC4 has nothing on it.
+ * Note the ES7210's TDM slot order is MIC1, MIC3, MIC2, MIC4, not physical
+ * order, so the reference sits in slot 1 and the voice mic in slot 0.
  *
  * Deliberate differences from the official 1.85C (same panel, same codecs),
  * checked line by line - do not "align" them without reading this:
@@ -1104,6 +1137,9 @@ static const audio_codec_if_t *s_ptest_dac_if, *s_ptest_adc_if;
  *    produce the same volume curve. Spelling it out keeps the assumption
  *    visible; it is NOT this board's PA rail (that one still needs measuring
  *    before anyone tunes the volume map).
+ *  - MIC1|MIC2|MIC3 here, MIC1|MIC2|MIC3|MIC4 in xiaozhi's BoxAudioCodec.
+ *    Either way the ES7210 is in TDM and the frame has four slots; the fourth
+ *    is simply left unpowered here.
  */
 static esp_err_t audio_init(esp_codec_dev_handle_t *spk, esp_codec_dev_handle_t *mic)
 {
@@ -1118,6 +1154,7 @@ static esp_err_t audio_init(esp_codec_dev_handle_t *spk, esp_codec_dev_handle_t 
     s_ptest_rx = rx;
     s_ptest_i2s_stopped = false;
 #endif
+    /* Playback: standard 2-slot stereo into the ES8311. */
     const i2s_std_config_t std_cfg = {
         .clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(MUSE_AUDIO_RATE),
         .slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_STEREO),
@@ -1126,11 +1163,29 @@ static esp_err_t audio_init(esp_codec_dev_handle_t *spk, esp_codec_dev_handle_t 
             .bclk = I2S_BCLK,
             .ws = I2S_WS,
             .dout = I2S_DOUT,
+            .din = I2S_GPIO_UNUSED,   /* DIN belongs to the TDM rx channel below */
+        },
+    };
+    /* Capture: four slots. Do not "simplify" this back to std mode - with the
+     * ES7210 in TDM the part drives four slots per frame, and a std 2-slot rx
+     * would read the frame at the wrong width and hand back interleaved
+     * garbage. Philips framing, all four slots active, bclk_div 8 and
+     * mclk x256 are the macro defaults and the pair xiaozhi uses here. */
+    const i2s_tdm_config_t tdm_cfg = {
+        .clk_cfg = I2S_TDM_CLK_DEFAULT_CONFIG(MUSE_AUDIO_RATE),
+        .slot_cfg = I2S_TDM_PHILIPS_SLOT_DEFAULT_CONFIG(
+            I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_STEREO,
+            (i2s_tdm_slot_mask_t)(I2S_TDM_SLOT0 | I2S_TDM_SLOT1 | I2S_TDM_SLOT2 | I2S_TDM_SLOT3)),
+        .gpio_cfg = {
+            .mclk = I2S_MCLK,
+            .bclk = I2S_BCLK,
+            .ws = I2S_WS,
+            .dout = I2S_GPIO_UNUSED,   /* DOUT belongs to the std tx channel */
             .din = I2S_DIN,
         },
     };
     ESP_RETURN_ON_ERROR(i2s_channel_init_std_mode(tx, &std_cfg), TAG, "i2s tx");
-    ESP_RETURN_ON_ERROR(i2s_channel_init_std_mode(rx, &std_cfg), TAG, "i2s rx");
+    ESP_RETURN_ON_ERROR(i2s_channel_init_tdm_mode(rx, &tdm_cfg), TAG, "i2s rx");
     ESP_RETURN_ON_ERROR(i2s_channel_enable(tx), TAG, "i2s tx on");
     ESP_RETURN_ON_ERROR(i2s_channel_enable(rx), TAG, "i2s rx on");
 
@@ -1164,7 +1219,10 @@ static esp_err_t audio_init(esp_codec_dev_handle_t *spk, esp_codec_dev_handle_t 
     ESP_RETURN_ON_FALSE(dac, ESP_FAIL, TAG, "ES8311 not responding");
     es7210_codec_cfg_t adc_cfg = {
         .ctrl_if = adc_ctrl,
-        .mic_selected = ES7210_SEL_MIC1 | ES7210_SEL_MIC2,
+        /* Three inputs, not two: MIC3 is the speaker/DAC reference the echo
+         * canceller needs, and three is what flips the ES7210 into TDM (four
+         * slots) - the rx channel above is configured to match. */
+        .mic_selected = ES7210_SEL_MIC1 | ES7210_SEL_MIC2 | ES7210_SEL_MIC3,
     };
     const audio_codec_if_t *adc = es7210_codec_new(&adc_cfg);
 #if CONFIG_MUSE_POWER_TEST
@@ -1179,8 +1237,9 @@ static esp_err_t audio_init(esp_codec_dev_handle_t *spk, esp_codec_dev_handle_t 
     /* One line that makes the audio path auditable from the boot log alone:
      * the first thing a "no sound" report needs is how this build is wired,
      * compared against the 1.85C's I2S1 / mclk=derived / no hw_gain. */
-    ESP_LOGI(TAG, "audio: ES8311 spk + ES7210 mic, I2S%d %d Hz, mclk=external GPIO%d, "
-                  "pa=GPIO%d, hw_gain=%.1f/%.1f V, mic slot 0",
+    ESP_LOGI(TAG, "audio: ES8311 spk + ES7210 mic (MIC1|MIC2|MIC3), I2S%d %d Hz, "
+                  "rx TDM 4 slots, mclk=external GPIO%d, pa=GPIO%d, hw_gain=%.1f/%.1f V, "
+                  "voice slot 0, reference slot 1",
              (int)I2S_NUM_0, (int)MUSE_AUDIO_RATE, (int)I2S_MCLK, (int)PA_EN, 5.0f, 3.3f);
     return *spk && *mic ? ESP_OK : ESP_FAIL;
 }
@@ -2215,7 +2274,8 @@ static const muse_board_t s_board = {
     .display_pause = display_pause,
     .audio_init = audio_init,
     .set_mic_gain = set_mic_gain,
-    .mic_slot = 0,              /* MIC1; slot 1 is the speaker reference */
+    .mic_slot = 0,              /* MIC1 in the ES7210's TDM order; slot 1 is MIC3, the speaker reference */
+    .mic_slots = 4,             /* TDM frame: the ES7210 runs TDM because three inputs are enabled */
     .poll_buttons = poll_buttons,
     .talk_down = talk_down,
     .wait_buttons = wait_buttons,

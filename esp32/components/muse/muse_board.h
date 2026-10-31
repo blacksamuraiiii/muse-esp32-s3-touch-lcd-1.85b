@@ -138,7 +138,14 @@ typedef struct {
     esp_err_t (*mic_init)(void);
     esp_err_t (*mic_power)(bool on);
     esp_err_t (*mic_read)(int16_t *mono, size_t frames);
-    int mic_slot;           /* slot carrying the mic (0/1), or -1 to mix both */
+    int mic_slot;           /* slot carrying the mic (0/1/2/3), or -1 to mix the first two */
+    /* Slots per capture frame. 0 (leave it unset) means the usual 2-slot stereo
+     * I2S stream. Set 4 on a board whose ADC is put into TDM - the ES7210 does
+     * that by itself once three of its inputs are enabled, and its frame then
+     * carries four slots: MIC1, MIC3, MIC2, MIC4 in that order. The slot the
+     * mic is read from is mic_slot; the rest (the reference above all) are
+     * captured and dropped unless a consumer asks for them. */
+    int mic_slots;
     void (*set_mic_gain)(esp_codec_dev_handle_t mic, int db);   /* NULL: esp_codec_dev_set_in_gain */
     /* Audio power the board can switch, such as an amp's enable: on once
      * the codecs are open, off before they close to rest. NULL: none. */
