@@ -81,10 +81,11 @@ typedef struct {
  * that day is cleared (see muse_pet_decay_ack()).
  * PET_RESET rebuilds the initial state; only the Test-gated console command
  * may send it (see the muse_input.c patch note).
- * PET_FEE deducts one entry fee (MUSE_PET_GAME_STAKE) for a sudoku puzzle
- * or a snake game (user decision 2026-10-31): the UI gates on the
- * snapshot first, and the worker re-checks -- under 5 coins it returns
- * PET_POOR and settles nothing, exactly like PET_GAME's gate. */
+ * PET_FEE deducts one entry fee (MUSE_PET_GAME_STAKE) for a sudoku puzzle,
+ * a snake game or a whack-a-mole game (user decision 2026-10-31): the UI
+ * gates on the snapshot first, and the worker re-checks -- under 5 coins it
+ * returns PET_POOR and settles nothing, exactly like PET_GAME's gate. It
+ * never changes the persisted layout. */
 typedef enum {
     PET_TOUCH = 0,
     PET_FEED_RICE,
