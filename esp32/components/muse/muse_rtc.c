@@ -81,6 +81,14 @@ static uint8_t weekday_of(int year, int month, int day)
     return (uint8_t)(((days + 4) % 7 + 7) % 7);   /* 1970-01-01 was a Thursday */
 }
 
+/* The chip's calendar as Unix seconds, for comparing a written value with the
+ * one read back. No weekday term: the register is a counter, not a date. */
+static int64_t dt_to_unix(const pcf85063a_datetime_t *dt)
+{
+    return days_from_civil(dt->year, dt->month, dt->day) * 86400 +
+           (int64_t)dt->hour * 3600 + (int64_t)dt->min * 60 + dt->sec;
+}
+
 /* ------------------------------------------------------------------- the chip */
 
 static esp_err_t rd(uint8_t reg, uint8_t *buf, size_t len)
@@ -232,6 +240,28 @@ esp_err_t muse_rtc_set(const struct tm *utc)
     const esp_err_t rerr = wr(PCF85063A_RTC_CTRL_1_ADDR, &running, 1);
     if (err == ESP_OK) {
         err = rerr;
+    }
+    if (err == ESP_OK) {
+        /* Read the calendar back. The STOP bracket is three transactions, and a
+         * write that never landed would otherwise pass for success until the
+         * user notices a wrong clock. The reference for this board does the
+         * same (bsp_rtc_set_datetime reads it back and rejects anything more
+         * than 2 s off, which also absorbs the tick that lands on release). */
+        pcf85063a_datetime_t back;
+        memset(&back, 0, sizeof(back));
+        if (pcf85063a_get_time_date(&s_dev, &back) != ESP_OK) {
+            ESP_LOGW(TAG, "RTC written but not readable back");
+            err = ESP_FAIL;
+        } else {
+            const int64_t drift = dt_to_unix(&back) - dt_to_unix(&dt);
+            if (drift < 0 || drift > 2) {
+                ESP_LOGW(TAG, "RTC write did not stick: wrote %04u-%02u-%02u %02u:%02u:%02u, "
+                              "read %04u-%02u-%02u %02u:%02u:%02u",
+                         dt.year, dt.month, dt.day, dt.hour, dt.min, dt.sec,
+                         back.year, back.month, back.day, back.hour, back.min, back.sec);
+                err = ESP_ERR_INVALID_STATE;
+            }
+        }
     }
     if (err == ESP_OK) {
         s_valid = true;
