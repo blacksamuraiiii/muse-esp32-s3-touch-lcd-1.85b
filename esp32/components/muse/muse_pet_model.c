@@ -182,6 +182,19 @@ muse_pet_result_t muse_pet_model_apply(muse_pet_model_t *s, muse_pet_action_t ac
         return PET_OK;
     }
 
+    if (action == PET_FEE) {
+        /* 2026-10-31 (user decision, same as the other mini-games): a
+         * game costs 5 coins, charged when the game starts -- the UI
+         * snapshot-gates first, but the worker re-checks here, so a
+         * stale snapshot can still refuse with PET_POOR, not settled,
+         * and no game starts. `arg` is unused. */
+        if (s->coins < MUSE_PET_GAME_STAKE) {
+            return PET_POOR; /* not settled, no game started */
+        }
+        s->coins -= MUSE_PET_GAME_STAKE;
+        return PET_OK;
+    }
+
     if (action == PET_FORTUNE) {
         /* User decision 2026-10-25 (phase 2): fortune always uses the
          * current UTC day, calibrated or not -- no PET_TIME refusal.
