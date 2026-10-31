@@ -1,12 +1,12 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 /*
- * muse_interact_ui.h -- 1.5a interaction tile + three subpages.
+ * muse_interact_ui.h -- 1.5a interaction tile + four subpages.
  *
  * Built by muse_ui_start() on the interaction tile (0,0) of the 3-tile
  * layout (interaction, face, settings). This file owns NO tileview, NO
  * dots and NO caption label: muse_ui.c owns those (see muse_ui_patch.md).
- * It only owns the content of the interaction tile and its three subpages
- * (feed, game, fortune), which are groups inside that tile -- NOT top-level
+ * It only owns the content of the interaction tile and its four subpages
+ * (feed, game, fortune, sudoku), which are groups inside that tile -- NOT top-level
  * tiles, so the bottom dots never change when a subpage opens.
  *
  * Threading, exactly as design §3.1: LVGL callbacks here only SEND actions
