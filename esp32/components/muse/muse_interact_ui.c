@@ -1,8 +1,8 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 /*
  * muse_interact_ui.c -- 1.5a interaction tile + feed / game / fortune /
- * sudoku / minigame / snake subpages. See muse_interact_ui.h for the
- * threading contract.
+ * sudoku / minigame / snake / whack-a-mole subpages. See
+ * muse_interact_ui.h for the threading contract.
  *
  * Layout (design §5.2, mockups v11/v17/v18/v22; all coordinates are
  * 360x360-circle coordinates, NOT the 466x466 TamaMe coordinates):
@@ -18,11 +18,16 @@
  *     or intercepts -- the coin gate lives inside each game. Coin
  *     line at y = 302. The main page has NO back arrow (its header
  *     back callback is NULL); the face is one swipe away.
- *   - Mini-game list page: title "小游戏" with a back arrow, three
- *     rows in the same geometry (石头剪刀布 / 数独 / 贪吃蛇) plus
- *     its own coin line at y = 302. All three games cost 5 coins
- *     per start (user decision 2026-10-31); the rows only dim when
- *     poor, they are never disabled.
+ *   - Mini-game list page: title "小游戏" with a back arrow, FOUR
+ *     rows (石头剪刀布 / 数独 / 贪吃蛇 / 打地鼠) plus its own coin
+ *     line at y = 302. Four games no longer fit the main list's
+ *     58 + 8 pitch (the fourth row would start at 282 and sit on the
+ *     coin line), so this page alone uses 48px rows with a 4px gap:
+ *     y = 84 / 136 / 188 / 240, last row bottom 288, coin line
+ *     untouched at 302. Same 330px width and x, so the two pages still
+ *     line up. All four games cost 5 coins per start (user decision
+ *     2026-10-31); the rows only dim when poor, they are never
+ *     disabled.
  *   - Subpages are groups inside the interaction tile, all with the same
  *     title/back pattern (title centred y = 52, "<" at centre x = 68).
  *     Tile swipe stays ENABLED inside subpages (unlike settings subpages):
@@ -72,6 +77,7 @@
 #include "muse_sudoku_ui.h"
 #include "muse_snake_ui.h"
 #include "muse_ui.h"
+#include "muse_whackamole_ui.h"
 
 /* --- colours: muse_theme.h (see file header for the DANGER note) --- */
 
@@ -82,6 +88,12 @@
 #define IC_LIST_TOP 84
 #define IC_ROW_H 58
 #define IC_ROW_GAP 8
+/* Mini-game menu pitch (four games since the 2026-11-01 whack-a-mole
+ * merge). The main list's 58 + 8 would put the fourth row at 282, on
+ * the coin line; 48 + 4 gives 84 / 136 / 188 / 240 and leaves the coin
+ * line at 302. These two macros are the only knobs for that pitch. */
+#define IC_MG_ROW_H 48
+#define IC_MG_ROW_GAP 4
 #define IC_RADIUS 18
 #define IC_FEED_CARD 100
 #define IC_FEED_ICON 80
@@ -114,6 +126,7 @@ enum {
     IC_PAGE_SUDOKU,
     IC_PAGE_MINIGAME,
     IC_PAGE_SNAKE,
+    IC_PAGE_WHACKAMOLE,
 };
 
 enum {
@@ -125,11 +138,11 @@ enum {
 
 static lv_obj_t *s_tile;
 static lv_obj_t *s_main_page, *s_feed_page, *s_game_page, *s_fortune_page, *s_sudoku_page;
-static lv_obj_t *s_minigame_page, *s_snake_page;
+static lv_obj_t *s_minigame_page, *s_snake_page, *s_whackamole_page;
 static lv_obj_t *s_btn_feed, *s_btn_game, *s_btn_fortune;
 static lv_obj_t *s_btn_feed_lbl, *s_btn_game_lbl, *s_btn_fortune_lbl;
 static lv_obj_t *s_minigame_coins;
-static lv_obj_t *s_mg_rps_lbl, *s_mg_sudoku_lbl, *s_mg_snake_lbl;
+static lv_obj_t *s_mg_rps_lbl, *s_mg_sudoku_lbl, *s_mg_snake_lbl, *s_mg_whack_lbl;
 static int s_last_feed_idx;
 static uint32_t s_last_feed_before;
 /* 1.5b: one feed at a time. A second tap while the first request is still
@@ -230,6 +243,7 @@ static void show_page(int page)
     lv_obj_add_flag(s_sudoku_page, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(s_minigame_page, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(s_snake_page, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(s_whackamole_page, LV_OBJ_FLAG_HIDDEN);
     lv_obj_t *show = s_main_page;
     if (page == IC_PAGE_FEED) show = s_feed_page;
     if (page == IC_PAGE_GAME) show = s_game_page;
@@ -237,6 +251,7 @@ static void show_page(int page)
     if (page == IC_PAGE_SUDOKU) show = s_sudoku_page;
     if (page == IC_PAGE_MINIGAME) show = s_minigame_page;
     if (page == IC_PAGE_SNAKE) show = s_snake_page;
+    if (page == IC_PAGE_WHACKAMOLE) show = s_whackamole_page;
     lv_obj_remove_flag(show, LV_OBJ_FLAG_HIDDEN);
 }
 
@@ -245,16 +260,24 @@ static void on_back(lv_event_t *e)
     (void)e;
     /* Back goes one level up: from a game (reached through the minigame
      * menu) to the menu, from the menu and the other subpages to the
-     * main page, and from the main page to the face. Leaving the snake
-     * page pauses a running game (its hide hook); other subpages keep
+     * main page, and from the main page to the face. A subpage back that
+     * skipped a level would break the "left < = one level up" rule. The
+     * four menu games (game, sudoku, snake, whack-a-mole) all land on the
+     * menu; feed and fortune are main-page rows, so they still land on
+     * the main page. Leaving a game page pauses a running game through
+     * its hide hook (snake keeps its board, whack-a-mole shows the pause
+     * overlay), so neither plays on off-screen; the other subpages keep
      * their own return-visit rules. */
     if (s_page == IC_PAGE_SNAKE) {
         muse_snake_ui_hide();
     }
+    if (s_page == IC_PAGE_WHACKAMOLE) {
+        muse_whackamole_ui_hide();
+    }
     if (s_page == IC_PAGE_MAIN) {
         muse_ui_show_face();
     } else if (s_page == IC_PAGE_GAME || s_page == IC_PAGE_SUDOKU ||
-               s_page == IC_PAGE_SNAKE) {
+               s_page == IC_PAGE_SNAKE || s_page == IC_PAGE_WHACKAMOLE) {
         show_page(IC_PAGE_MINIGAME);
     } else {
         show_page(IC_PAGE_MAIN);
@@ -287,9 +310,15 @@ static void feed_note(const char *text)
 
 static void refresh_status(void)
 {
+    /* Gold rows on the main page and the mini-game menu (same text,
+     * both live statuses). The touch / feed count line of the v15
+     * cards is gone with the rows: the feed row shows done / not done,
+     * and the counts live in the face captions, not on the main page. */
     if (!s_have_snap) {
         lv_label_set_text(s_status1, "金币 --/100");
         lv_label_set_text(s_minigame_coins, "金币 --/100");
+        lv_label_set_text(s_btn_feed_lbl, "喂饭 ｜ 每种 +10金币");
+        lv_label_set_text(s_btn_fortune_lbl, "今日运势 ｜ 未抽");
         return;
     }
     char buf[64];
@@ -320,8 +349,8 @@ static void refresh_status(void)
         lv_label_set_text(s_btn_fortune_lbl, "今日运势 ｜ 未抽");
     }
 
-    /* Mini-game rows: all three games cost 5 coins per start, so all
-     * three dim together when poor. Dimming is not disabling: a tap
+    /* Mini-game rows: all four games cost 5 coins per start, so all
+     * four dim together when poor. Dimming is not disabling: a tap
      * still opens the game, and the gate inside refuses with
      * "金币不够…" there. */
     bool poor = s_snap.coins < MUSE_PET_GAME_STAKE;
@@ -329,16 +358,17 @@ static void refresh_status(void)
     lv_obj_set_style_text_color(s_mg_rps_lbl, lv_color_hex(mg_color), 0);
     lv_obj_set_style_text_color(s_mg_sudoku_lbl, lv_color_hex(mg_color), 0);
     lv_obj_set_style_text_color(s_mg_snake_lbl, lv_color_hex(mg_color), 0);
+    lv_obj_set_style_text_color(s_mg_whack_lbl, lv_color_hex(mg_color), 0);
 }
 
-/* One list row: full-width button with a single centred label. The
- * label is returned for refresh_status() when its copy changes (feed /
- * fortune / mini-game dimming), or NULL for a static row. */
-static lv_obj_t *main_button(lv_obj_t *parent, int y, const char *text,
-                             lv_event_cb_t cb, lv_obj_t **lbl_out)
+/* One list row: full-width button with a single centred label, at an
+ * explicit height. The main list uses IC_ROW_H; the mini-game menu uses
+ * the compressed IC_MG_ROW_H because it carries a fourth game. */
+static lv_obj_t *main_button_h(lv_obj_t *parent, int y, int h, const char *text,
+                               lv_event_cb_t cb, lv_obj_t **lbl_out)
 {
     lv_obj_t *b = lv_btn_create(parent);
-    lv_obj_set_size(b, IC_LIST_W, IC_ROW_H);
+    lv_obj_set_size(b, IC_LIST_W, h);
     lv_obj_set_pos(b, (360 - IC_LIST_W) / 2, y);
     lv_obj_set_style_bg_opa(b, LV_OPA_COVER, 0);
     lv_obj_set_style_bg_color(b, lv_color_hex(MUSE_THEME_CARD), 0);
@@ -351,6 +381,16 @@ static lv_obj_t *main_button(lv_obj_t *parent, int y, const char *text,
         *lbl_out = l;
     }
     return b;
+}
+
+/* One list row: full-width button with a single centred label, at the
+ * main list's IC_ROW_H. The label is returned for refresh_status() when
+ * its copy changes (feed / fortune / mini-game dimming), or NULL for a
+ * static row. */
+static lv_obj_t *main_button(lv_obj_t *parent, int y, const char *text,
+                             lv_event_cb_t cb, lv_obj_t **lbl_out)
+{
+    return main_button_h(parent, y, IC_ROW_H, text, cb, lbl_out);
 }
 
 /* --- global pet caption (subtitle) --- */
@@ -831,6 +871,27 @@ static void drain_feedback(void)
                 write_pet_caption("互动数据损坏");
             }
             break;
+        case PET_FEE:
+            if (fb.result == PET_POOR) {
+                /* Snapshot was stale: the 5 coins were never deducted,
+                 * so there is nothing to refund -- cancel the game
+                 * (which was only a start of a never-settled game).
+                 * All four games share PET_FEE, but only whack-a-mole
+                 * exposes a cancel hook; gate on the visible page so a
+                 * sudoku/snake refusal never touches its overlay. */
+                if (s_page == IC_PAGE_WHACKAMOLE) {
+                    muse_whackamole_ui_fee_refused();
+                }
+                write_pet_caption("金币不够，先摸摸 / 喂饭 / 抽运势");
+            } else if (fb.result == PET_STORAGE) {
+                if (s_page == IC_PAGE_WHACKAMOLE) {
+                    muse_whackamole_ui_fee_refused();
+                }
+                write_pet_caption("互动数据损坏");
+            }
+            /* PET_OK: deduction confirmed; the game already started, so
+             * nothing more to do here. */
+            break;
         case PET_FORTUNE:
             show_fortune_card();
             if (fb.result == PET_FORTUNE_NEW || fb.result == PET_FORTUNE_SAME) {
@@ -878,6 +939,13 @@ static void on_open_game(lv_event_t *e)
     /* Opening the game page never starts a game: only a choice click
      * requests PET_GAME. A stale result from a previous visit is gone
      * by then (on_hidden reset it when the tile was left). */
+}
+
+static void on_open_whackamole(lv_event_t *e)
+{
+    (void)e;
+    show_page(IC_PAGE_WHACKAMOLE);
+    muse_whackamole_ui_show();
 }
 
 static void on_open_sudoku(lv_event_t *e)
@@ -939,14 +1007,19 @@ static void build_main(void)
 static void build_minigame(void)
 {
     page_header(s_minigame_page, "小游戏", on_back);
-    /* Same row geometry as the main list. Row copy is bare game names,
-     * per the approved renderings (no subtitles on this menu). */
-    main_button(s_minigame_page, IC_LIST_TOP, "石头剪刀布",
-                on_open_game, &s_mg_rps_lbl);
-    main_button(s_minigame_page, IC_LIST_TOP + IC_ROW_H + IC_ROW_GAP,
-                "数独", on_open_sudoku, &s_mg_sudoku_lbl);
-    main_button(s_minigame_page, IC_LIST_TOP + 2 * (IC_ROW_H + IC_ROW_GAP),
-                "贪吃蛇", on_open_snake, &s_mg_snake_lbl);
+    /* Four bare game names, same 330px width as the main list, on the
+     * compressed menu pitch (IC_MG_ROW_H / IC_MG_ROW_GAP): with the main
+     * list's 58 + 8 the fourth row would start at 282 and sit on the coin
+     * line. The menu itself never charges: each game page gates its own
+     * fee. */
+    main_button_h(s_minigame_page, IC_LIST_TOP, IC_MG_ROW_H, "石头剪刀布",
+                  on_open_game, &s_mg_rps_lbl);
+    main_button_h(s_minigame_page, IC_LIST_TOP + (IC_MG_ROW_H + IC_MG_ROW_GAP),
+                  IC_MG_ROW_H, "数独", on_open_sudoku, &s_mg_sudoku_lbl);
+    main_button_h(s_minigame_page, IC_LIST_TOP + 2 * (IC_MG_ROW_H + IC_MG_ROW_GAP),
+                  IC_MG_ROW_H, "贪吃蛇", on_open_snake, &s_mg_snake_lbl);
+    main_button_h(s_minigame_page, IC_LIST_TOP + 3 * (IC_MG_ROW_H + IC_MG_ROW_GAP),
+                  IC_MG_ROW_H, "打地鼠", on_open_whackamole, &s_mg_whack_lbl);
     /* Coin line, same slot as the main page's (y = 302). */
     s_minigame_coins = label(s_minigame_page, muse_font_cjk(), MUSE_THEME_TEXT, "金币 --/100");
     lv_obj_align(s_minigame_coins, LV_ALIGN_TOP_MID, 0, 302);
@@ -955,6 +1028,14 @@ static void build_minigame(void)
 static void build_feed(void)
 {
     page_header(s_feed_page, "喂饭", on_back);
+    /* Rule line: TOP slot (y = 84) since 2026-11-01 (user request). It is
+     * read BEFORE a card is tapped, so it belongs above the cards, not
+     * under them. Copy, font (muse_font_cjk) and DIM colour are unchanged
+     * -- only the y moved. 84 clears the title (centre y = 52, ends ~62)
+     * and stops ~16 px above the card row (top y = 120). */
+    lv_obj_t *hint = label(s_feed_page, muse_font_cjk(), MUSE_THEME_DIM,
+                           "喂饭不花币，每种食物每天 +10");
+    lv_obj_align(hint, LV_ALIGN_TOP_MID, 0, 84);
     /* Three cards in one row: 100px each, 8px gaps, centred as a group
      * (total 316px). Icon 80px inside the 100px card, food name below
      * the card in DIM. Cards are clickable containers, not lv_btn: the
@@ -994,12 +1075,14 @@ static void build_feed(void)
         lv_obj_align(nm, LV_ALIGN_TOP_MID,
                      x0 + i * (IC_FEED_CARD + 8) + IC_FEED_CARD / 2 - 180, y + IC_FEED_CARD + 8);
     }
-    lv_obj_t *hint = label(s_feed_page, muse_font_cjk(), MUSE_THEME_DIM, "喂饭不花币，每种食物每天 +10");
-    lv_obj_align(hint, LV_ALIGN_TOP_MID, 0, 262);
-    /* Result line: same chord rule as the main page's status line (240 px
-     * at y = 292 keeps it inside the 360 circle). */
+    /* Result line ("喂了米饭 +10 金币"): takes over the slot the rule line
+     * used to own (y = 262), directly under the food names (y = 228, ends
+     * ~244) -- the two swapped places on 2026-11-01 (user request). It
+     * stays the answer to a tap on the row right above it. Same chord rule
+     * as the main page's status line: the 240 px cap at y = 262 is well
+     * inside the 360 circle. */
     s_feed_note = label(s_feed_page, muse_font_cjk(), MUSE_THEME_TEXT, "");
-    lv_obj_align(s_feed_note, LV_ALIGN_TOP_MID, 0, 292);
+    lv_obj_align(s_feed_note, LV_ALIGN_TOP_MID, 0, 262);
     lv_label_set_long_mode(s_feed_note, LV_LABEL_LONG_DOT);
     lv_obj_set_width(s_feed_note, 240);
     lv_obj_set_style_text_align(s_feed_note, LV_TEXT_ALIGN_CENTER, 0);
@@ -1007,12 +1090,14 @@ static void build_feed(void)
 
 static void build_game(void)
 {
+    /* Rock-paper-scissors page: its own title now that "小游戏" is the
+     * mini-game menu (2026-10-31), so the two pages never share a name. */
     page_header(s_game_page, "石头剪刀布", on_back);
     lv_obj_t *coins = label(s_game_page, muse_font_cjk(), MUSE_THEME_TEXT, "金币 --/100");
     lv_obj_align(coins, LV_ALIGN_TOP_MID, 0, 84);
     /* The coin line is a live status, not a static label: refresh_status
-     * rewrites s_status1 only, so the game page keeps its own pointer
-     * and the tick rewrites it from the snapshot too. */
+     * rewrites the main / menu coin rows, so the game page keeps its own
+     * pointer and the tick rewrites it from the snapshot too. */
     s_game_coins_lbl = coins;
     /* Choice row: three 100px image buttons, 8px gaps, centred
      * (total 316px), top at y = 120. Buttons contain ONLY the hand
@@ -1108,10 +1193,18 @@ static void build_fortune(void)
     lv_obj_set_style_text_line_space(s_fortune_body, 6, 0);
     lv_obj_set_style_text_align(s_fortune_body, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_align(s_fortune_body, LV_ALIGN_TOP_MID, 0, 52);
-    lv_obj_t *n1 = label(s_fortune_page, muse_font_cjk(), MUSE_THEME_DIM, "每天 +20 金币");
-    lv_obj_align(n1, LV_ALIGN_TOP_MID, 0, 270);
-    lv_obj_t *n2 = label(s_fortune_page, muse_font_cjk(), MUSE_THEME_DIM, "同日再抽显示同一张");
-    lv_obj_align(n2, LV_ALIGN_TOP_MID, 0, 294);
+    /* Rule line: TOP slot (y = 76) since 2026-11-01 (user request) -- same
+     * move as the 喂饭 subpage. The two old bottom lines ("每天 +20 金币"
+     * at 270 + "同日再抽显示同一张" at 294) are gone: the band between
+     * the title (ends ~60) and the card (top 105) only fits ONE line
+     * (41 px), so the two facts share a single label instead of being
+     * stacked into a 4 px gap under the title. Copy is the old wording,
+     * joined by a fullwidth comma, DIM colour unchanged. Gaps: 16 px
+     * below the title, 13 px above the card; the ~269 px line sits inside
+     * the 312 px chord at y = 90 (21 px margin each side). */
+    lv_obj_t *rule = label(s_fortune_page, muse_font_cjk(), MUSE_THEME_DIM,
+                           "每天 +20 金币，同日再抽显示同一张");
+    lv_obj_align(rule, LV_ALIGN_TOP_MID, 0, 76);
 }
 
 /* --- public API --- */
@@ -1126,6 +1219,7 @@ void muse_interact_ui_build(lv_obj_t *tile)
     s_sudoku_page = page_group(tile);
     s_minigame_page = page_group(tile);
     s_snake_page = page_group(tile);
+    s_whackamole_page = page_group(tile);
     build_main();
     build_feed();
     build_game();
@@ -1133,6 +1227,7 @@ void muse_interact_ui_build(lv_obj_t *tile)
     build_minigame();
     muse_sudoku_ui_build(s_sudoku_page, on_back);
     muse_snake_ui_build(s_snake_page, on_back);
+    muse_whackamole_ui_build(s_whackamole_page, on_back);
     show_page(IC_PAGE_MAIN);
     /* Main page is the only one shown at build; muse_ui.c's tileview
      * hides the whole tile when it is not the active tile, so no extra
@@ -1154,7 +1249,12 @@ void muse_interact_ui_on_hidden(void)
      * page pauses the same way (a running game never plays on while
      * the tile is hidden); its board and paid state stay in RAM. */
     muse_sudoku_ui_hide();
+    /* The two timed games pause the same way: their boards and paid
+     * state stay in RAM, and a running game never plays on while the
+     * tile is hidden. Whack-a-mole resumes from its pause overlay on
+     * the next visit, snake from wherever its tick left it. */
     muse_snake_ui_hide();
+    muse_whackamole_ui_hide();
     show_page(IC_PAGE_MAIN);
 }
 

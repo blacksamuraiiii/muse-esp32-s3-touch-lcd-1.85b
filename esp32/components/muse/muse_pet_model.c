@@ -183,13 +183,13 @@ muse_pet_result_t muse_pet_model_apply(muse_pet_model_t *s, muse_pet_action_t ac
     }
 
     if (action == PET_FEE) {
-        /* Entry fee for one sudoku puzzle or one snake game (user
-         * decision 2026-10-31): same 5-coin gate as PET_GAME, no
-         * outcome, no refund path -- the UI only sends it after its
-         * own snapshot gate passed, so PET_POOR here means the
-         * snapshot was stale. */
+        /* Entry fee for one sudoku puzzle, one snake game or one
+         * whack-a-mole game (user decision 2026-10-31): same 5-coin gate
+         * as PET_GAME, no outcome, no refund path -- the UI only sends it
+         * after its own snapshot gate passed, so PET_POOR here means the
+         * snapshot was stale. `arg` is unused. */
         if (s->coins < MUSE_PET_GAME_STAKE) {
-            return PET_POOR; /* not settled, nothing started */
+            return PET_POOR; /* not settled, no game started */
         }
         s->coins -= MUSE_PET_GAME_STAKE;
         return PET_OK;
