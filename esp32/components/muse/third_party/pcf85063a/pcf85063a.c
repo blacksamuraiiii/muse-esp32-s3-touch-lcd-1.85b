@@ -32,11 +32,24 @@ esp_err_t pcf85063a_init(pcf85063a_dev_t *dev, i2c_master_bus_handle_t bus_handl
         return ret;
     }
 
-    ret = pcf85063a_set_offset(dev, PCF85063A_DEFAULT_OFFSET, PCF85063A_DEFAULT_OFFSET_MODE);
+    /* The oscillator offset register is deliberately NOT written here, even
+     * though this release documents a default of -13.
+     *
+     * The 1.85B reference for this board (waveshare/pcf85063a 1.0.0, the copy
+     * inside waveshareteam/ESP32-S3-Touch-LCD-1.85B) never touches 0x02: init
+     * writes Control_1 and stops. Applying -13 on every boot is therefore a
+     * difference from the reference AND an unmeasured correction - in two-hour
+     * mode one step is 4.34 ppm and negative values shorten the period, so it
+     * biases this board's clock by roughly +56 ppm (~4.9 s/day) unless the
+     * crystal happens to need exactly that. Leaving the register alone keeps
+     * whatever the part holds (0x00 out of reset, i.e. no correction) and
+     * matches the reference. A caller that has measured its unit over 24 h can
+     * still apply a value explicitly with pcf85063a_set_offset().
+     *
+     * pcf85063a_reset() keeps applying the default: a reset is an explicit
+     * "put the part back to a known state", unlike every cold boot. */
 
-    if (ret == ESP_OK) {
-        ESP_LOGI(TAG, "PCF85063A initialized successfully");
-    }
+    ESP_LOGI(TAG, "PCF85063A initialized successfully");
     return ret;
 }
 
