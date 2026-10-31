@@ -31,12 +31,27 @@
 
 static const char *TAG = "qmi_tap";
 
-/* QMI8658 registers (QMI8658A datasheet) */
+/* QMI8658 registers. Addresses cross-checked against the board vendor's own
+ * driver (waveshareteam/ESP32-S3-Touch-LCD-1.85B,
+ * examples/esp-idf/03_qmi8658/components/waveshare__qmi8658/include/qmi8658.h),
+ * which lists CTRL1..CTRL9 at 0x02..0x0A in order:
+ *
+ *   0x00 WHO_AM_I   0x01 REVISION  0x02 CTRL1  0x03 CTRL2  0x04 CTRL3
+ *   0x05 CTRL4      0x06 CTRL5     0x07 CTRL6  0x08 CTRL7  0x09 CTRL8
+ *   0x0A CTRL9 (command)          0x2E STATUS0  0x2F STATUS1
+ *
+ * The first version of this file was shifted by one: it called 0x02 "CTRL2",
+ * 0x07 "CTRL7" and 0x09 "CTRL9". The effect was that the accelerometer ODR/FS
+ * went into CTRL1 (device config), the enable bit into CTRL6, and the tap bits
+ * into CTRL8 - so the accelerometer was never enabled and the tap engine never
+ * saw motion. That is why tap-to-wake never fired on hardware. */
 #define QMI_ADDR        0x6B
-#define REG_CTRL2       0x02    /* accelerometer config */
-#define REG_CTRL7       0x07    /* sensor enable */
-#define REG_CTRL8       0x08    /* CTRL8 on some revs == CTRL9 below */
-#define REG_CTRL9       0x09    /* bit0 Tap_EN, bit6 ACTIVITY_INT_SEL */
+#define REG_WHO_AM_I    0x00    /* reads 0x05 on this part */
+#define REG_CTRL1       0x02    /* device config; vendor init writes 0x60 */
+#define REG_CTRL2       0x03    /* accelerometer: aFS[5:4] | aODR[3:0] */
+#define REG_CTRL7       0x08    /* sensor enable: bit0 aEN, bit1 gEN */
+#define REG_CTRL8       0x09    /* tap enable + interrupt routing (see below) */
+#define REG_CTRL9       0x0A    /* host command register, one command per write */
 #define REG_CAL1_L      0x0B
 #define REG_CAL1_H      0x0C
 #define REG_CAL2_L      0x0D
@@ -45,11 +60,19 @@ static const char *TAG = "qmi_tap";
 #define REG_CAL3_H      0x10
 #define REG_CAL4_L      0x11
 #define REG_CAL4_H      0x12
-#define REG_CTRL9_CMD   0x0A    /* CTRL9 host command register */
 #define REG_STATUSINT   0x2D
 #define REG_STATUS1     0x2F
 
 #define CMD_CONFIGURE_TAP  0x0C
+
+/* CTRL7 enable bits, as the vendor driver names them. */
+#define QMI8658_ENABLE_ACCEL   0x01
+
+/* Accelerometer for the tap engine: 2 g, 500 Hz. CTRL2 packs aFS in [5:4] and
+ * aODR in [3:0] - the vendor driver writes (range << 4) | odr, with
+ * QMI8658_ACCEL_ODR_500HZ == 0x04 and QMI8658_ACCEL_RANGE_2G == 0x00.
+ * The old 0x60 had the nibbles swapped (aFS=6 is not even a valid range). */
+#define QMI_ACCEL_CTRL2   ((0x00 << 4) | 0x04)
 
 /* Tap tuning (empirical defaults; adjust to taste) */
 #define QMI_TAP_QUIET_US   30000    /* quiet time before shock window */
@@ -135,8 +158,8 @@ static esp_err_t qmi_tap_configure(void)
     err = qmi_write(REG_CAL1_L, set1, sizeof(set1));
     if (err != ESP_OK) return err;
 
-    /* 3. Issue configure-tap command */
-    err = qmi_write1(REG_CTRL9_CMD, CMD_CONFIGURE_TAP);
+    /* 3. Issue configure-tap command (CTRL9 is the command register) */
+    err = qmi_write1(REG_CTRL9, CMD_CONFIGURE_TAP);
     if (err != ESP_OK) return err;
 
     /* 4. Wait for command done (STATUSINT.bit7), up to 100ms */
@@ -153,19 +176,24 @@ static esp_err_t qmi_tap_configure(void)
     }
 
     /*
-     * 5+6. Route tap interrupt to INT1 and enable tap engine.
-     *     CTRL9: bit6 ACTIVITY_INT_SEL=1 -> INT1, bit0 Tap_EN=1.
+     * 5+6. Route the tap interrupt to INT1 and enable the tap engine.
+     *     These live in CTRL8 (0x09), NOT in CTRL9: CTRL9 is the command
+     *     register, and writing 0x41 there would issue an undefined command.
+     *     Bit layout (bit0 Tap_EN, bit6 ACTIVITY_INT_SEL -> INT1) is from the
+     *     QMI8658A datasheet's activity/tap section and is the one value in
+     *     this file the vendor driver does not exercise - verify it on a board
+     *     that is known to wake before trusting the tuning below.
      */
-    err = qmi_write1(REG_CTRL9, (1 << 6) | (1 << 0));
+    err = qmi_write1(REG_CTRL8, (1 << 6) | (1 << 0));
     if (err != ESP_OK) return err;
 
     /*
-     * 7. Accelerometer on, >= 200Hz ODR for tap detection.
-     *    CTRL2: aODR=0110 (500Hz), aFS=00 (2g). CTRL7: aEN=1.
+     * 7. Accelerometer on, 2 g / 500 Hz - the tap engine needs a running
+     *    accelerometer. CTRL2 = ODR/FS, CTRL7 bit0 = aEN.
      */
-    err = qmi_write1(REG_CTRL2, 0x60);
+    err = qmi_write1(REG_CTRL2, QMI_ACCEL_CTRL2);
     if (err != ESP_OK) return err;
-    err = qmi_write1(REG_CTRL7, 0x01);
+    err = qmi_write1(REG_CTRL7, QMI8658_ENABLE_ACCEL);
     if (err != ESP_OK) return err;
 
     ESP_LOGI(TAG, "tap engine configured, INT1 -> GPIO%d", QMI_INT_GPIO);
@@ -187,7 +215,24 @@ esp_err_t qmi8658_tap_init(void)
         return ESP_ERR_INVALID_STATE;
     }
 
-    esp_err_t err = qmi_tap_configure();
+    /* Identify the part before writing anything into it: the vendor driver does
+     * the same check (WHO_AM_I == 0x05) and then puts CTRL1 in its 0x60 device
+     * config. Without this, a shifted register write lands on whatever part
+     * happens to answer at 0x6B. */
+    uint8_t who = 0;
+    esp_err_t err = qmi_read(REG_WHO_AM_I, &who, 1);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "WHO_AM_I read failed: %s", esp_err_to_name(err));
+        return err;
+    }
+    if (who != 0x05) {
+        ESP_LOGE(TAG, "WHO_AM_I 0x%02X, expected 0x05 (not a QMI8658)", who);
+        return ESP_ERR_NOT_FOUND;
+    }
+    err = qmi_write1(REG_CTRL1, 0x60);
+    if (err != ESP_OK) return err;
+
+    err = qmi_tap_configure();
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "tap configure failed: %s", esp_err_to_name(err));
         return err;
