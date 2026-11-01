@@ -131,6 +131,12 @@
  * it can never drift from the text above it. It is 4 px and not 2 because
  * it scales with the grade (2x). */
 #define IC_FORTUNE_RULE_H 4
+/* Optical lift of the card's content group (user report 2026-11-01,
+ * measured on a photo of the real page): dead centring left 38 px above
+ * the grade's ink against 26 px under the body, which reads as "the text
+ * sits low". The whole group moves up by this many px, so a 2-line body
+ * ends up 14 px from the card's top edge and 38 px from its bottom. */
+#define IC_FORTUNE_GROUP_BIAS 12
 /* Grade size: the firmware carries exactly one CJK face (16 px, see
  * muse_font.h). 512 = 2.0x, i.e. the 大吉 line draws 32 px tall. The
  * glyphs are the 16 px face upscaled, so the edges are a touch soft --
@@ -836,17 +842,22 @@ static void game_tick(void)
 
 /* --- fortune subpage --- */
 /* Fortune card layout (v2, user request 2026-11-01): grade + rule +
- * body are ONE group, centred vertically AND horizontally in the
+ * body are ONE group, centred horizontally and lifted optically in the
  * 300x160 card. The group height is measured, not fixed: the grade
  * draws 32 px (16 px face at 2x), then 8 px, the 4 px rule, 12 px, then
  * the body at its real wrapped height (font line height 20 + line
- * space 6 = 26 px per line). So a 2-line body groups to 108 px and sits
- * at top 26; a 1-line body groups to 82 px and sits at top 39. The
- * grade label's BOX stays 16 px tall and is drawn scaled about its
- * centre, so its box top is group_top + 8 for a drawn top of
- * group_top. The rule's width is the grade's drawn width: label box
- * width x the 2x scale. Callers must set both texts first; this only
- * measures and positions. */
+ * space 6 = 26 px per line). So a 2-line body groups to 108 px; a
+ * 1-line body groups to 82 px. The grade label's BOX stays 16 px tall
+ * and is drawn scaled about its centre, so its box top is group_top + 8
+ * for a drawn top of group_top. The rule's width is the grade's drawn
+ * width: label box width x the 2x scale. Callers must set both texts
+ * first; this only measures and positions.
+ *
+ * Optical lift (user report 2026-11-01, from a photo of the real page):
+ * dead centring left 38 px of air above the grade's ink and 26 px under
+ * the body, which reads as the text sitting low. The group therefore
+ * sits IC_FORTUNE_GROUP_BIAS px above the geometric centre -- a 2-line
+ * body groups to top 14, i.e. 14 px above and 38 px below. */
 static void fortune_layout(void)
 {
     if (!s_fortune_card || !s_fortune_grade || !s_fortune_rule ||
@@ -861,7 +872,7 @@ static void fortune_layout(void)
     lv_coord_t grade_w = lv_obj_get_width(s_fortune_grade) *
                          (IC_FORTUNE_GRADE_SCALE / 256);
     lv_coord_t group_h = 32 + 8 + IC_FORTUNE_RULE_H + 12 + body_h;
-    lv_coord_t top = (IC_FORTUNE_CARD_H - group_h) / 2;
+    lv_coord_t top = (IC_FORTUNE_CARD_H - group_h) / 2 - IC_FORTUNE_GROUP_BIAS;
     if (top < 0) {
         top = 0;
     }
