@@ -993,6 +993,13 @@ static lv_display_t *display_start(lv_indev_t **touch)
         .x_max = LCD_H_RES,
         .y_max = LCD_V_RES,
         .rst_gpio_num = TP_RST,
+        /* INT pin kept (2026-11-01): gating reads on the ISR signal was
+         * measured to freeze the point during drags (touch probe: 19 drags in
+         * 60 s, longest still run 150 ms on a 194 ms touch, 7 single-sample
+         * jumps of 40+ px), so polling was tried instead -- measured jumps
+         * dropped to 0, but the user judged the feel no better than IRQ and
+         * chose the power saving back. Do not read this as "IRQ is smooth";
+         * it means polling did not fix the drag either. */
         .int_gpio_num = TP_INT,
         .levels = {
             .reset = 0,
@@ -1259,6 +1266,100 @@ static void set_mic_gain(esp_codec_dev_handle_t mic, int db)
  * owns the CST816S handle - reading the driver here would race LVGL's reads. */
 #define TOUCH_HOLD_MS 500
 
+/* --- touch probe (Test build only, temporary) -----------------------------
+ *
+ * The drag reports ("左右滑动卡顿或失效") had no data behind them: the night
+ * recorder samples power, not input. This probe samples what the indev hands
+ * out (state + point) once per poll_buttons() tick, i.e. every 10 ms, and
+ * writes one summary a minute -- to the log and as a telemetry E line.
+ *
+ * It answers one question only: while a finger is down, does the point move
+ * on every sample, or does it sit still and then jump?
+ *
+ *   seq       presses seen
+ *   stalls    held runs of >= 250 ms with an unchanged point
+ *   stallmax  the longest such run
+ *   jumps     one sample moving >= 40 px (a drag is a few px per sample)
+ *
+ * A large stallmax says the indev is not being read (its IRQ gate, see
+ * esp_lv_adapter_input_touch.c:419) rather than LVGL ignoring a move. Jumps
+ * with no stalls say it is read but the coordinates arrive in steps.
+ * Compiled out of Release builds with the rest of the telemetry. */
+#if CONFIG_MUSE_TELEMETRY
+#include "muse_telemetry.h"
+
+#define TP_PROBE_STALL_MS 250
+#define TP_PROBE_JUMP_PX 40
+#define TP_PROBE_FIRST_MS 15000
+#define TP_PROBE_EVERY_MS 60000
+
+typedef struct {
+    uint32_t samples, pressed, seqs, stalls, jumps, stall_max_ms;
+    uint32_t still_ms;
+    uint32_t elapsed_ms, gate_ms;
+    lv_point_t last;
+    bool last_down;
+} tp_probe_t;
+
+static tp_probe_t s_probe = { .gate_ms = TP_PROBE_FIRST_MS };
+
+static void touch_probe_sample(bool down)
+{
+    if (s_touch_indev == NULL) {
+        return;
+    }
+    s_probe.samples++;
+    if (down) {
+        s_probe.pressed++;
+    }
+    lv_point_t p = s_probe.last;
+    if (down) {
+        lv_indev_get_point(s_touch_indev, &p);
+    }
+    if (down && !s_probe.last_down) {
+        s_probe.seqs++;
+        s_probe.still_ms = 0;
+    } else if (down) {
+        int dx = p.x - s_probe.last.x;
+        int dy = p.y - s_probe.last.y;
+        if (dx * dx + dy * dy >= TP_PROBE_JUMP_PX * TP_PROBE_JUMP_PX) {
+            s_probe.jumps++;
+        }
+        if (dx == 0 && dy == 0) {
+            s_probe.still_ms += 10;
+            if (s_probe.still_ms == TP_PROBE_STALL_MS) {
+                s_probe.stalls++;
+            }
+            if (s_probe.still_ms > s_probe.stall_max_ms) {
+                s_probe.stall_max_ms = s_probe.still_ms;
+            }
+        } else {
+            s_probe.still_ms = 0;
+        }
+    } else {
+        s_probe.still_ms = 0;
+    }
+    s_probe.last = p;
+    s_probe.last_down = down;
+
+    s_probe.elapsed_ms += 10;
+    if (s_probe.elapsed_ms >= s_probe.gate_ms) {
+        char detail[128];
+        snprintf(detail, sizeof(detail),
+                 "samples=%lu pressed=%lu seq=%lu stalls=%lu stallmax=%lums jumps=%lu",
+                 (unsigned long)s_probe.samples, (unsigned long)s_probe.pressed,
+                 (unsigned long)s_probe.seqs, (unsigned long)s_probe.stalls,
+                 (unsigned long)s_probe.stall_max_ms, (unsigned long)s_probe.jumps);
+        ESP_LOGI(TAG, "touch: %s", detail);
+        muse_telemetry_event("touch", detail);
+        s_probe.samples = s_probe.pressed = s_probe.seqs = 0;
+        s_probe.stalls = s_probe.jumps = s_probe.stall_max_ms = 0;
+        s_probe.elapsed_ms = 0;
+        s_probe.gate_ms = TP_PROBE_EVERY_MS;
+    }
+}
+#endif /* CONFIG_MUSE_TELEMETRY */
+
 static unsigned poll_buttons(void)
 {
     unsigned ev = muse_gpio_button_poll(&s_talk);
@@ -1273,6 +1374,9 @@ static unsigned poll_buttons(void)
     if (s_touch_indev != NULL) {
         pressed = (lv_indev_get_state(s_touch_indev) == LV_INDEV_STATE_PRESSED);
     }
+#if CONFIG_MUSE_TELEMETRY
+    touch_probe_sample(pressed);
+#endif
     if (pressed && !tp_down) {
         /* New press: a hold that starts on the face tile talks - unless it
          * started on one of the face's own controls (the speaker button, the

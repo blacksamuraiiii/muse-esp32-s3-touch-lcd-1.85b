@@ -1467,11 +1467,14 @@ static void update_chrome(float now)
         lv_obj_t *active = lv_tileview_get_tile_active(s_tv);
         int page = active == s_interact ? 0 : (active == s_face ? 1 : 2);
         bool subpage = muse_settings_ui_in_subpage();
-        bool swipe = !(page == 2 && subpage);
-        /* NOTE: the interaction tile does NOT use set_swipe_enabled-style
-         * subpage locking (design §5.2): tile swipe stays enabled inside
-         * interaction subpages, so `swipe` here only ever locks for
-         * settings subpages. Do not extend this to page 0. */
+        /* Two locks now. Settings subpages lock the swipe (1.4d), and so do
+         * the three interaction game subpages (2026-10-31): their buttons sit
+         * on the margin of a 360px circle, where the default 10px scroll limit
+         * (1.3mm on this panel) turned a slightly drifting press into a tile
+         * scroll -- the button lost its LV_EVENT_CLICKED and the round was
+         * abandoned mid-play. Feed / fortune / minigame-list still swipe. */
+        bool game = page == 0 && muse_interact_ui_swipe_locked();
+        bool swipe = !((page == 2 && subpage) || game);
         if (swipe != lv_obj_has_flag(s_tv, LV_OBJ_FLAG_SCROLLABLE)) {
             lv_obj_set_flag(s_tv, LV_OBJ_FLAG_SCROLLABLE, swipe);
         }

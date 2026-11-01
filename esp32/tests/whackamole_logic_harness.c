@@ -79,23 +79,24 @@ int main(void)
     assert(!muse_whackamole_tap(&g, MUSE_WHACKAMOLE_HOLES));
     assert(g.hits == 1 && g.score == 1 && g.missed == 0);
 
-    /* Expiry: a mole visible 900 ms at game start runs away at 900. */
+    /* Expiry: a mole visible MUSE_WHACKAMOLE_PACE_MS at game start runs
+     * away when that time is up. */
     muse_whackamole_restart(&g);
     assert(g.phase == MUSE_WHACKAMOLE_PLAYING);
     assert(g.score == 0 && g.hits == 0 && g.missed == 0);
     int m = up_hole(&g);
     assert(m >= 0);
-    assert(g.holes[m].visible_ms == 900);
-    tick_n(&g, 8); /* 800 ms: still up */
+    assert(g.holes[m].visible_ms == MUSE_WHACKAMOLE_PACE_MS);
+    tick_n(&g, 11); /* 1100 ms: still up */
     assert(g.holes[m].state == MUSE_WHACKAMOLE_UP);
-    tick_n(&g, 1); /* 900 ms: runs away; a fresh mole may refill the
+    tick_n(&g, 1); /* 1200 ms: runs away; a fresh mole may refill the
      * same hole on this very tick, so only the count is asserted. */
     assert(g.missed == 1);
 
-    /* Remaining seconds count down (rounded up). */
-    assert(muse_whackamole_remaining_s(&g) == 30);
-    tick_n(&g, 10); /* +1000 ms = 1900 ms elapsed */
+    /* Remaining seconds count down (rounded up): 1200 ms played -> 29. */
     assert(muse_whackamole_remaining_s(&g) == 29);
+    tick_n(&g, 10); /* +1000 ms = 2200 ms elapsed */
+    assert(muse_whackamole_remaining_s(&g) == 28);
 
     /* Pause freezes everything; resume thaws it. */
     uint32_t elapsed_before = g.elapsed_ms;
@@ -108,10 +109,12 @@ int main(void)
     tick_n(&g, 1);
     assert(g.elapsed_ms == elapsed_before + 100);
 
-    /* Spawn cap and pacing over a full game: never more than 2 up,
-     * fresh moles visible 900 ms early and 500 ms late. */
+    /* Spawn cap and pacing over a full game: never more than MAX_UP up,
+     * and every fresh mole carries the pace for the time already played.
+     * The expectation is derived from the header knobs, so retuning the
+     * speed does not need a test edit. */
     muse_whackamole_restart(&g);
-    bool saw_early = false, saw_late = false;
+    bool saw_first = false, saw_last = false;
     int prev_up[MUSE_WHACKAMOLE_HOLES];
     for (int i = 0; i < MUSE_WHACKAMOLE_HOLES; i++) {
         prev_up[i] = 0;
@@ -122,19 +125,28 @@ int main(void)
         for (int i = 0; i < MUSE_WHACKAMOLE_HOLES; i++) {
             int now_up = (g.holes[i].state == MUSE_WHACKAMOLE_UP);
             if (now_up && !prev_up[i]) {
-                if (g.elapsed_ms < 5000) {
-                    assert(g.holes[i].visible_ms == 900);
-                    saw_early = true;
+                const uint32_t step_ms = MUSE_WHACKAMOLE_PACE_STEP_S * 1000u;
+                const uint32_t level =
+                    step_ms ? g.elapsed_ms / step_ms : 0u;
+                const uint32_t drop = level * MUSE_WHACKAMOLE_PACE_STEP_MS;
+                uint32_t expect = drop >= MUSE_WHACKAMOLE_PACE_MS
+                                      ? MUSE_WHACKAMOLE_PACE_MIN_MS
+                                      : MUSE_WHACKAMOLE_PACE_MS - drop;
+                if (expect < MUSE_WHACKAMOLE_PACE_MIN_MS) {
+                    expect = MUSE_WHACKAMOLE_PACE_MIN_MS;
                 }
-                if (g.elapsed_ms >= 20000) {
-                    assert(g.holes[i].visible_ms == 500);
-                    saw_late = true;
+                assert(g.holes[i].visible_ms == expect);
+                if (level == 0) {
+                    saw_first = true;
+                }
+                if (g.elapsed_ms >= 2 * MUSE_WHACKAMOLE_PACE_STEP_S * 1000u) {
+                    saw_last = true;
                 }
             }
             prev_up[i] = now_up;
         }
     }
-    assert(saw_early && saw_late);
+    assert(saw_first && saw_last);
     assert(g.phase == MUSE_WHACKAMOLE_OVER);
     assert(g.elapsed_ms >= MUSE_WHACKAMOLE_GAME_MS);
     assert(muse_whackamole_up_count(&g) == 0);

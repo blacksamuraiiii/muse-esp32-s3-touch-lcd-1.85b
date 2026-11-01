@@ -3,12 +3,14 @@
  * muse_whackamole.h -- whack-a-mole logic (no LVGL, no ESP-IDF).
  *
  * Six holes, 3 columns x 2 rows, on the 240x240 inscribed square
- * (mockup v9). A game lasts 30 seconds. Moles pop up at most two at
- * a time and stay up about 900 ms at first, quickening as the game
- * goes on; tapping a hole while its mole is up scores one point and
- * shows the hit image for 200 ms, then the hole empties. A mole that
- * is not tapped in time runs away and counts as missed. The score is
- * the hit count (1 point per hit); there is no other scoring.
+ * (mockup v9). A game lasts 30 seconds. One mole at a time (user
+ * decision 2026-11-01: fewer moles, slower pace), staying up
+ * MUSE_WHACKAMOLE_PACE_MS at first -- the spawn gap and the visible
+ * time share that one curve -- and tightening every 10 seconds.
+ * Tapping a hole while its mole is up scores one point and shows the
+ * hit image for 200 ms, then the hole empties. A mole that is not
+ * tapped in time runs away and counts as missed. The score is the hit
+ * count (1 point per hit); there is no other scoring.
  *
  * Timing is in milliseconds and advances only through
  * muse_whackamole_tick(), so the host test drives it deterministically
@@ -27,7 +29,18 @@
 #define MUSE_WHACKAMOLE_COLS 3
 #define MUSE_WHACKAMOLE_ROWS 2
 #define MUSE_WHACKAMOLE_GAME_MS 30000u
-#define MUSE_WHACKAMOLE_MAX_UP 2
+/* One mole at a time (2026-11-01: was 2). The field is 80 px per hole on
+ * a 360 px circle, so two simultaneous moles were more than a first-time
+ * player could chase; one is also what keeps the pace readable. */
+#define MUSE_WHACKAMOLE_MAX_UP 1
+/* Pace: spawn gap and mole visible time, one curve (a mole never outlives
+ * its gap). 1200 ms at the start, 100 ms tighter every 10 s of play,
+ * floored at 900. These four are the only knobs for game speed; the host
+ * harness derives its expectations from them. */
+#define MUSE_WHACKAMOLE_PACE_MS 1200u
+#define MUSE_WHACKAMOLE_PACE_STEP_MS 100u
+#define MUSE_WHACKAMOLE_PACE_STEP_S 10u
+#define MUSE_WHACKAMOLE_PACE_MIN_MS 900u
 #define MUSE_WHACKAMOLE_HIT_SHOW_MS 200u
 #define MUSE_WHACKAMOLE_TICK_MS 100u
 
