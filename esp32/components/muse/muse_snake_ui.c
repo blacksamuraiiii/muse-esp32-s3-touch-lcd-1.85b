@@ -23,15 +23,16 @@
  *     on the 360x360 page, including the four rim areas far outside the
  *     240px board, steers, so the touch area is already the maximum the
  *     panel gives (evaluated 2026-11-01 for the user's "扩大触屏区域"
- *     request). The only inert region is the centre disc (r = 55), which
- *     exists so a thumb resting mid-screen does not steer -- shrinking
- *     it would trade steering area for the "长按中间暂停" target, which
- *     is why it stays at 55. A point inside that disc steers
- *     nowhere: a point at the exact centre has no dominant axis, so that
- *     110px disc is the action key. START taps it to start, PAUSED to
+ *     request). The only inert region is the centre button rect
+ *     (98x66, user decision 2026-11-01: the old 110px circle shrank to
+ *     this rect, and the dead zone follows the button exactly, so a
+ *     press that looks like board now steers -- the corners the disc
+ *     used to cover are steering area again). A point inside that rect
+ *     steers nowhere: a point at the exact centre has no dominant axis,
+ *     so that rect is the action key. START taps it to start, PAUSED to
  *     resume, OVER to restart. During PLAYING it is the pause key, but
  *     as a HOLD, not a tap -- a tap there used to pause the game, and
- *     since the disc covers 16.5% of the board a thumb steering a run
+ *     since the button covers 11.2% of the board a thumb steering a run
  *     through the middle kept pausing by accident.
  *   - Back: one page-level arrow, same pattern as Sudoku (56x48 at
  *     TOP_MID -112,28, centre (68,52)), visible on START / PAUSED /
@@ -41,13 +42,13 @@
  *   - Guides: direction arrows + sector dashes, faint DIM, on START
  *     only; PAUSED keeps the dashes (the arrows would collide with
  *     the "已暂停" title); PLAYING shows none.
- *   - Overlays: START is undimmed (开始 circle, arrows, dashes, one hint
+ *   - Overlays: START is undimmed (开始 button, arrows, dashes, one hint
  *     line); PAUSED and OVER dim the board 50% black and show their
- *     title and centre circle only. PAUSED has NO restart button
+ *     title and centre button only. PAUSED has NO restart button
  *     on purpose: an 84x32 one at y = 314 -- the narrowest part of the
  *     bezel -- charged 5 coins on a single tap with no confirmation.
  *     Leaving goes through the shared back arrow, which is visible
- *     whenever the game is not PLAYING. OVER's circle carries the price
+ *     whenever the game is not PLAYING. OVER's button carries the price
  *     ("- 5 金币"), because the fee is otherwise invisible.
  *     A blocked start shows one page-level note ("金币不够（需 5 枚）" or
  *     "互动未就绪") under the board, above the dim (see the message
@@ -98,10 +99,13 @@
 #define SN_CELL 20
 #define SN_CX 180
 #define SN_CY 180
-#define SN_CENTRE_R 55
-#define SN_CENTRE_X0 125 /* CX - R */
-#define SN_CENTRE_Y0 125
-#define SN_CENTRE_SZ 110 /* 2 * R */
+#define SN_CENTRE_W 98 /* user decision 2026-11-01, was a 110px circle */
+#define SN_CENTRE_H 66
+#define SN_CENTRE_X0 131 /* CX - W / 2 */
+#define SN_CENTRE_Y0 147 /* CY - H / 2 */
+#define SN_CENTRE_RADIUS 14 /* rounded-rect corner, was LV_RADIUS_CIRCLE */
+#define SN_CENTRE_HW 49 /* W / 2: steering dead zone half-width */
+#define SN_CENTRE_HH 33 /* H / 2: steering dead zone half-height */
 /* Refusal note: below the board, sharing the score line's slot (user
  * request 2026-11-01, "消息提示统一显示在游戏区域下方"). It used to sit at
  * y = 280 -- inside the board, covering the last two rows of cells, which
@@ -237,8 +241,8 @@ static lv_obj_t *btn(lv_obj_t *parent, int x, int y, int w, int h,
 
 static lv_obj_t *centre_button(lv_obj_t *parent, lv_event_cb_t cb)
 {
-    lv_obj_t *b = btn(parent, SN_CENTRE_X0, SN_CENTRE_Y0, SN_CENTRE_SZ,
-                      SN_CENTRE_SZ, SN_CENTRE_R, cb);
+    lv_obj_t *b = btn(parent, SN_CENTRE_X0, SN_CENTRE_Y0, SN_CENTRE_W,
+                      SN_CENTRE_H, SN_CENTRE_RADIUS, cb);
     lv_obj_set_style_border_width(b, 2, 0);
     lv_obj_set_style_border_color(b, lv_color_hex(MUSE_THEME_ACCENT), 0);
     return b;
@@ -532,11 +536,12 @@ static void on_resume(lv_event_t *e)
     refresh_display();
 }
 
-static int dist2_to_centre(const lv_point_t *p)
+static bool in_centre_rect(const lv_point_t *p)
 {
     int dx = p->x - SN_CX;
     int dy = p->y - SN_CY;
-    return dx * dx + dy * dy;
+    return dx >= -SN_CENTRE_HW && dx <= SN_CENTRE_HW &&
+           dy >= -SN_CENTRE_HH && dy <= SN_CENTRE_HH;
 }
 
 static void on_touch(lv_event_t *e)
@@ -550,7 +555,7 @@ static void on_touch(lv_event_t *e)
     lv_point_t pt;
     lv_indev_get_point(lv_indev_active(), &pt);
     s_press_pt = pt;
-    s_press_in_centre = dist2_to_centre(&pt) <= SN_CENTRE_R * SN_CENTRE_R;
+    s_press_in_centre = in_centre_rect(&pt);
     if (s_press_in_centre) {
         /* Swallowed, not steered: a press this close to the centre has no
          * dominant axis. The pause comes from on_touch_hold(), so a tap
@@ -572,15 +577,15 @@ static void on_touch(lv_event_t *e)
     muse_snake_set_dir(&s_game, dir);
 }
 
-/* Pause on a HOLD inside the centre circle, not on a tap. The disc is
- * 16.5% of the board and sits exactly where a run crosses the middle, so
+/* Pause on a HOLD inside the centre button rect, not on a tap. The button
+ * is 11.2% of the board and sits exactly where a run crosses the middle, so
  * a tap there used to end the run by accident. LVGL's long-press time
  * (LV_INDEV_DEF_LONG_PRESS_TIME, 400 ms) is global and other pages use
  * long press too, so this page does not change it.
  *
  * Two guards keep a resting thumb from counting as a hold: the press must
- * have landed inside the disc, and the finger must not have drifted more
- * than SN_HOLD_SLOP nor left the disc by the time the timer fires. */
+ * have landed inside the button rect, and the finger must not have drifted
+ * more than SN_HOLD_SLOP nor left the rect by the time the timer fires. */
 static void on_touch_hold(lv_event_t *e)
 {
     (void)e;
@@ -594,7 +599,7 @@ static void on_touch_hold(lv_event_t *e)
     if (ddx * ddx + ddy * ddy > SN_HOLD_SLOP * SN_HOLD_SLOP) {
         return;
     }
-    if (dist2_to_centre(&pt) > SN_CENTRE_R * SN_CENTRE_R) {
+    if (!in_centre_rect(&pt)) {
         return;
     }
     pause_game();
@@ -696,7 +701,7 @@ void muse_snake_ui_build(lv_obj_t *page, lv_event_cb_t back_cb)
     lv_obj_add_event_cb(s_touch, on_touch_hold, LV_EVENT_LONG_PRESSED, NULL);
     lv_obj_add_flag(s_touch, LV_OBJ_FLAG_HIDDEN);
 
-    /* START overlay: undimmed, 开始 circle + guides + hints. The page name
+    /* START overlay: undimmed, 开始 button + guides + hints. The page name
      * is NOT here: it is a page-level label (see the bottom of this
      * function) so it stays visible in every state, exactly like the
      * titles the other two mini-games carry. */
@@ -719,7 +724,7 @@ void muse_snake_ui_build(lv_obj_t *page, lv_event_cb_t back_cb)
                    "点四周转向，长按中间暂停");
     lv_obj_align(s_hint, LV_ALIGN_TOP_MID, 0, SN_HINT_Y);
 
-    /* PAUSED overlay: dim + title + 继续 circle + dashes. No restart:
+    /* PAUSED overlay: dim + title + 继续 button + dashes. No restart:
      * see the file header. */
     s_pause_ov = overlay(page, true);
     lv_obj_t *pt = label(s_pause_ov, muse_font_cjk(), MUSE_THEME_ACCENT, "已暂停");
@@ -727,16 +732,16 @@ void muse_snake_ui_build(lv_obj_t *page, lv_event_cb_t back_cb)
     lv_obj_t *resume_btn = centre_button(s_pause_ov, on_resume);
     lv_obj_t *sym = label(resume_btn, &lv_font_montserrat_20, MUSE_THEME_TEXT,
                           LV_SYMBOL_PLAY);
-    lv_obj_align(sym, LV_ALIGN_TOP_MID, 0, 31);
+    lv_obj_align(sym, LV_ALIGN_TOP_MID, 0, 12);
     lv_obj_t *rl = label(resume_btn, muse_font_cjk(), MUSE_THEME_TEXT, "继续");
-    lv_obj_align(rl, LV_ALIGN_TOP_MID, 0, 59);
+    lv_obj_align(rl, LV_ALIGN_TOP_MID, 0, 34);
     sector_dashes(s_pause_ov);
     /* The 重开 capsule that used to sit at (138,314) is gone: it charged
      * 5 coins on one tap, with no confirmation, in the narrowest part of
      * the bezel. Leaving is the back arrow's job; restarting is offered
      * on the OVER card, where the price is printed. */
 
-    /* OVER overlay: dim + 再来一局 circle only (UI polish 2026-11-01).
+    /* OVER overlay: dim + 再来一局 button only (UI polish 2026-11-01).
      * The result title lives in the page-name slot and the result line
      * under the board -- both page-level, created after the overlays, so
      * they stay readable through the dim -- so the overlay itself carries
@@ -744,7 +749,7 @@ void muse_snake_ui_build(lv_obj_t *page, lv_event_cb_t back_cb)
     s_over_ov = overlay(page, true);
     lv_obj_t *over_btn = centre_button(s_over_ov, on_restart);
     lv_obj_t *ol = label(over_btn, muse_font_cjk(), MUSE_THEME_TEXT, "再来一局");
-    lv_obj_align(ol, LV_ALIGN_TOP_MID, 0, 32);
+    lv_obj_align(ol, LV_ALIGN_TOP_MID, 0, 12);
     /* on_restart charges through charge_for_game() the moment it is
      * pressed, so the price belongs on the button (fee from the macro,
      * not a literal, so a stake change cannot desync the copy). */
@@ -752,7 +757,7 @@ void muse_snake_ui_build(lv_obj_t *page, lv_event_cb_t back_cb)
     snprintf(price_buf, sizeof(price_buf), "- %u 金币",
              (unsigned)MUSE_PET_GAME_STAKE);
     lv_obj_t *price = label(over_btn, muse_font_cjk(), MUSE_THEME_GOLD, price_buf);
-    lv_obj_align(price, LV_ALIGN_TOP_MID, 0, 56);
+    lv_obj_align(price, LV_ALIGN_TOP_MID, 0, 34);
 
     /* Back (shared, topmost): same pattern as Sudoku, hidden while
      * PLAYING. Created after the overlays so it stays clickable. */
