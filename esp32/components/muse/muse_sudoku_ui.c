@@ -279,7 +279,10 @@ static void scale_label(lv_obj_t *l)
  * it off that centre. */
 static void side_label(lv_obj_t *parent, const char *text)
 {
-    lv_obj_t *l = label(parent, muse_font_cjk(), MUSE_THEME_DIM, text);
+    /* TEXT, not DIM (user decision 2026-11-01): the two strips and the
+     * 提示 pill are one set of three buttons, so they share colour as
+     * well as size. */
+    lv_obj_t *l = label(parent, muse_font_cjk(), MUSE_THEME_TEXT, text);
     lv_obj_set_style_text_align(l, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_style_text_line_space(l, 0, 0);
     scale_label(l);
