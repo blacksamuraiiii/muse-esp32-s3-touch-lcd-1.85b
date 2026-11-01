@@ -23,17 +23,20 @@
  *     on the 360x360 page, including the four rim areas far outside the
  *     240px board, steers, so the touch area is already the maximum the
  *     panel gives (evaluated 2026-11-01 for the user's "扩大触屏区域"
- *     request). The only inert region is the centre button rect
- *     (98x66, user decision 2026-11-01: the old 110px circle shrank to
- *     this rect, and the dead zone follows the button exactly, so a
- *     press that looks like board now steers -- the corners the disc
- *     used to cover are steering area again). A point inside that rect
- *     steers nowhere: a point at the exact centre has no dominant axis,
- *     so that rect is the action key. START taps it to start, PAUSED to
- *     resume, OVER to restart. During PLAYING it is the pause key, but
- *     as a HOLD, not a tap -- a tap there used to pause the game, and
- *     since the button covers 11.2% of the board a thumb steering a run
- *     through the middle kept pausing by accident.
+ *     request). The only inert region is the centre dead-zone disc
+ *     (r = 55), which is DELIBERATELY separate from the button display
+ *     (user decision 2026-11-01): the 98x66 button is for looks, the
+ *     disc is for the thumb -- a thumb resting mid-screen must not
+ *     steer, whatever shape the button happens to be. A point inside
+ *     that disc steers nowhere: a point at the exact centre has no
+ *     dominant axis. The separation costs nothing in practice: the
+ *     dead zone only applies while PLAYING, when the button is hidden,
+ *     and the button only clicks on START / PAUSED / OVER, when the
+ *     dead zone is not consulted. START taps the button to start,
+ *     PAUSED to resume, OVER to restart. During PLAYING the disc is
+ *     the pause key, but as a HOLD, not a tap -- a tap there used to
+ *     pause the game, and since the disc covers 16.5% of the board a
+ *     thumb steering a run through the middle kept pausing by accident.
  *   - Back: one page-level arrow, same pattern as Sudoku (56x48 at
  *     TOP_MID -112,28, centre (68,52)), visible on START / PAUSED /
  *     OVER only. PLAYING has no chrome at all except the score line and
@@ -104,8 +107,8 @@
 #define SN_CENTRE_X0 131 /* CX - W / 2 */
 #define SN_CENTRE_Y0 147 /* CY - H / 2 */
 #define SN_CENTRE_RADIUS 14 /* rounded-rect corner, was LV_RADIUS_CIRCLE */
-#define SN_CENTRE_HW 49 /* W / 2: steering dead zone half-width */
-#define SN_CENTRE_HH 33 /* H / 2: steering dead zone half-height */
+#define SN_DEAD_ZONE_R 55 /* steering dead zone radius, INDEPENDENT of the
+ * button display above: button for looks, disc for the thumb */
 /* Refusal note: below the board, sharing the score line's slot (user
  * request 2026-11-01, "消息提示统一显示在游戏区域下方"). It used to sit at
  * y = 280 -- inside the board, covering the last two rows of cells, which
@@ -536,12 +539,11 @@ static void on_resume(lv_event_t *e)
     refresh_display();
 }
 
-static bool in_centre_rect(const lv_point_t *p)
+static int dist2_to_centre(const lv_point_t *p)
 {
     int dx = p->x - SN_CX;
     int dy = p->y - SN_CY;
-    return dx >= -SN_CENTRE_HW && dx <= SN_CENTRE_HW &&
-           dy >= -SN_CENTRE_HH && dy <= SN_CENTRE_HH;
+    return dx * dx + dy * dy;
 }
 
 static void on_touch(lv_event_t *e)
@@ -555,7 +557,7 @@ static void on_touch(lv_event_t *e)
     lv_point_t pt;
     lv_indev_get_point(lv_indev_active(), &pt);
     s_press_pt = pt;
-    s_press_in_centre = in_centre_rect(&pt);
+    s_press_in_centre = dist2_to_centre(&pt) <= SN_DEAD_ZONE_R * SN_DEAD_ZONE_R;
     if (s_press_in_centre) {
         /* Swallowed, not steered: a press this close to the centre has no
          * dominant axis. The pause comes from on_touch_hold(), so a tap
@@ -577,15 +579,16 @@ static void on_touch(lv_event_t *e)
     muse_snake_set_dir(&s_game, dir);
 }
 
-/* Pause on a HOLD inside the centre button rect, not on a tap. The button
- * is 11.2% of the board and sits exactly where a run crosses the middle, so
+/* Pause on a HOLD inside the dead-zone disc, not on a tap. The disc is
+ * 16.5% of the board and sits exactly where a run crosses the middle, so
  * a tap there used to end the run by accident. LVGL's long-press time
  * (LV_INDEV_DEF_LONG_PRESS_TIME, 400 ms) is global and other pages use
  * long press too, so this page does not change it.
  *
  * Two guards keep a resting thumb from counting as a hold: the press must
- * have landed inside the button rect, and the finger must not have drifted
- * more than SN_HOLD_SLOP nor left the rect by the time the timer fires. */
+ * have landed inside the dead-zone disc, and the finger must not have
+ * drifted more than SN_HOLD_SLOP nor left the disc by the time the timer
+ * fires. */
 static void on_touch_hold(lv_event_t *e)
 {
     (void)e;
@@ -599,7 +602,7 @@ static void on_touch_hold(lv_event_t *e)
     if (ddx * ddx + ddy * ddy > SN_HOLD_SLOP * SN_HOLD_SLOP) {
         return;
     }
-    if (!in_centre_rect(&pt)) {
+    if (dist2_to_centre(&pt) > SN_DEAD_ZONE_R * SN_DEAD_ZONE_R) {
         return;
     }
     pause_game();
