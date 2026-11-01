@@ -113,12 +113,14 @@
  * board's entries.
  *
  * Economy (user decision 2026-11-01, superseding the per-puzzle fee of
- * 2026-10-31): entering sudoku costs 5 coins ONCE PER CALENDAR DAY
- * (PET_SUDOKU_ENTRY, idempotent in the worker), so every later entry that
- * day, 上一题, 下一题 and 再玩一次 are free. Completing a puzzle pays
- * MUSE_PET_SUDOKU_SOLVE_COINS (5) through PET_SUDOKU_SOLVE, capped at 5 per
- * day -- only the first puzzle of the day pays, later ones show "今日数独
- * 金币已满". Net effect: sudoku can at best refund its own entry fee.
+ * 2026-10-31; grant retuned the same day): entering sudoku costs 5 coins
+ * ONCE PER CALENDAR DAY (PET_SUDOKU_ENTRY, idempotent in the worker), so
+ * every later entry that day, 上一题, 下一题 and 再玩一次 are free.
+ * Completing a puzzle pays MUSE_PET_SUDOKU_SOLVE_COINS (10) for the day's
+ * FIRST completion only -- all-or-nothing, later ones show "今日数独
+ * 金币已满". A day whose ledger already holds a nonzero reward (including
+ * a 1.5f v4 blob's 5) counts as paid and is never topped up. Net effect:
+ * a sudoku day nets at most +5 (ticket 5, first win 10).
  * Under 5 coins an unpaid entry is refused with "金币不够（需 5 枚）" and
  * the current puzzle stays. No 3-strike rule, no pencil marks (v1 scope,
  * see muse_sudoku.h).
@@ -311,12 +313,13 @@ static void show_win(uint32_t coins, bool ledger_ready)
     snprintf(buf, sizeof(buf), "用时 %lu:%02lu",
              (unsigned long)(secs / 60), (unsigned long)(secs % 60));
     lv_label_set_text(s_win_time, buf);
-    /* The completion reward (user decision 2026-11-01): 5 coins for the first
-     * puzzle of the day, nothing after -- the worker enforces the cap, this
-     * line only reports what coins_paid_today() promised before the request
-     * went out, so the card never claims coins the wallet will not get.
+    /* The completion reward (user decision 2026-11-01, retuned the same
+     * day): 10 coins for the first puzzle of the day, nothing after --
+     * the worker enforces the all-or-nothing rule, this line only reports
+     * what coins_paid_today() promised before the request went out, so
+     * the card never claims coins the wallet will not get.
      * Known race: two boards finishing before the worker settles the first
-     * SOLVE both read paid < max, and the second card promises coins the
+     * SOLVE both read paid == 0, and the second card promises coins the
      * worker then refuses with PET_CAP; without a callback into this page
      * from the drain the card cannot self-correct. Accepted for now. */
     if (coins != 0) {
@@ -394,14 +397,17 @@ static void after_fill(void)
     close_pad();
     /* Completion reward, settled exactly once per solved board: the card is
      * the only place a board becomes complete, and hidden boards are never
-     * re-rendered into a win. 5 coins the first time that day, 0 afterwards
-     * (MUSE_PET_SUDOKU_DAILY_MAX), which the worker re-checks. An unreadable
+     * re-rendered into a win. 10 coins for the day's first completion, 0
+     * afterwards -- the gate is "nothing paid yet today" (paid == 0), not
+     * "room under a cap": a ledger already holding a nonzero reward,
+     * including a 1.5f v4 blob's 5, counts as paid and must not be topped
+     * up, and the worker re-checks the same rule. An unreadable
      * snapshot also skips the request: promising nothing is the only honest
      * line when the ledger cannot be read. */
     uint32_t coins = 0;
     uint32_t paid = 0;
     bool ledger_ready = coins_paid_today(&paid);
-    if (ledger_ready && paid < MUSE_PET_SUDOKU_DAILY_MAX &&
+    if (ledger_ready && paid == 0 &&
         muse_pet_request(PET_SUDOKU_SOLVE)) {
         coins = MUSE_PET_SUDOKU_SOLVE_COINS;
     }

@@ -1628,7 +1628,7 @@ static bool console_command(char *line, bool whole)
         if (!strncmp(line, "pet.sudoku", 10)) {
             /* The sudoku ledger is day-scoped, so a bench cannot wait for
              * midnight: "pet.sudoku entry" charges the day's ticket (free a
-             * second time), "pet.sudoku solve" pays the day's 5 coins (PET_CAP
+             * second time), "pet.sudoku solve" pays the day's 10 coins (PET_CAP
              * after that), no argument = entry. Both settle through the worker,
              * so the caps are the real ones. */
             bool solve = (line[10] == ' ') && !strncmp(line + 11, "solve", 5);
