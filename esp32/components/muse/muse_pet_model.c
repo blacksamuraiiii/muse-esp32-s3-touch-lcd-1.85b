@@ -46,6 +46,7 @@ void muse_pet_model_init(muse_pet_model_t *s)
     s->feed_day = -1;
     s->fortune_day = -1;
     s->decay_day = -1;
+    s->sudoku_day = -1;
 }
 
 bool muse_pet_model_valid(const muse_pet_model_t *s)
@@ -57,7 +58,57 @@ bool muse_pet_model_valid(const muse_pet_model_t *s)
            s->fortune < MUSE_PET_FORTUNES &&
            s->touch_day >= -1 && s->feed_day >= -1 &&
            s->fortune_day >= -1 && s->decay_day >= -1 &&
-           s->decay_notice <= MUSE_PET_COINS_MAX;
+           s->decay_notice <= MUSE_PET_COINS_MAX &&
+           s->sudoku_day >= -1 &&
+           s->sudoku_entry_paid <= 1 &&
+           s->sudoku_reward_coins <= MUSE_PET_SUDOKU_DAILY_MAX;
+}
+
+uint32_t muse_pet_round_coins(uint32_t score)
+{
+    /* Both guards are for retuning, not for today's constants: a 0 divisor
+     * would fault and a cap of 0 would pay nothing, and -Werror builds must
+     * stay warning-free whichever way the knobs move. */
+    if (MUSE_PET_SCORE_PER_COIN == 0u || MUSE_PET_ROUND_COIN_MAX == 0u) {
+        return 0;
+    }
+    uint32_t coins = score / MUSE_PET_SCORE_PER_COIN;
+    return coins > MUSE_PET_ROUND_COIN_MAX ? MUSE_PET_ROUND_COIN_MAX : coins;
+}
+
+void muse_pet_sudoku_today(const muse_pet_model_t *s, int64_t now,
+                           bool *entry_paid, uint32_t *reward_coins)
+{
+    bool calibrated = false;
+    int32_t day = muse_pet_day(now, &calibrated);
+    (void)calibrated; /* the ledger is day-based only, see sudoku_roll() */
+    bool same_day = s->sudoku_day != -1 && s->sudoku_day == day;
+    if (entry_paid) {
+        *entry_paid = same_day && s->sudoku_entry_paid != 0;
+    }
+    if (reward_coins) {
+        *reward_coins = same_day ? s->sudoku_reward_coins : 0;
+    }
+}
+
+/* Start a new sudoku ledger when the day advances. Unlike roll_cap() this
+ * does not require a calibrated clock: the entry fee is a charge, and
+ * "charge at most once a day" must hold on a board with no RTC too (the
+ * price of that is one extra 5-coin charge if SNTP later jumps the day --
+ * accepted, the alternative is a free sudoku forever on an unset clock).
+ * A rollback (day < stored day) keeps the stored ledger, so a clock going
+ * backwards cannot re-charge the same day twice. */
+static void sudoku_roll(muse_pet_model_t *s, int32_t day)
+{
+    if (s->sudoku_day == day) {
+        return;
+    }
+    if (s->sudoku_day != -1 && day < s->sudoku_day) {
+        return; /* rollback: never re-charge, never re-grant */
+    }
+    s->sudoku_day = day;
+    s->sudoku_entry_paid = 0;
+    s->sudoku_reward_coins = 0;
 }
 
 /* Start a new daily cap when the calibrated day has advanced. On rollback
@@ -183,15 +234,68 @@ muse_pet_result_t muse_pet_model_apply(muse_pet_model_t *s, muse_pet_action_t ac
     }
 
     if (action == PET_FEE) {
-        /* Entry fee for one sudoku puzzle, one snake game or one
-         * whack-a-mole game (user decision 2026-10-31): same 5-coin gate
-         * as PET_GAME, no outcome, no refund path -- the UI only sends it
-         * after its own snapshot gate passed, so PET_POOR here means the
-         * snapshot was stale. `arg` is unused. */
+        /* Entry fee for one snake or whack-a-mole game (user decision
+         * 2026-10-31; sudoku moved to PET_SUDOKU_ENTRY on 2026-11-01 because
+         * its fee is daily, not per puzzle): same 5-coin gate as PET_GAME, no
+         * outcome, no refund path -- the UI only sends it after its own
+         * snapshot gate passed, so PET_POOR here means the snapshot was stale.
+         * `arg` is unused. */
         if (s->coins < MUSE_PET_GAME_STAKE) {
             return PET_POOR; /* not settled, no game started */
         }
         s->coins -= MUSE_PET_GAME_STAKE;
+        return PET_OK;
+    }
+
+    if (action == PET_SUDOKU_ENTRY) {
+        /* One ticket per calendar day (user decision 2026-11-01): the first
+         * entry pays 5, every later entry / 上一题 / 下一题 / 再玩一次 that
+         * day is free. Idempotent, so the UI can call it on every action
+         * without a local "already paid" flag to get wrong. */
+        sudoku_roll(s, day);
+        if (s->sudoku_entry_paid) {
+            return PET_OK; /* today's ticket is already in hand */
+        }
+        if (s->coins < MUSE_PET_GAME_STAKE) {
+            return PET_POOR; /* not settled, nothing unlocks */
+        }
+        s->coins -= MUSE_PET_GAME_STAKE;
+        s->sudoku_entry_paid = 1;
+        return PET_OK;
+    }
+
+    if (action == PET_SUDOKU_SOLVE) {
+        /* Completion reward, capped per day (user decision 2026-11-01):
+         * with SOLVE_COINS == DAILY_MAX only the first puzzle of the day
+         * pays, so solving more is allowed but never farmable. */
+        sudoku_roll(s, day);
+        uint32_t room = s->sudoku_reward_coins < MUSE_PET_SUDOKU_DAILY_MAX
+                            ? MUSE_PET_SUDOKU_DAILY_MAX - s->sudoku_reward_coins
+                            : 0;
+        uint32_t add = MUSE_PET_SUDOKU_SOLVE_COINS < room
+                           ? MUSE_PET_SUDOKU_SOLVE_COINS
+                           : room;
+        if (add == 0) {
+            return PET_CAP; /* today's sudoku coins are already paid */
+        }
+        s->sudoku_reward_coins += add;
+        s->coins = capped_add(s->coins, add);
+        return PET_OK;
+    }
+
+    if (action == PET_PLAY_REWARD) {
+        /* End-of-round payout for snake / whack-a-mole (user decision
+         * 2026-11-01). The UI converts its own score with
+         * muse_pet_round_coins(); the worker clamps again so a UI bug
+         * cannot mint coins, and 0 is a valid settlement (a round under
+         * 5 points earns nothing) that still returns PET_OK. */
+        uint32_t add = arg > 0 ? (uint32_t)arg : 0;
+        if (add > MUSE_PET_ROUND_COIN_MAX) {
+            add = MUSE_PET_ROUND_COIN_MAX;
+        }
+        if (add != 0) {
+            s->coins = capped_add(s->coins, add);
+        }
         return PET_OK;
     }
 

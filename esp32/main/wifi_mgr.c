@@ -47,6 +47,10 @@ static const char *TAG = "link.wifi";
 static EventGroupHandle_t s_events;
 static SemaphoreHandle_t s_scan_mutex = NULL;
 static SemaphoreHandle_t s_cache_mutex = NULL;
+// Guards s_bssid_cache / s_channel_hint: written by the scan path (holding
+// s_scan_mutex) and invalidated by connect/restart from other tasks. Always
+// taken after s_scan_mutex when both are held, never the other way round.
+static SemaphoreHandle_t s_hint_mutex = NULL;
 static esp_netif_t *s_sta_netif;
 static bool s_inited = false;
 static bool s_connecting = false;        // true during initial wifi_mgr_connect() call
@@ -92,6 +96,14 @@ static bool channel_hint_valid(uint8_t channel) {
 }
 
 static void reconnect_timer_cb(TimerHandle_t t) {
+    if (!s_keep_connected) {
+        /* wifi_mgr_disconnect()/restart() can race schedule_reconnect(): both
+         * timer commands queue on the timer task, so a stop may be consumed
+         * before this start ever fires. Re-check here, or the radio rejoins
+         * the network the user just left. */
+        ESP_LOGI(TAG, "reconnect skipped: no longer wanted");
+        return;
+    }
     ESP_LOGI(TAG, "reconnect attempt (post-association)");
     atomic_store(&s_sta_idle, false);
     esp_wifi_connect();
@@ -188,6 +200,18 @@ void wifi_mgr_netcfg(wifi_mgr_netcfg_t *out) {
     copy_str(out->dns, sizeof(out->dns), CONFIG_HOMEHUB_STATIC_DNS);
 }
 
+// The STA_START event handler runs on the event loop task; reading the config
+// there means four synchronous NVS reads in the middle of every (re)start,
+// stalling every other Wi-Fi/IP event while NVS is busy. Read once at init and
+// after each save/clear instead; the handler only consumes the snapshot.
+static wifi_mgr_netcfg_t s_netcfg_cache;
+static bool s_netcfg_ready = false;
+
+static void netcfg_cache_reload(void) {
+    wifi_mgr_netcfg(&s_netcfg_cache);
+    s_netcfg_ready = true;
+}
+
 static bool ip4_ok(const char *s) {
     esp_ip4_addr_t a;
     return s && s[0] && esp_netif_str_to_ip4(s, &a) == ESP_OK;
@@ -200,7 +224,9 @@ bool wifi_mgr_netcfg_save(const char *ip, const char *mask, const char *gw, cons
         || !config_set_str(NETCFG_GW, gw)) {
         return false;
     }
-    return dns && dns[0] ? config_set_str(NETCFG_DNS, dns) : config_erase_key(NETCFG_DNS);
+    bool ok = dns && dns[0] ? config_set_str(NETCFG_DNS, dns) : config_erase_key(NETCFG_DNS);
+    if (ok) netcfg_cache_reload();
+    return ok;
 }
 
 bool wifi_mgr_netcfg_clear(void) {
@@ -208,21 +234,23 @@ bool wifi_mgr_netcfg_clear(void) {
     config_erase_key(NETCFG_MASK);
     config_erase_key(NETCFG_GW);
     config_erase_key(NETCFG_DNS);
-    return config_key_lookup(NETCFG_IP) == CONFIG_KEY_NOT_FOUND;
+    bool ok = config_key_lookup(NETCFG_IP) == CONFIG_KEY_NOT_FOUND;
+    if (ok) netcfg_cache_reload();
+    return ok;
 }
 
 static void apply_static_ip(void) {
-    wifi_mgr_netcfg_t cfg;
-    wifi_mgr_netcfg(&cfg);
-    if (!cfg.ip[0]) {
+    if (!s_netcfg_ready) netcfg_cache_reload();   // only if STA_START beats init
+    const wifi_mgr_netcfg_t *cfg = &s_netcfg_cache;
+    if (!cfg->ip[0]) {
         return;    // DHCP, the usual case
     }
     esp_netif_ip_info_t ip = { 0 };
-    if (esp_netif_str_to_ip4(cfg.ip, &ip.ip) != ESP_OK
-        || esp_netif_str_to_ip4(cfg.mask, &ip.netmask) != ESP_OK
-        || esp_netif_str_to_ip4(cfg.gw, &ip.gw) != ESP_OK) {
+    if (esp_netif_str_to_ip4(cfg->ip, &ip.ip) != ESP_OK
+        || esp_netif_str_to_ip4(cfg->mask, &ip.netmask) != ESP_OK
+        || esp_netif_str_to_ip4(cfg->gw, &ip.gw) != ESP_OK) {
         ESP_LOGE(TAG, "static IP %s/%s gw %s is not parseable; staying on DHCP",
-                 cfg.ip, cfg.mask, cfg.gw);
+                 cfg->ip, cfg->mask, cfg->gw);
         return;
     }
     esp_err_t err = esp_netif_dhcpc_stop(s_sta_netif);
@@ -236,19 +264,24 @@ static void apply_static_ip(void) {
         esp_netif_dhcpc_start(s_sta_netif);
         return;
     }
-    if (cfg.dns[0]) {
+    /* Stopping the DHCP client also stops it handing DNS down, and a cold
+     * boot has no prior lease to inherit from: with no DNS configured the
+     * resolver main stays 0.0.0.0 and every name lookup fails with nothing
+     * to heal it. Fall back to the gateway, the usual shape of a small LAN. */
+    const char *dns_str = cfg->dns[0] ? cfg->dns : cfg->gw;
+    if (dns_str[0]) {
         esp_netif_dns_info_t dns = { 0 };
         dns.ip.type = ESP_IPADDR_TYPE_V4;
-        if (esp_netif_str_to_ip4(cfg.dns, &dns.ip.u_addr.ip4) == ESP_OK) {
+        if (esp_netif_str_to_ip4(dns_str, &dns.ip.u_addr.ip4) == ESP_OK) {
             esp_netif_set_dns_info(s_sta_netif, ESP_NETIF_DNS_MAIN, &dns);
         } else {
-            ESP_LOGW(TAG, "static DNS %s is not parseable; left unset", cfg.dns);
+            ESP_LOGW(TAG, "static DNS %s is not parseable; left unset", dns_str);
         }
     }
     ESP_LOGI(TAG, "static IP " IPSTR " mask " IPSTR " gw " IPSTR " dns %s (%s)",
              IP2STR(&ip.ip), IP2STR(&ip.netmask), IP2STR(&ip.gw),
-             cfg.dns[0] ? cfg.dns : "(unchanged)",
-             cfg.from_nvs ? "NVS" : "build config");
+             dns_str[0] ? dns_str : "(none)",
+             cfg->from_nvs ? "NVS" : "build config");
 }
 
 static void event_handler(void *arg, esp_event_base_t base,
@@ -266,6 +299,11 @@ static void event_handler(void *arg, esp_event_base_t base,
 
         xEventGroupClearBits(s_events, BIT_CONNECTED | BIT_GOT_IP);
         atomic_store(&s_sta_idle, true);
+        /* drop_rssi_floor() does run driver calls here, but only for the rare
+         * NO_AP_FOUND-after-fast-scan case (every other reason returns before
+         * touching the driver), and the association is already down at
+         * DISCONNECTED, so set_config cannot hit ESP_ERR_WIFI_STATE. Moving it
+         * out would thread the retry through a timer for no measurable gain. */
         bool floor_dropped = ev && drop_rssi_floor(ev->reason);
         if (s_connecting) {
             // Initial connect: retry up to MAX_INITIAL_RETRY, then fail.
@@ -301,6 +339,10 @@ void wifi_mgr_init(void) {
     s_events = xEventGroupCreate();
     s_scan_mutex = xSemaphoreCreateMutex();
     s_cache_mutex = xSemaphoreCreateMutex();
+    s_hint_mutex = xSemaphoreCreateMutex();
+    // Before esp_wifi_start(): the STA_START handler consumes this snapshot,
+    // and it must not fall back to synchronous NVS reads on the event task.
+    netcfg_cache_reload();
 
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
@@ -389,8 +431,10 @@ bool wifi_mgr_connect(const char *ssid, const char *password, int timeout_ms) {
     // directly with WIFI_FAST_SCAN. This skips the ~10s all-channel re-scan
     // the driver does with WIFI_ALL_CHANNEL_SCAN + WIFI_CONNECT_AP_BY_SIGNAL.
     // Fall back to the full scan when no cache is available (e.g. reconnect
-    // after the AP changed channels).
+    // after the AP changed channels). The cache is also written by background
+    // scan refreshes, so read it under s_hint_mutex.
     bool have_bssid = false;
+    xSemaphoreTake(s_hint_mutex, portMAX_DELAY);
     for (int i = 0; i < s_bssid_cache_count; i++) {
         if (strcmp(s_bssid_cache[i].ssid, ssid) == 0) {
             memcpy(wc.sta.bssid, s_bssid_cache[i].bssid, 6);
@@ -415,6 +459,7 @@ bool wifi_mgr_connect(const char *ssid, const char *password, int timeout_ms) {
         ESP_LOGI(TAG, "starting fast scan on saved channel %u",
                  wc.sta.channel);
     }
+    xSemaphoreGive(s_hint_mutex);
 
     if (have_bssid || have_channel_hint) {
         wc.sta.scan_method = WIFI_FAST_SCAN;
@@ -455,6 +500,10 @@ bool wifi_mgr_connect(const char *ssid, const char *password, int timeout_ms) {
     atomic_store(&s_sta_idle, false);
     err = esp_wifi_connect();
     if (err != ESP_OK) {
+        /* The connection never started, so no DISCONNECTED event will come to
+         * clear this: leaving it false makes every wifi_mgr_scan() entrance
+         * wait its full 1 s and every rejoin pay the disconnect dance. */
+        atomic_store(&s_sta_idle, true);
         ESP_LOGE(TAG, "wifi connect start failed: %s", esp_err_to_name(err));
         goto done;
     }
@@ -472,8 +521,10 @@ bool wifi_mgr_connect(const char *ssid, const char *password, int timeout_ms) {
         // chasing a stale channel hint used to repeat the same fast scan
         // forever; the next attempt does a full scan (AP may have changed
         // channel or gone away).
+        xSemaphoreTake(s_hint_mutex, portMAX_DELAY);
         s_bssid_cache_count = 0;
         memset(&s_channel_hint, 0, sizeof(s_channel_hint));
+        xSemaphoreGive(s_hint_mutex);
     }
 
 done:
@@ -491,10 +542,13 @@ bool wifi_mgr_seed_channel_hint(const char *ssid, uint8_t channel) {
     if (!ssid || !channel_hint_valid(channel)) return false;
     size_t ssid_len = strnlen(ssid, sizeof(s_channel_hint.ssid));
     if (ssid_len == 0 || ssid_len >= sizeof(s_channel_hint.ssid)) return false;
+    if (!s_hint_mutex) return false;   // called before wifi_mgr_init()
 
+    xSemaphoreTake(s_hint_mutex, portMAX_DELAY);
     memset(&s_channel_hint, 0, sizeof(s_channel_hint));
     memcpy(s_channel_hint.ssid, ssid, ssid_len);
     s_channel_hint.channel = channel;
+    xSemaphoreGive(s_hint_mutex);
     return true;
 }
 
@@ -541,8 +595,10 @@ void wifi_mgr_restart(void)
     }
     // A wedged join may be chasing a stale AP: drop both shortcuts so the
     // next join scans fully instead of fast-scanning a dead BSSID/channel.
+    xSemaphoreTake(s_hint_mutex, portMAX_DELAY);
     s_bssid_cache_count = 0;
     memset(&s_channel_hint, 0, sizeof(s_channel_hint));
+    xSemaphoreGive(s_hint_mutex);
     s_retry = 0;
     s_reconnect_backoff_ms = RECONNECT_BACKOFF_MIN_MS;
     atomic_store(&s_sta_idle, true);
@@ -664,6 +720,9 @@ int wifi_mgr_scan(wifi_scan_entry_t *out, int max_entries, uint8_t channel,
         // Cache the strongest BSSID for this SSID (first seen = strongest,
         // since recs is RSSI-sorted). Retain entries missed by a BLE
         // coexistence refresh so Connect can still use the boot-scan target.
+        // Under s_hint_mutex: wifi_mgr_connect reads and invalidates this
+        // cache from other tasks.
+        xSemaphoreTake(s_hint_mutex, portMAX_DELAY);
         int cached = -1;
         for (int j = 0; j < s_bssid_cache_count; j++) {
             if (strcmp(s_bssid_cache[j].ssid, ssid) == 0) {
@@ -682,6 +741,7 @@ int wifi_mgr_scan(wifi_scan_entry_t *out, int max_entries, uint8_t channel,
             entry->rssi = recs[i].rssi;
             entry->channel = recs[i].primary;
         }
+        xSemaphoreGive(s_hint_mutex);
         n++;
     }
     free(recs);

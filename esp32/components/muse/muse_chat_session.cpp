@@ -579,7 +579,15 @@ static int ws_upgrade(esp_tls_t *tls, const char *vm_id, const char *token)
         }
     }
     if (have >= 12 && !memcmp(hdr, "HTTP/", 5)) {
+        /* hdr is not NUL-terminated (the header search above stops at
+         * "\r\n\r\n" but keeps no terminator). atoi only needs the three
+         * status digits at hdr[9..11]; stop the scan right after them so it
+         * can never walk off into uninitialized heap when the read ended
+         * exactly at 12 bytes. */
+        char saved = have > 12 ? hdr[12] : '\0';
+        hdr[12] = '\0';
         status = atoi(hdr + 9);
+        hdr[12] = saved;
     }
     free(hdr);
     return status;
@@ -982,14 +990,17 @@ static void turn_fail(const char *why)
     turn_finish();
 }
 
-/* Ends the turn once its reply is in; `complete` is false when it was cut off. */
+/* Ends the turn once its reply is in; `complete` is false when it was cut off
+ * (the turn ceiling hit while the reply was still arriving). The DONE event
+ * then carries "REPLY INCOMPLETE" so the voice path can fail the turn instead
+ * of ending a truncated reply as if it were whole (upstream 91410c5). */
 static void turn_done(bool complete)
 {
     if (s_turn.text) {
         muse_hatch_console("done", nullptr, "\"messages\":%d,\"complete\":%s", s_turn.nmsgs,
                            complete ? "true" : "false");
     }
-    emit(MUSE_HATCH_EV_DONE, nullptr);
+    emit(MUSE_HATCH_EV_DONE, complete ? nullptr : "REPLY INCOMPLETE");
     turn_finish();
 }
 
@@ -1343,7 +1354,18 @@ static void append_text(msg_t &m, const char *text)
         if (!m.len) {
             full[0] = '\0';
         }
-        strlcat(full, text, TEXT_MAX);
+        /* Append whole UTF-8 characters even when the caption buffer is
+         * nearly full: strlcat cuts mid-character, and the caption would
+         * end in a broken glyph. Same trick as muse_chat_link.c's
+         * text_append. m.len below still counts every byte sent. */
+        size_t used = strlen(full);
+        size_t n = add;
+        if (used + n >= TEXT_MAX) {
+            n = TEXT_MAX - used - 1;
+            while (n && ((unsigned char)text[n] & 0xc0) == 0x80) n--;
+        }
+        memcpy(full + used, text, n);
+        full[used + n] = '\0';
     }
     m.len += add;
     size_t have = strlen(m.tail);
@@ -1358,12 +1380,24 @@ static void append_text(msg_t &m, const char *text)
     strlcat(m.tail, text, sizeof(m.tail));
 }
 
+/* Reading pace for the silent path (no TTS, or TTS refused): what the
+ * captions will actually show -- the kept TEXT_MAX-1 bytes -- not the full
+ * reply. m.len also counts bytes the caption buffer dropped, so pacing to
+ * it would leave the captions finished but the turn silent for a while
+ * (upstream 793eca7). Without a texts buffer m.len is all there is. */
+static uint32_t silent_frames(const msg_t &m, int idx)
+{
+    size_t kept = s_turn.texts
+                      ? strnlen(s_turn.texts + idx * TEXT_MAX, TEXT_MAX - 1)
+                      : m.len;
+    return (uint32_t)(kept * MIC_RATE / TEXT_CHARS_PER_S);
+}
+
 /*
  * Shows a reply that hasn't started speaking: its opening lines, which the
  * speech starts with, so they can be read while the audio is on its way.
  * The spoken captions carry on from there.
- */
-static void show_reply_start(const msg_t &m)
+ */static void show_reply_start(const msg_t &m)
 {
     char line[EV_TEXT];
     if (s_turn.texts) {
@@ -1550,7 +1584,7 @@ static void hand_sentence(int i, const char *text, size_t unit, size_t buffered)
         s_turn.tts_msg = i;
         m.tts = TTS_ACTIVE;
         s_turn.silent = true;
-        m.pcm_frames = (uint32_t)(m.len * MIC_RATE / TEXT_CHARS_PER_S);
+        m.pcm_frames = silent_frames(m, i);
         return;
     }
     if (first) {
@@ -1650,16 +1684,17 @@ static void start_tts(void)
                 /* Nothing is coming back: read the captions at reading pace so
                  * the turn still ends on its own. */
                 s_turn.silent = true;
-                m.pcm_frames = (uint32_t)(m.len * MIC_RATE / TEXT_CHARS_PER_S);
+                m.pcm_frames = silent_frames(m, i);
             } else {
                 /* The whole message is handed at once; the caption clamp below
                  * is a no-op for it, as it is for streaming's handed sentences. */
                 m.spoken = strlen(s_turn.texts + i * TEXT_MAX);
             }
         } else {
-            m.pcm_frames = (uint32_t)(m.len * MIC_RATE / TEXT_CHARS_PER_S);
+            m.pcm_frames = silent_frames(m, i);
             s_turn.silent = true;
-            ESP_LOGI(TAG, "showing message %s (%u chars)", m.id, (unsigned)m.len);
+            ESP_LOGI(TAG, "showing message %s (%u chars)", m.id,
+                     (unsigned)(m.pcm_frames * TEXT_CHARS_PER_S / MIC_RATE));
         }
         show_reply_start(m);
         return;
@@ -2244,12 +2279,28 @@ extern "C" void muse_hatch_start(void)
         s.line = static_cast<char *>(psram_alloc(NDJSON_LINE_MAX));
         s.cap = NDJSON_LINE_MAX;
     }
+    bool streams_ok = true;
+    for (auto &s : s_streams) {
+        if (!s.line) streams_ok = false;
+    }
     s_turn.tts_msg = -1;
-    /* Stack in PSRAM: TLS, Noise and the MP3 decoder (~16 KB of scratch) all run here. */
-    if (!s_cmds || !s_events || !s_in || !s_out || !s_turn.chunk || !s_turn.mp3 || (VOICE_NOTE && !s_turn.note) || !s_pcm || !s_pcm16 ||
+    /* Stack in PSRAM: TLS, Noise and the MP3 decoder (~16 KB of scratch) all
+     * run here. Every resource must exist before hatch_task runs: feed_lines()
+     * writes through s_streams[i].line on the first reply byte. And if
+     * anything is missing, the queues must be torn down with it -- with
+     * s_cmds alive but no task serving it, a typed turn's text is queued and
+     * never freed while the caller believes it was sent. */
+    if (!s_cmds || !s_events || !s_in || !s_out || !s_turn.chunk || !s_turn.mp3 || (VOICE_NOTE && !s_turn.note) || !s_pcm || !s_pcm16 || !streams_ok ||
         xTaskCreatePinnedToCoreWithCaps(hatch_task, "muse_chat", 48 * 1024, nullptr, 5, nullptr, 0,
                                         MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) != pdPASS) {
         ESP_LOGE(TAG, "start failed");
+        s_cmds = nullptr;
+        s_events = nullptr;
+        s_in = nullptr;
+        s_out = nullptr;
+        /* The PSRAM blocks allocated above stay leaked: start failure leaves
+         * the device unusable for turns either way, and a later
+         * muse_hatch_start() retry re-allocates what it needs. */
     }
 }
 

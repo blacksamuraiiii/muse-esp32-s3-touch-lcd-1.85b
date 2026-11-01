@@ -1008,7 +1008,21 @@ static lv_display_t *display_start(lv_indev_t **touch)
     };
     esp_lcd_touch_handle_t tp;
     if (esp_lcd_touch_new_i2c_cst816s(tp_io, &tp_cfg, &tp) != ESP_OK) {
-        return NULL;
+        /* A dead touch controller must not take the display down with it:
+         * the panel, the backlight and LVGL are already up by this point,
+         * and every touch consumer (poll_buttons, muse_ui's s_indev,
+         * touch_autosleep) guards a NULL indev/handle. Run display-only;
+         * recovering the touch itself still needs a reboot. */
+        ESP_LOGE(TAG, "CST816S touch init failed; continuing without touch");
+        esp_lcd_panel_io_del(tp_io);
+        *touch = NULL;
+        s_tp_io = NULL;
+        s_tp = NULL;
+        s_touch_indev = NULL;
+        if (esp_lv_adapter_start() != ESP_OK) {
+            return NULL;
+        }
+        return disp;
     }
     s_tp_io = tp_io;
     s_tp = tp;

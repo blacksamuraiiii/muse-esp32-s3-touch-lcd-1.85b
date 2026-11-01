@@ -16,6 +16,7 @@
 
 #include "muse_menu.h"
 #include "muse_theme.h"   /* MUSE_THEME_*, the one colour table (1.5b) */
+#include "muse_font.h"    /* muse_font_btn() / muse_font_caption(), the one CJK chain */
 
 #include <stdio.h>
 #include <string.h>
@@ -536,8 +537,13 @@ static void align_on_bar(lv_obj_t *l, lv_align_t icon, int pad)
 void muse_menu_build(lv_obj_t *parent, int w, int h)
 {
     bool small = h < 200 || w < 200;
-    const lv_font_t *font = small ? FONT_COMPACT : &lv_font_montserrat_20;
-    const lv_font_t *fine = small ? &lv_font_unscii_8 : &lv_font_unscii_16;
+    /* Row text and fine print come from the one shared chain (muse_font.h):
+     * muse_font_btn() is Montserrat 20 with the CJK fallback, exactly the
+     * face the montserrat_20 here was; muse_font_caption() is unscii-16
+     * with the CJK fallback, exactly the unscii_16. The compact faces
+     * (12/14, unscii_8) have no chain counterpart and stay literal. */
+    const lv_font_t *font = small ? FONT_COMPACT : muse_font_btn();
+    const lv_font_t *fine = small ? &lv_font_unscii_8 : muse_font_caption();
     int pad = small ? 2 : 8;
     int title_h = small ? 13 : 40;
     int hint_h = small ? 17 : 44;
@@ -555,7 +561,7 @@ void muse_menu_build(lv_obj_t *parent, int w, int h)
     s_root = lv_obj_create(parent);
     lv_obj_remove_style_all(s_root);
     lv_obj_set_size(s_root, w, h);
-    lv_obj_set_style_bg_color(s_root, lv_color_black(), 0);
+    lv_obj_set_style_bg_color(s_root, lv_color_hex(MUSE_THEME_BG), 0);
     lv_obj_set_style_bg_opa(s_root, LV_OPA_COVER, 0);
     lv_obj_remove_flag(s_root, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_flag(s_root, LV_OBJ_FLAG_HIDDEN);

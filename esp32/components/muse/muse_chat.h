@@ -92,7 +92,8 @@ typedef enum {
     MUSE_HATCH_EV_NONE,
     MUSE_HATCH_EV_HEARD,    /* transcript so far (partial while talking, then final) */
     MUSE_HATCH_EV_REPLY,    /* reply text so far */
-    MUSE_HATCH_EV_DONE,     /* reply complete; the audio stream is drained after this */
+    MUSE_HATCH_EV_DONE,     /* reply complete (or its ceiling hit: text then says
+                             * "REPLY INCOMPLETE"); the audio stream is drained after this */
     MUSE_HATCH_EV_ERROR,    /* turn failed; text says why */
     MUSE_HATCH_EV_SENT,     /* the VM has acknowledged the note */
 } muse_hatch_ev_t;

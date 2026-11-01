@@ -11,9 +11,12 @@
  *     uses, but 6px higher than the other two mini-games' y = 44: their
  *     content starts lower, while this board's 3px frame is already at
  *     y = 60 (see SN_NAME_Y). It is page-level, so it never changes with
- *     the state. The score "本局 n 分" sits under the board at y = 308
- *     (7px of air below the 3px frame), also page-level, so it survives
- *     the dim on the PAUSED and OVER screens.
+ *     the state. The score line "本局 n 分 · 兑 m 金币" sits under the
+ *     board at y = 308 (7px of air below the 3px frame), also page-level,
+ *     so it survives the dim on the PAUSED and OVER screens. It carries
+ *     the conversion as well (user request 2026-11-01), so the number the
+ *     player is chasing is printed under the board and not only on the
+ *     OVER card.
  *   - Steering: the whole circle is four 90-degree sectors (45-degree
  *     boundaries) around the centre (180,180), compared with integers
  *     only -- no atan2. There is NO board-bounds test: a press anywhere
@@ -46,8 +49,24 @@
  *     Leaving goes through the shared back arrow, which is visible
  *     whenever the game is not PLAYING. OVER's circle carries the price
  *     ("- 5 金币"), because the fee is otherwise invisible.
- *     A blocked start shows one page-level note ("金币不够…" or
- *     "互动未就绪") at y = 280, above the dim.
+ *     A blocked start shows one page-level note ("金币不够（需 5 枚）" or
+ *     "互动未就绪") under the board, above the dim (see the message
+ *     slot below).
+ *   - Payout: OVER also carries "本局 n 分 · 兑 m 金币" at y = 64 (user
+ *     decision 2026-11-01: the score is settled once, at OVER, through
+ *     PET_PLAY_REWARD). m comes from muse_pet_round_coins() -- 1 point per
+ *     coin since the 2026-11-01 correction (it was 5, which paid a 13-point
+ *     round only 2 coins) with a 5-coin ceiling, so any ordinary round
+ *     refunds the 5-coin entry fee and no round can mint coins. The line
+ *     sits between the page name (ends ~55) and the title (100); at y = 81
+ *     the circle still leaves ~300 px of chord.
+ *   - Message slot (user request 2026-11-01, "提示统一显示在游戏区域下方"):
+ *     the band under the board (y = 304..325) hosts exactly ONE line at a
+ *     time, in this priority: refusal note > score line > START hint. The
+ *     note used to sit at y = 280, i.e. inside the board where it covered
+ *     the last two rows of cells; it now shares the score line's slot
+ *     (308), which is why its copy is the short one the sudoku page uses
+ *     (the chord under the board is only ~213 px at y = 325).
  *
  * Colours are the shared table in muse_theme.h, NOT the mockup's
  * palette: snake OK (mint green), food DANGER, centre rings ACCENT.
@@ -59,8 +78,10 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "muse_font.h"
+#include "muse_widgets.h"
 #include "muse_pet.h"
 #include "muse_snake.h"
 #include "muse_theme.h"
@@ -75,7 +96,14 @@
 #define SN_CENTRE_X0 125 /* CX - R */
 #define SN_CENTRE_Y0 125
 #define SN_CENTRE_SZ 110 /* 2 * R */
-#define SN_NOTE_Y 280
+/* Refusal note: below the board, sharing the score line's slot (user
+ * request 2026-11-01, "消息提示统一显示在游戏区域下方"). It used to sit at
+ * y = 280 -- inside the board, covering the last two rows of cells, which
+ * is where a snake running along the bottom edge lives. The band under the
+ * board only has room for one line, so refresh_display() shows the note and
+ * hides the score line and the START hint while a note is up. That also
+ * caps the note's width, hence the short copy (see charge_for_game()). */
+#define SN_NOTE_Y 308
 /* Page name above the board. page_header() in muse_interact_ui.c puts the
  * other two games' titles at TOP_MID y = 44, and this page copied that --
  * but their content starts at y = 68 or 84, while this board's frame is
@@ -91,18 +119,23 @@
  * ~181, outside the bezel. A 6px difference between a chevron at x = 68
  * and centred text at x = 180 is not readable as misalignment. */
 #define SN_NAME_Y 38
-/* "本局 n 分" under the board. The interaction pages put their coin line
- * at y = 302, but their content above ends at 274; this board's frame ends
- * at 300, so 308 keeps ~7px of air under the 3px frame instead of gluing
- * the text to it. Chord at the line's bottom (325) is ~213px for a ~115px
- * line. */
+/* "本局 n 分 · 兑 m 金币" under the board. The interaction pages put their
+ * coin line at y = 302, but their content above ends at 274; this board's
+ * frame ends at 300, so 308 keeps ~7px of air under the 3px frame instead
+ * of gluing the text to it. The line grew from ~115px to ~152px when the
+ * conversion was added (2026-11-01) and the chord at its bottom (325) is
+ * ~213px, so it still clears the bezel with room to spare. */
 #define SN_SCORE_Y 308
 #define SN_TITLE_Y 100
+/* Round payout line on the OVER card (see the file header). Between the
+ * page name (SN_NAME_Y, ends ~55) and SN_TITLE_Y, and 300 px of chord at
+ * its bottom edge, so a 13-glyph line never touches the bezel. */
+#define SN_PAYOUT_Y 64
 /* START hint, ONE line since 2026-11-01 (user request): "点四周转向，长按
  * 中间暂停" is ~208 px wide and its bottom (321) sits where the chord is
  * still ~224 px, so it clears the bezel. The old second slot (322, for
- * "游戏中长按中间暂停") is retired -- the score line owns the space under
- * the board in every other state. */
+ * "游戏中长按中间暂停") is retired -- the score line and the refusal note
+ * own the space under the board in every other state (see SN_NOTE_Y). */
 #define SN_HINT_Y 304
 /* Hold forgiveness: the finger may drift this far and still count as
  * "holding the centre", so a resting thumb mid-steer never pauses. */
@@ -116,6 +149,8 @@ static lv_obj_t *s_touch;
 static lv_obj_t *s_start_ov;
 static lv_obj_t *s_pause_ov;
 static lv_obj_t *s_over_ov;
+static lv_obj_t *s_over_payout;
+static lv_obj_t *s_hint;
 static lv_obj_t *s_food;
 static lv_obj_t *s_eye1;
 static lv_obj_t *s_eye2;
@@ -133,6 +168,11 @@ static bool s_press_in_centre;
 static lv_timer_t *s_timer;
 static muse_snake_t s_game;
 static bool s_seeded;
+/* Round payout bookkeeping (user decision 2026-11-01): the score is converted
+ * exactly once, when the round reaches OVER, and s_round_coins remembers what
+ * the wallet actually accepted so the OVER card cannot claim more. */
+static bool s_settled;
+static uint32_t s_round_coins;
 
 static lv_obj_t *label(lv_obj_t *parent, const lv_font_t *font, uint32_t color,
                        const char *text)
@@ -181,22 +221,10 @@ static void line(lv_obj_t *parent, int x1, int y1, int x2, int y2,
 }
 
 static lv_obj_t *btn(lv_obj_t *parent, int x, int y, int w, int h,
-                     uint32_t bg, int radius, lv_event_cb_t cb)
+                     int radius, lv_event_cb_t cb)
 {
-    lv_obj_t *b = lv_btn_create(parent);
-    lv_obj_set_size(b, w, h);
+    lv_obj_t *b = muse_card(parent, w, h, radius);
     lv_obj_set_pos(b, x, y);
-    lv_obj_set_style_bg_opa(b, LV_OPA_COVER, 0);
-    lv_obj_set_style_bg_color(b, lv_color_hex(bg), 0);
-    lv_obj_set_style_bg_color(b, lv_color_hex(MUSE_THEME_CARD_PRESSED),
-                              LV_STATE_PRESSED);
-    lv_obj_set_style_radius(b, radius, 0);
-    lv_obj_set_style_border_width(b, 0, 0);
-    /* The default theme paints lv_btn with pad_hor = 16 / pad_ver = 10
-     * (LV_DPI_DEF 130, DISP_MEDIUM), and children are measured from that
-     * padded box -- so without this line the centre circle's ▶ symbol and
-     * 继续 label sat 10px low. Same root cause as the sudoku pad card. */
-    lv_obj_set_style_pad_all(b, 0, 0);
     lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, NULL);
     return b;
 }
@@ -204,7 +232,7 @@ static lv_obj_t *btn(lv_obj_t *parent, int x, int y, int w, int h,
 static lv_obj_t *centre_button(lv_obj_t *parent, lv_event_cb_t cb)
 {
     lv_obj_t *b = btn(parent, SN_CENTRE_X0, SN_CENTRE_Y0, SN_CENTRE_SZ,
-                      SN_CENTRE_SZ, MUSE_THEME_CARD, SN_CENTRE_R, cb);
+                      SN_CENTRE_SZ, SN_CENTRE_R, cb);
     lv_obj_set_style_border_width(b, 2, 0);
     lv_obj_set_style_border_color(b, lv_color_hex(MUSE_THEME_ACCENT), 0);
     return b;
@@ -225,7 +253,7 @@ static lv_obj_t *overlay(lv_obj_t *page, bool dim)
         lv_obj_set_size(d, 360, 360);
         lv_obj_set_pos(d, 0, 0);
         lv_obj_set_style_bg_opa(d, LV_OPA_50, 0);
-        lv_obj_set_style_bg_color(d, lv_color_hex(0x000000), 0);
+        lv_obj_set_style_bg_color(d, lv_color_hex(MUSE_THEME_BG), 0);
         lv_obj_set_style_border_width(d, 0, 0);
         lv_obj_set_style_radius(d, 0, 0);
         lv_obj_remove_flag(d, LV_OBJ_FLAG_SCROLLABLE);
@@ -264,10 +292,40 @@ static void sector_dashes(lv_obj_t *parent)
     }
 }
 
+/* The band under the board (see SN_NOTE_Y) has room for exactly one line,
+ * so the three candidates take it in this order: a refusal note first (it
+ * is the answer to the tap that was just refused), then the score line,
+ * then the START hint. Without this a refused start printed the note and
+ * the hint on top of each other at y = 304 / 308. */
+static void sync_message_band(void)
+{
+    bool note_up = s_note && !lv_obj_has_flag(s_note, LV_OBJ_FLAG_HIDDEN);
+    if (s_hint) {
+        set_hidden(s_hint, note_up);
+    }
+}
+
+/* lv_label_set_text has no same-text short circuit in LVGL 9.5; the score
+ * line is rewritten every 500 ms tick, so skip when nothing changed (same
+ * trick as muse_menu's set_text). */
+static void set_label(lv_obj_t *l, const char *text)
+{
+    if (strcmp(lv_label_get_text(l), text) != 0) {
+        lv_label_set_text(l, text);
+    }
+}
+
 static void show_note(const char *text)
 {
     lv_label_set_text(s_note, text);
     lv_obj_remove_flag(s_note, LV_OBJ_FLAG_HIDDEN);
+    sync_message_band();
+}
+
+static void hide_note(void)
+{
+    lv_obj_add_flag(s_note, LV_OBJ_FLAG_HIDDEN);
+    sync_message_band();
 }
 
 /* The entry fee (user decision 2026-10-31): 5 coins per game, gated
@@ -281,14 +339,20 @@ static bool charge_for_game(void)
         return false;
     }
     if (snap.coins < MUSE_PET_GAME_STAKE) {
-        show_note("金币不够，先摸摸 / 喂饭 / 抽运势");
+        /* Short copy on purpose (see SN_NOTE_Y): the slot under the board
+         * leaves ~213px of chord, and the long sentence the other pages use
+         * is ~272px wide. Same wording as the sudoku page's note. */
+        char note[32];
+        snprintf(note, sizeof(note), "金币不够（需 %u 枚）",
+                 (unsigned)MUSE_PET_GAME_STAKE);
+        show_note(note);
         return false;
     }
     if (!muse_pet_request(PET_FEE)) {
         show_note("互动未就绪");
         return false;
     }
-    lv_obj_add_flag(s_note, LV_OBJ_FLAG_HIDDEN);
+    hide_note();
     return true;
 }
 
@@ -357,15 +421,52 @@ static void sync_snake(void)
     lv_obj_remove_flag(s_eye2, LV_OBJ_FLAG_HIDDEN);
 }
 
+/* Score -> coins, once per round, at OVER (user decision 2026-11-01).
+ * muse_pet_round_coins() is the only conversion curve (1 point per food,
+ * 1 point per coin, 5 coins per round ceiling), so any round that eats
+ * five foods refunds the 5-coin entry. A refused request (worker not ready or
+ * queue full) leaves s_round_coins at 0: the card must never claim coins
+ * the wallet did not get. */
+static void settle_round(void)
+{
+    if (s_settled) {
+        return;
+    }
+    s_settled = true;
+    uint32_t coins = muse_pet_round_coins(s_game.score);
+    s_round_coins = 0;
+    if (coins != 0 && muse_pet_request_play_reward(coins)) {
+        s_round_coins = coins;
+    }
+}
+
 static void refresh_display(void)
 {
-    if (s_game.state == MUSE_SNAKE_START) {
+    /* One line under the board: the note wins the slot, the score line
+     * takes it otherwise (and is hidden on START, where the hint sits there
+     * instead). The conversion is printed live from the same curve the
+     * settlement uses, so the number under the board and the number on the
+     * OVER card can never disagree -- except at OVER, where the line shows
+     * what the wallet actually accepted, not what it was asked for. */
+    bool note_up = !lv_obj_has_flag(s_note, LV_OBJ_FLAG_HIDDEN);
+    if (s_game.state == MUSE_SNAKE_START || note_up) {
         lv_obj_add_flag(s_score, LV_OBJ_FLAG_HIDDEN);
     } else {
-        char buf[24];
-        snprintf(buf, sizeof(buf), "本局 %u 分", (unsigned)s_game.score);
-        lv_label_set_text(s_score, buf);
+        char buf[64];
+        uint32_t coins = (s_game.state == MUSE_SNAKE_OVER)
+                             ? s_round_coins
+                             : muse_pet_round_coins(s_game.score);
+        snprintf(buf, sizeof(buf), "本局 %u 分 · 兑 %u 金币",
+                 (unsigned)s_game.score, (unsigned)coins);
+        set_label(s_score, buf);
         lv_obj_remove_flag(s_score, LV_OBJ_FLAG_HIDDEN);
+    }
+    sync_message_band();
+    if (s_game.state == MUSE_SNAKE_OVER) {
+        char buf[64];
+        snprintf(buf, sizeof(buf), "本局 %u 分 · 兑 %u 金币",
+                 (unsigned)s_game.score, (unsigned)s_round_coins);
+        set_label(s_over_payout, buf);
     }
     set_hidden(s_start_ov, s_game.state != MUSE_SNAKE_START);
     set_hidden(s_pause_ov, s_game.state != MUSE_SNAKE_PAUSED);
@@ -392,6 +493,8 @@ static void on_start(lv_event_t *e)
         return;
     }
     seed_once();
+    s_settled = false;
+    s_round_coins = 0;
     muse_snake_start(&s_game);
     lv_timer_resume(s_timer);
     refresh_display();
@@ -405,6 +508,8 @@ static void on_restart(lv_event_t *e)
         return;
     }
     seed_once();
+    s_settled = false;
+    s_round_coins = 0;
     muse_snake_restart(&s_game);
     lv_timer_resume(s_timer);
     refresh_display();
@@ -495,6 +600,9 @@ static void on_tick(lv_timer_t *t)
     muse_snake_tick(&s_game);
     if (s_game.state == MUSE_SNAKE_OVER) {
         lv_timer_pause(s_timer);
+        /* The round is over: convert the score once, here and nowhere else,
+         * so leaving the page (which only pauses) can never settle twice. */
+        settle_round();
     }
     refresh_display();
 }
@@ -598,9 +706,9 @@ void muse_snake_ui_build(lv_obj_t *page, lv_event_cb_t back_cb)
      * old second line's slot (SN_HINT2_Y) is retired, not re-used: the
      * score line owns 308 in every other state and the round edge below
      * 320 shears long text. */
-    lv_obj_t *hint = label(s_start_ov, muse_font_cjk(), MUSE_THEME_DIM,
-                           "点四周转向，长按中间暂停");
-    lv_obj_align(hint, LV_ALIGN_TOP_MID, 0, SN_HINT_Y);
+    s_hint = label(s_start_ov, muse_font_cjk(), MUSE_THEME_DIM,
+                   "点四周转向，长按中间暂停");
+    lv_obj_align(s_hint, LV_ALIGN_TOP_MID, 0, SN_HINT_Y);
 
     /* PAUSED overlay: dim + title + 继续 circle + dashes. No restart:
      * see the file header. */
@@ -619,38 +727,41 @@ void muse_snake_ui_build(lv_obj_t *page, lv_event_cb_t back_cb)
      * the bezel. Leaving is the back arrow's job; restarting is offered
      * on the OVER card, where the price is printed. */
 
-    /* OVER overlay: dim + title + 再来一局 circle. The score needs no copy
-     * here: the page-level "本局 n 分" line sits below the board and is
-     * created after the overlays, so it stays readable through the dim. */
+    /* OVER overlay: dim + payout line + title + 再来一局 circle. The score
+     * needs no copy here: the page-level "本局 n 分" line sits below the
+     * board and is created after the overlays, so it stays readable through
+     * the dim. s_over_payout restates it with the round's conversion --
+     * that line is written by refresh_display() only while OVER is up. */
     s_over_ov = overlay(page, true);
+    s_over_payout = label(s_over_ov, muse_font_cjk(), MUSE_THEME_GOLD, "");
+    lv_obj_align(s_over_payout, LV_ALIGN_TOP_MID, 0, SN_PAYOUT_Y);
     lv_obj_t *ot = label(s_over_ov, muse_font_cjk(), MUSE_THEME_ACCENT, "游戏结束");
     lv_obj_align(ot, LV_ALIGN_TOP_MID, 0, SN_TITLE_Y);
     lv_obj_t *over_btn = centre_button(s_over_ov, on_restart);
     lv_obj_t *ol = label(over_btn, muse_font_cjk(), MUSE_THEME_TEXT, "再来一局");
     lv_obj_align(ol, LV_ALIGN_TOP_MID, 0, 32);
     /* on_restart charges through charge_for_game() the moment it is
-     * pressed, so the price belongs on the button. */
-    lv_obj_t *price = label(over_btn, muse_font_cjk(), MUSE_THEME_GOLD, "- 5 金币");
+     * pressed, so the price belongs on the button (fee from the macro,
+     * not a literal, so a stake change cannot desync the copy). */
+    char price_buf[16];
+    snprintf(price_buf, sizeof(price_buf), "- %u 金币",
+             (unsigned)MUSE_PET_GAME_STAKE);
+    lv_obj_t *price = label(over_btn, muse_font_cjk(), MUSE_THEME_GOLD, price_buf);
     lv_obj_align(price, LV_ALIGN_TOP_MID, 0, 56);
 
     /* Back (shared, topmost): same pattern as Sudoku, hidden while
      * PLAYING. Created after the overlays so it stays clickable. */
-    s_back = lv_obj_create(page);
-    lv_obj_remove_style_all(s_back);
-    lv_obj_set_size(s_back, 56, 48);
-    lv_obj_align(s_back, LV_ALIGN_TOP_MID, -112, 28);
-    lv_obj_add_event_cb(s_back, back_cb, LV_EVENT_CLICKED, NULL);
-    lv_obj_t *arrow_lbl = label(s_back, &lv_font_montserrat_20, MUSE_THEME_ACCENT,
-                                LV_SYMBOL_LEFT);
-    lv_obj_center(arrow_lbl);
+    s_back = muse_back_button(page, back_cb);
 
     /* Name + score + note, page-level and last, so they stay above the
      * dim. The name is the same slot/page_header() pattern the other two
      * mini-games use ("贪吃蛇" above the play area), and the score takes
      * the coin line's slot from the interaction pages (y = 302, under the
      * board) so all four screens read the same way. */
-    lv_obj_t *name = label(page, muse_font_cjk(), MUSE_THEME_ACCENT, "贪吃蛇");
-    lv_obj_align(name, LV_ALIGN_TOP_MID, 0, SN_NAME_Y);
+    /* The shared subpage title (muse_font_cjk + ACCENT); y stays this
+     * page's calibrated 38 -- at 44 the title's ink ran into the board
+     * frame (see SN_NAME_Y above, user report 2026-11-01). */
+    muse_page_title(page, "贪吃蛇", SN_NAME_Y);
     s_score = label(page, muse_font_cjk(), MUSE_THEME_TEXT, "");
     lv_obj_align(s_score, LV_ALIGN_TOP_MID, 0, SN_SCORE_Y);
     s_note = label(page, muse_font_cjk(), MUSE_THEME_DANGER, "");
@@ -671,8 +782,10 @@ void muse_snake_ui_show(void)
      * landed in the centre" latch, or a later hold elsewhere would be
      * judged against coordinates from the previous visit. */
     s_press_in_centre = false;
-    refresh_display();
+    /* Clear the stale note BEFORE the refresh, or the refresh would keep
+     * the score line hidden for a note that is already gone. */
     lv_obj_add_flag(s_note, LV_OBJ_FLAG_HIDDEN);
+    refresh_display();
 }
 
 void muse_snake_ui_hide(void)
@@ -681,4 +794,21 @@ void muse_snake_ui_hide(void)
         pause_game();
     }
     lv_obj_add_flag(s_note, LV_OBJ_FLAG_HIDDEN);
+    sync_message_band();
+}
+
+void muse_snake_ui_fee_refused(void)
+{
+    if (s_game.state == MUSE_SNAKE_PLAYING ||
+        s_game.state == MUSE_SNAKE_PAUSED) {
+        /* The round never settled (the fee was refused): back to START,
+         * no score kept. Same contract as muse_whackamole_ui_fee_refused. */
+        muse_snake_init(&s_game);
+        lv_timer_pause(s_timer);
+    }
+    char note[32];
+    snprintf(note, sizeof(note), "金币不够（需 %u 枚）",
+             (unsigned)MUSE_PET_GAME_STAKE);
+    show_note(note);
+    refresh_display();
 }

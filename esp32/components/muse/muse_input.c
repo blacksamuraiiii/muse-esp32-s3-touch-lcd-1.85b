@@ -43,6 +43,8 @@
 #include "muse_console.h"
 #include "muse_rtc.h"
 #include "muse_link.h"
+#include "muse_tts.h"
+#include "muse_audio_play.h"
 #include "muse_mem.h"
 #include "muse_menu.h"
 #include "muse_pet.h"
@@ -189,6 +191,11 @@ static void power_off(void)
     muse_state_set_level(0);
     muse_state_set_mode(MUSE_MODE_OFF);
     muse_state_set_caption("GOODBYE!");
+    /* Stop whatever is speaking before the goodbye shows: a TTS fetch or a
+     * URL playback still running would talk over the caption (the deep sleep
+     * would kill them soon anyway, but the goodbye is what the user sees). */
+    muse_tts_cancel();
+    muse_audio_play_stop();
     /* The last line before the lights go out: without it a night's recording
      * ends in mid-air and "it stopped at 23:40" has no cause attached. */
 #if CONFIG_MUSE_TELEMETRY
@@ -1172,10 +1179,13 @@ static void pet_console_snapshot(void)
         return;
     }
     printf("@pet coins=%u touch=%u feed_mask=0x%x fortune_day=%d fortune=%u "
-           "decay_day=%d decay_notice=%u\n",
+           "decay_day=%d decay_notice=%u sudoku_day=%d sudoku_paid=%u "
+           "sudoku_coins=%u\n",
            (unsigned)s.coins, (unsigned)s.daily_touch_coins,
            (unsigned)s.feed_mask, (int)s.fortune_day,
-           (unsigned)s.fortune, (int)s.decay_day, (unsigned)s.decay_notice);
+           (unsigned)s.fortune, (int)s.decay_day, (unsigned)s.decay_notice,
+           (int)s.sudoku_day, (unsigned)s.sudoku_entry_paid,
+           (unsigned)s.sudoku_reward_coins);
     fflush(stdout);
 }
 
@@ -1304,12 +1314,18 @@ static bool console_command(char *line, bool whole)
     }
 #endif
 #if CONFIG_MUSE_BUILD_TEST
-    if (!strncmp(line, "alarm", 5)) {
-        /* Bench hook, Test build only: ">alarm=HH:MM:mask" sets and arms it,
-         * ">alarm=off" turns it off, ">alarm" reports the state. The panel rows
-         * are the product path; this exists so the acceptance cases in
-         * docs/20261023-待办.md §2.4 can be run from a cable. Mask: bit0 Sunday
-         * .. bit6 Saturday, 0 once, 127 every day, 62 weekdays. */
+    /* Bench hook, Test build only: ">alarm=HH:MM:mask" sets and arms it with
+     * a day mask, ">alarm=off" turns it off, ">alarm" reports the state.
+     * Matched narrowly on purpose: this block used to take every alarm*
+     * command by a 5-byte prefix, so the acceptance cases in
+     * docs/20261023-待办.md §2.4 (alarm.arm=N, alarm.stop, alarm.test,
+     * alarm=HH:MM) never ran in Test builds -- those now fall through to the
+     * general alarm block below. Mask: bit0 Sunday .. bit6 Saturday, 0 once,
+     * 127 every day, 62 weekdays. */
+    if (!strcmp(line, "alarm") ||
+        (!strncmp(line, "alarm=", 6) &&
+         (strcmp(line + 6, "off") == 0 ||
+          (strchr(line + 6, ':') && strchr(strchr(line + 6, ':') + 1, ':'))))) {
         if (line[5] == '=') {
             const char *v = line + 6;
             if (!strcmp(v, "off")) {
@@ -1607,6 +1623,17 @@ static bool console_command(char *line, bool whole)
                    pet_result_name(fb.result));
             fflush(stdout);
             pet_console_snapshot();
+            return true;
+        }
+        if (!strncmp(line, "pet.sudoku", 10)) {
+            /* The sudoku ledger is day-scoped, so a bench cannot wait for
+             * midnight: "pet.sudoku entry" charges the day's ticket (free a
+             * second time), "pet.sudoku solve" pays the day's 5 coins (PET_CAP
+             * after that), no argument = entry. Both settle through the worker,
+             * so the caps are the real ones. */
+            bool solve = (line[10] == ' ') && !strncmp(line + 11, "solve", 5);
+            pet_console_do(solve ? PET_SUDOKU_SOLVE : PET_SUDOKU_ENTRY,
+                           solve ? "sudoku-solve" : "sudoku-entry");
             return true;
         }
 #endif /* CONFIG_MUSE_BUILD_TEST: mutating pet.* commands */

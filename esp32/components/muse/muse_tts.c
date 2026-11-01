@@ -77,6 +77,8 @@ static volatile bool s_busy;          /* a reply is being fetched right now */
 static bool s_short_wait;            /* this fetch started on TTS_HTTP_FIRST_MS */
 static bool s_reply_first;           /* the next fetch_reply() is a reply's first */
 static char *volatile s_pending;      /* text handed to the worker by muse_tts_speak */
+static volatile bool s_ring_dirty;    /* a reset failed on a worker blocked in ring_send:
+                                         stale bytes of an older reply are in the ring */
 static volatile size_t s_bytes;       /* bytes of the request being read */
 static volatile int64_t s_first_byte_us; /* when the first body byte arrived */
 
@@ -144,9 +146,14 @@ static bool ring_send(const uint8_t *d, size_t len)
         size_t n = xStreamBufferSend(s_ring, d + off, len - off, pdMS_TO_TICKS(TTS_SEND_TIMEOUT_MS));
         if (n == 0) {
             /* Nobody is draining: the turn moved on. Stop rather than wedge a
-             * socket, and let the task wind down. */
-            ESP_LOGW(TAG, "audio not being read, stopping the fetch");
-            s_abort = true;
+             * socket, and let the task wind down. Only flag abort while this
+             * fetch is still the current generation: after a barge-in this
+             * timeout can fire well into the next reply, and an unconditional
+             * s_abort here would silence every byte of it. */
+            if (s_fetch_gen == s_gen) {
+                ESP_LOGW(TAG, "audio not being read, stopping the fetch");
+                s_abort = true;
+            }
             return false;
         }
         off += n;
@@ -172,7 +179,9 @@ static void gate_feed(const uint8_t *d, size_t len)
         if (!mp3_prefix_ok(s_prefix, s_prefix_n)) {
             ESP_LOGW(TAG, "muse.tts: bad MP3 payload len=%u first=0x%02x", (unsigned)s_bytes, s_prefix[0]);
             s_payload_bad = true;
-            s_abort = true;
+            if (s_fetch_gen == s_gen) {
+                s_abort = true;
+            }
             return;
         }
         s_payload_open = true;
@@ -362,6 +371,18 @@ static void tts_task(void *arg)
             if (!text) {
                 break;
             }
+            taskENTER_CRITICAL(&s_lock);
+            bool dirty = s_ring_dirty;
+            s_ring_dirty = false;
+            taskEXIT_CRITICAL(&s_lock);
+            if (dirty) {
+                /* A cancelled barge-in fetch left bytes in the ring (speak's
+                 * reset failed because this task was still blocked in
+                 * ring_send). Only this task writes the ring and
+                 * muse_tts_read() never blocks, so the reset here cannot
+                 * fail: old bytes must never open the next reply. */
+                xStreamBufferReset(s_ring);
+            }
             fetch_reply(text);
             free(text);
         }
@@ -398,7 +419,10 @@ bool muse_tts_speak(const char *text)
             return false;
         }
     }
-    xStreamBufferReset(s_ring);
+    /* A reset fails while this task's previous fetch still has the worker
+     * blocked in ring_send; that failure is handed to the worker as
+     * s_ring_dirty, which clears the ring before the new text is fetched. */
+    bool ring_dirty = xStreamBufferReset(s_ring) != pdTRUE;
     s_reply_first = true;
     char *copy = strdup(text);
     if (!copy) return false;
@@ -409,6 +433,7 @@ bool muse_tts_speak(const char *text)
     s_fetch_done = false;
     s_busy = true;
     s_gen++;
+    if (ring_dirty) s_ring_dirty = true;
     taskEXIT_CRITICAL(&s_lock);
     free(stale);
     xTaskNotifyGive(s_task);
@@ -462,9 +487,16 @@ void muse_tts_cancel(void)
      * replaces it speak at once instead of coming out as a silent turn. */
     s_abort = true;
     s_gen++;
+    /* The reset fails while the worker is blocked in ring_send on the cancelled
+     * fetch; s_ring_dirty makes the worker clear the ring before the next text
+     * is fetched, so the old reply's tail cannot play into the new one. */
+    bool ring_dirty = s_ring && xStreamBufferReset(s_ring) != pdTRUE;
     taskENTER_CRITICAL(&s_lock);
     s_busy = false;
     s_fetch_done = true;
+    char *stale = s_pending;   /* drop queued text with the turn that owned it */
+    s_pending = NULL;
+    if (ring_dirty) s_ring_dirty = true;
     taskEXIT_CRITICAL(&s_lock);
-    if (s_ring) xStreamBufferReset(s_ring);
+    free(stale);
 }

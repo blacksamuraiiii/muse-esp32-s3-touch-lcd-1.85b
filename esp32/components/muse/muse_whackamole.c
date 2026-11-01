@@ -45,12 +45,12 @@ static int free_holes(const muse_whackamole_t *g, int *out)
 
 static void spawn_one(muse_whackamole_t *g)
 {
-    int free[MUSE_WHACKAMOLE_HOLES];
-    int n = free_holes(g, free);
+    int free_idx[MUSE_WHACKAMOLE_HOLES];
+    int n = free_holes(g, free_idx);
     if (n == 0) {
         return;
     }
-    int hole = free[rand() % n];
+    int hole = free_idx[rand() % n];
     g->holes[hole].state = MUSE_WHACKAMOLE_UP;
     g->holes[hole].ms = 0;
     g->holes[hole].visible_ms = pace_ms(g->elapsed_ms);

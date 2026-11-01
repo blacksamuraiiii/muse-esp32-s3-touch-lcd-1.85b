@@ -619,7 +619,7 @@ static void show_speaker(bool on)
 {
     /* Off is the one that stands out, like a lit flashlight button. */
     lv_obj_set_style_bg_color(s_speaker, lv_color_hex(on ? MUSE_THEME_METER_OFF : MUSE_THEME_TEXT), 0);
-    lv_obj_set_style_text_color(s_speaker_icon, lv_color_hex(on ? MUSE_THEME_DIM : 0x000000), 0);
+    lv_obj_set_style_text_color(s_speaker_icon, lv_color_hex(on ? MUSE_THEME_DIM : MUSE_THEME_BG), 0);
     lv_label_set_text(s_speaker_icon, on ? LV_SYMBOL_VOLUME_MAX : LV_SYMBOL_MUTE);
     s_shown_speaker = on;
 }
@@ -945,7 +945,7 @@ static void on_ring_draw(lv_event_t *e)
 static void build_screen(void)
 {
     lv_obj_t *scr = lv_screen_active();
-    lv_obj_set_style_bg_color(scr, lv_color_black(), 0);
+    lv_obj_set_style_bg_color(scr, lv_color_hex(MUSE_THEME_BG), 0);
     lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
     lv_obj_remove_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
 
@@ -953,7 +953,7 @@ static void build_screen(void)
     if (muse_board->touch) {
         /* Swipe left from Muse for settings. */
         s_tv = lv_tileview_create(scr);
-        lv_obj_set_style_bg_color(s_tv, lv_color_black(), 0);
+        lv_obj_set_style_bg_color(s_tv, lv_color_hex(MUSE_THEME_BG), 0);
         lv_obj_set_style_bg_opa(s_tv, LV_OPA_COVER, 0);
         lv_obj_set_scrollbar_mode(s_tv, LV_SCROLLBAR_MODE_OFF);
         /* Order is interaction, face, settings (design §2). Direction constants
@@ -962,7 +962,7 @@ static void build_screen(void)
          * "left swipe / right swipe" mapping. */
         s_interact = lv_tileview_add_tile(s_tv, 0, 0, LV_DIR_RIGHT);
         lv_obj_set_scrollbar_mode(s_interact, LV_SCROLLBAR_MODE_OFF);
-        lv_obj_set_style_bg_color(s_interact, lv_color_black(), 0);
+        lv_obj_set_style_bg_color(s_interact, lv_color_hex(MUSE_THEME_BG), 0);
         lv_obj_set_style_bg_opa(s_interact, LV_OPA_COVER, 0);
         s_face = lv_tileview_add_tile(s_tv, 1, 0, LV_DIR_LEFT | LV_DIR_RIGHT);
         /* It never scrolls, but LVGL would size its scrollbars from all its
@@ -970,7 +970,7 @@ static void build_screen(void)
         lv_obj_set_scrollbar_mode(s_face, LV_SCROLLBAR_MODE_OFF);
         /* Match the avatar's black canvas; the tile's theme background otherwise
          * shows as a different-coloured square around the character. */
-        lv_obj_set_style_bg_color(s_face, lv_color_black(), 0);
+        lv_obj_set_style_bg_color(s_face, lv_color_hex(MUSE_THEME_BG), 0);
         lv_obj_set_style_bg_opa(s_face, LV_OPA_COVER, 0);
         s_settings = lv_tileview_add_tile(s_tv, 2, 0, LV_DIR_LEFT);
         lv_obj_add_event_cb(s_tv, tile_changed_cb, LV_EVENT_VALUE_CHANGED, NULL);
@@ -1095,7 +1095,7 @@ static void build_screen(void)
 
     /* The compact layout leaves the state to the avatar and the caption,
      * unless the screen is tall enough to fit it in small type above Muse. */
-    s_state_lbl = make_label(face, s_small ? &lv_font_unscii_8 : &lv_font_unscii_16, 0xffffff);
+    s_state_lbl = make_label(face, s_small ? &lv_font_unscii_8 : &lv_font_unscii_16, MUSE_THEME_TEXT);
     lv_obj_set_style_text_letter_space(s_state_lbl, s_small ? 1 : 2, 0);
     /* 1.5b: 4 px higher than before the reply band lost a row -- Muse moved
      * up with the taller band, and its hair ended up 1-2 px under READY. */
@@ -1126,7 +1126,7 @@ static void build_screen(void)
         lv_obj_set_size(s_caption_lbl, s_w, 2 * 8 + 2 + 4);
         lv_obj_set_style_pad_ver(s_caption_lbl, 2, 0);
         lv_obj_set_style_text_line_space(s_caption_lbl, 2, 0);
-        lv_obj_set_style_bg_color(s_caption_lbl, lv_color_black(), 0);
+        lv_obj_set_style_bg_color(s_caption_lbl, lv_color_hex(MUSE_THEME_BG), 0);
         lv_obj_set_style_bg_opa(s_caption_lbl, LV_OPA_70, 0);
         lv_label_set_long_mode(s_caption_lbl, LV_LABEL_LONG_MODE_DOTS);
         /* Touch screens need the caption above the navigation dots too. */
@@ -1260,7 +1260,7 @@ static lv_obj_t *make_control_icon(lv_obj_t *scr, const muse_button_hint_t *pos,
 {
     lv_obj_t *icon = make_label(scr, &lv_font_montserrat_28, color);
     lv_obj_set_size(icon, 36, 36);
-    lv_obj_set_style_bg_color(icon, lv_color_black(), 0);
+    lv_obj_set_style_bg_color(icon, lv_color_hex(MUSE_THEME_BG), 0);
     lv_obj_set_style_bg_opa(icon, LV_OPA_COVER, 0);
     lv_obj_set_style_radius(icon, 6, 0);
     lv_label_set_long_mode(icon, LV_LABEL_LONG_MODE_CLIP);
@@ -1285,14 +1285,14 @@ static void update_control_hints(muse_mode_t mode)
     lv_obj_set_flag(s_pwr_hint, LV_OBJ_FLAG_HIDDEN, settings);
     static int last_mode = -1;
     if ((int)mode != last_mode) {
-        color_mic(s_ptt_hint, mode == MUSE_MODE_LISTENING ? 0x64d4ff : 0x80bfff);
+        color_mic(s_ptt_hint, mode == MUSE_MODE_LISTENING ? MUSE_THEME_MIC_ACTIVE : MUSE_THEME_MIC_IDLE);
         last_mode = (int)mode;
     }
     bool speaker_on = muse_settings_speaker_on();
     const char *speaker = speaker_on ? LV_SYMBOL_VOLUME_MID : LV_SYMBOL_MUTE;
     if (strcmp(speaker, lv_label_get_text(s_spk_hint))) {
         lv_label_set_text(s_spk_hint, speaker);
-        lv_obj_set_style_text_color(s_spk_hint, lv_color_hex(speaker_on ? 0xffd060 : 0x8b7845), 0);
+        lv_obj_set_style_text_color(s_spk_hint, lv_color_hex(speaker_on ? MUSE_THEME_GOLD_HI : MUSE_THEME_GOLD_LO), 0);
     }
 }
 
@@ -1323,7 +1323,7 @@ static void build_overlays(void)
     s_camera_hint = lv_btn_create(scr);
     lv_obj_set_size(s_camera_hint, 244, 46);
     lv_obj_align(s_camera_hint, LV_ALIGN_BOTTOM_MID, 0, -20);
-    lv_obj_set_style_bg_color(s_camera_hint, lv_color_hex(0x201a35), 0);
+    lv_obj_set_style_bg_color(s_camera_hint, lv_color_hex(MUSE_THEME_CARD), 0);
     lv_obj_set_style_bg_opa(s_camera_hint, LV_OPA_90, 0);
     lv_obj_set_style_border_color(s_camera_hint, lv_color_hex(MUSE_THEME_ACCENT), 0);
     lv_obj_set_style_border_width(s_camera_hint, 2, 0);
@@ -1339,8 +1339,8 @@ static void build_overlays(void)
         /* Dedicated ownership: legacy chrome/reply hides must never claim it. */
         s_ptt_hint = make_mic(scr, 26);
         lv_obj_align(s_ptt_hint, muse_board->talk_hint.align, muse_board->talk_hint.x, muse_board->talk_hint.y);
-        s_spk_hint = make_control_icon(scr, &muse_board->speaker_hint, LV_SYMBOL_VOLUME_MID, 0xffd060);
-        s_pwr_hint = make_control_icon(scr, &muse_board->power_hint, LV_SYMBOL_POWER, 0xff8080);
+        s_spk_hint = make_control_icon(scr, &muse_board->speaker_hint, LV_SYMBOL_VOLUME_MID, MUSE_THEME_GOLD_HI);
+        s_pwr_hint = make_control_icon(scr, &muse_board->power_hint, LV_SYMBOL_POWER, MUSE_THEME_DANGER);
         update_control_hints(MUSE_MODE_BOOT);
     }
 
@@ -1357,7 +1357,7 @@ static void build_overlays(void)
     lv_obj_set_style_pad_row(s_pair, s_small ? 4 : 10, 0);
     lv_obj_set_style_radius(s_pair, s_small ? 10 : 24, 0);
     lv_obj_set_style_bg_opa(s_pair, LV_OPA_COVER, 0);
-    lv_obj_set_style_bg_color(s_pair, lv_color_hex(0x1a1530), 0);
+    lv_obj_set_style_bg_color(s_pair, lv_color_hex(MUSE_THEME_CARD), 0);
     lv_obj_set_style_border_color(s_pair, lv_color_hex(MUSE_THEME_ACCENT), 0);
     lv_obj_set_style_border_width(s_pair, 2, 0);
     lv_obj_remove_flag(s_pair, LV_OBJ_FLAG_SCROLLABLE);
@@ -1376,7 +1376,7 @@ static void build_overlays(void)
     s_cover = lv_obj_create(lv_layer_top());
     lv_obj_remove_style_all(s_cover);
     lv_obj_set_size(s_cover, lv_pct(100), lv_pct(100));
-    lv_obj_set_style_bg_color(s_cover, lv_color_black(), 0);
+    lv_obj_set_style_bg_color(s_cover, lv_color_hex(MUSE_THEME_BG), 0);
     lv_obj_add_flag(s_cover, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_event_cb(s_cover, on_cover_event, LV_EVENT_PRESSED, NULL);
     lv_obj_add_event_cb(s_cover, on_cover_event, LV_EVENT_RELEASED, NULL);
@@ -1468,23 +1468,34 @@ static void update_chrome(float now)
         int page = active == s_interact ? 0 : (active == s_face ? 1 : 2);
         bool subpage = muse_settings_ui_in_subpage();
         /* Two locks now. Settings subpages lock the swipe (1.4d), and so do
-         * the three interaction game subpages (2026-10-31): their buttons sit
-         * on the margin of a 360px circle, where the default 10px scroll limit
-         * (1.3mm on this panel) turned a slightly drifting press into a tile
-         * scroll -- the button lost its LV_EVENT_CLICKED and the round was
-         * abandoned mid-play. Feed / fortune / minigame-list still swipe. */
+         * the four game pages (2026-10-31): their buttons sit on the margin
+         * of a 360px circle, where the default 10px scroll limit (1.3mm on
+         * this panel) turned a slightly drifting press into a tile scroll --
+         * the button lost its LV_EVENT_CLICKED and the round was abandoned
+         * mid-play. Feed / fortune / minigame-list still swipe. */
         bool game = page == 0 && muse_interact_ui_swipe_locked();
         bool swipe = !((page == 2 && subpage) || game);
         if (swipe != lv_obj_has_flag(s_tv, LV_OBJ_FLAG_SCROLLABLE)) {
             lv_obj_set_flag(s_tv, LV_OBJ_FLAG_SCROLLABLE, swipe);
         }
-        int shown = page * 3 + (subpage ? 1 : 0);
+        /* The dots advertise a swipe, so they go wherever the swipe goes:
+         * the settings subpages (1.4d) and, since 2026-11-01, the four game
+         * pages. Their left/right swipe was cancelled with the lock above,
+         * and the three 8px dots were left sitting over the game's own
+         * bottom controls -- on the sudoku page they landed inside the
+         * 提示 pill (126..234 x 310..346, the dots occupy 160..200 x
+         * 338..346), which read as three unexplained dots under the game.
+         * The minigame LIST still swipes (it is a four-row list, not a
+         * board), so it keeps its dots. */
+        bool dots_hidden = (page == 2 && subpage) || game;
+        /* The key carries the dot state as well: a game page is not a
+         * top-level tile change, so "page + subpage" alone would not re-run
+         * this block when a game opens or closes. */
+        int shown = (page * 3 + (subpage ? 1 : 0)) * 2 + (dots_hidden ? 1 : 0);
         if (shown != s_shown_page) {
             for (int i = 0; i < 3; i++) {
                 lv_obj_set_style_bg_color(s_dots[i], lv_color_hex(i == page ? MUSE_THEME_ACCENT : MUSE_THEME_DOT_OFF), 0);
-                /* Dots hide ONLY on a settings subpage. An interaction
-                 * subpage is not a top-level tile change, so the dots stay. */
-                lv_obj_set_flag(s_dots[i], LV_OBJ_FLAG_HIDDEN, page == 2 && subpage);
+                lv_obj_set_flag(s_dots[i], LV_OBJ_FLAG_HIDDEN, dots_hidden);
             }
             s_shown_page = shown;
         }

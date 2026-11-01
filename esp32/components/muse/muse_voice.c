@@ -463,7 +463,7 @@ static bool hatch_reply(bool *delivered)
     static const int16_t silence[MUSE_AUDIO_CHUNK];
     char text[96];
     static char page[MUSE_CAPTION_MAX];
-    bool done = false, speaking = false, replied = false;
+    bool done = false, speaking = false, replied = false, incomplete = false;
     size_t played = 0;
     int64_t t0 = esp_timer_get_time();
     *delivered = false;
@@ -492,6 +492,13 @@ static bool hatch_reply(bool *delivered)
                 break;
             case MUSE_HATCH_EV_DONE:
                 done = *delivered = true;
+                /* "REPLY INCOMPLETE" means the turn ceiling hit while the
+                 * reply was still arriving: the audio that plays is a
+                 * truncated reply, so end it as a failure instead of a
+                 * normal finish (upstream 91410c5). */
+                if (text[0]) {
+                    incomplete = true;
+                }
                 break;
             case MUSE_HATCH_EV_ERROR:
                 ESP_LOGW(TAG, "muse: %s", text);
@@ -533,6 +540,13 @@ static bool hatch_reply(bool *delivered)
     muse_state_set_level(0);
     ESP_LOGI(TAG, "muse reply: %.2fs of audio, %.2fs total", (double)played / MUSE_AUDIO_RATE,
              (esp_timer_get_time() - t0) / 1e6);
+    if (incomplete) {
+        /* The reply was cut off by the turn ceiling: say so on the face
+         * instead of ending a truncated reply as if it were whole. */
+        ESP_LOGW(TAG, "reply incomplete");
+        go_idle("REPLY INCOMPLETE");
+        return false;
+    }
     if (!played) {
         /* No speech (TTS unavailable): leave the reply text up for a moment. */
         vTaskDelay(pdMS_TO_TICKS(2500));

@@ -86,6 +86,7 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
 
 #include "esp_log.h"
 #include "esp_random.h"
@@ -100,12 +101,11 @@
 #include "muse_snake_ui.h"
 #include "muse_ui.h"
 #include "muse_whackamole_ui.h"
+#include "muse_widgets.h" /* the shared back arrow / card / title (1.5g) */
 
 /* --- colours: muse_theme.h (see file header for the DANGER note) --- */
 
 /* --- layout --- */
-#define IC_BACK_W 56
-#define IC_BACK_H 48
 #define IC_LIST_W 330
 #define IC_LIST_TOP 84
 #define IC_ROW_H 58
@@ -124,8 +124,18 @@
 #define IC_FORTUNE_CARD_W 300
 #define IC_FORTUNE_CARD_H 160
 #define IC_FORTUNE_CARD_Y 114
-#define IC_FORTUNE_RULE_W 28
-#define IC_FORTUNE_RULE_H 2
+/* The card is split in two halves since 2026-11-01 (user request): the
+ * grade + its rule own the top, the body owns the bottom, and this rule
+ * IS the divider -- 200x4, i.e. two thirds of the 300 px card, so it
+ * reads as a section break rather than a stray underline. It scales with
+ * the grade (2x), which is why it is 4 px and not 2. */
+#define IC_FORTUNE_RULE_W 200
+#define IC_FORTUNE_RULE_H 4
+/* Grade size: the firmware carries exactly one CJK face (16 px, see
+ * muse_font.h). 512 = 2.0x, i.e. the 大吉 line draws 32 px tall. The
+ * glyphs are the 16 px face upscaled, so the edges are a touch soft --
+ * the price of NOT adding a second font (user decision 2026-11-01). */
+#define IC_FORTUNE_GRADE_SCALE 512
 
 /* --- timing (design §5.5: ~2s total, never over 3s) --- */
 #define IC_SHAKE_MS 1000
@@ -177,6 +187,11 @@ static uint32_t s_last_feed_before;
  * in the tick is the backstop if a feedback is ever dropped. */
 static bool s_feed_pending;
 static uint32_t s_feed_pending_ms;
+/* Backstop counter: a feed whose feedback never showed up (the 5 s timeout
+ * above fired) leaves this many stale PET_FEED_* receipts in flight. The
+ * drain swallows them so a late receipt is never worded with the next
+ * feed's food name. */
+static int s_feed_skip;
 static lv_obj_t *s_status1;
 static lv_obj_t *s_feed_cards[3];
 static lv_obj_t *s_feed_note;   /* result line on the feed subpage itself */
@@ -244,23 +259,15 @@ static lv_obj_t *label(lv_obj_t *parent, const lv_font_t *font, uint32_t color,
  * earlier no-arrow reasoning (a card behind the arrow read as a stray
  * box) no longer applies now that the arrow is a bare glyph, drawn
  * the settings way: no card, just the glyph over the title's left
- * shoulder. The title takes the settings page's place and look:
- * TOP_MID at y = 44, accent colour -- so "互动" sits exactly where
- * "SETTINGS" does one tile over. */
+ * shoulder. Both come from muse_widgets now -- the title takes the
+ * settings page's place and look: TOP_MID at y = 44, accent colour --
+ * so "互动" sits exactly where "SETTINGS" does one tile over. */
 static void page_header(lv_obj_t *page, const char *title, lv_event_cb_t back_cb)
 {
     if (back_cb) {
-        lv_obj_t *back = lv_obj_create(page);
-        lv_obj_remove_style_all(back);
-        lv_obj_set_size(back, IC_BACK_W, IC_BACK_H);
-        lv_obj_align(back, LV_ALIGN_TOP_MID, -112, 28);
-        lv_obj_add_event_cb(back, back_cb, LV_EVENT_CLICKED, NULL);
-        lv_obj_t *arrow = label(back, &lv_font_montserrat_20, MUSE_THEME_ACCENT, LV_SYMBOL_LEFT);
-        lv_obj_center(arrow);
+        muse_back_button(page, back_cb);
     }
-
-    lv_obj_t *t = label(page, muse_font_cjk(), MUSE_THEME_ACCENT, title);
-    lv_obj_align(t, LV_ALIGN_TOP_MID, 0, 44);
+    muse_page_title(page, title, 44);
 }
 
 static void show_page(int page)
@@ -347,6 +354,16 @@ static void feed_note(const char *text)
     lv_label_set_text(s_feed_note, text);
 }
 
+/* lv_label_set_text has no same-text short circuit in LVGL 9.5: every call
+ * frees, reallocs and re-lays-out the label. refresh_status() runs every
+ * frame, so skip when nothing changed (same trick as muse_menu's set_text). */
+static void set_label(lv_obj_t *l, const char *text)
+{
+    if (strcmp(lv_label_get_text(l), text) != 0) {
+        lv_label_set_text(l, text);
+    }
+}
+
 static void refresh_status(void)
 {
     /* Gold rows on the main page and the mini-game menu (same text,
@@ -354,20 +371,20 @@ static void refresh_status(void)
      * cards is gone with the rows: the feed row shows done / not done,
      * and the counts live in the face captions, not on the main page. */
     if (!s_have_snap) {
-        lv_label_set_text(s_status1, "金币 --/100");
-        lv_label_set_text(s_minigame_coins, "金币 --/100");
-        lv_label_set_text(s_feed_coins, "金币 --/100");
-        lv_label_set_text(s_fortune_coins, "金币 --/100");
-        lv_label_set_text(s_btn_feed_lbl, "喂饭 ｜ 每种 +10金币");
-        lv_label_set_text(s_btn_fortune_lbl, "今日运势 ｜ 未抽");
+        set_label(s_status1, "金币 --/100");
+        set_label(s_minigame_coins, "金币 --/100");
+        set_label(s_feed_coins, "金币 --/100");
+        set_label(s_fortune_coins, "金币 --/100");
+        set_label(s_btn_feed_lbl, "喂饭 ｜ 每种 +10金币");
+        set_label(s_btn_fortune_lbl, "今日运势 ｜ 未抽");
         return;
     }
     char buf[64];
     snprintf(buf, sizeof(buf), "金币 %lu/100", (unsigned long)s_snap.coins);
-    lv_label_set_text(s_status1, buf);
-    lv_label_set_text(s_minigame_coins, buf);
-    lv_label_set_text(s_feed_coins, buf);
-    lv_label_set_text(s_fortune_coins, buf);
+    set_label(s_status1, buf);
+    set_label(s_minigame_coins, buf);
+    set_label(s_feed_coins, buf);
+    set_label(s_fortune_coins, buf);
 
     /* Dynamic row copy (design §5.2). Dimming is a pre-press signal,
      * not a disable: a fully claimed feed row still works (happy only),
@@ -377,29 +394,35 @@ static void refresh_status(void)
      * and it never dims -- the coin gate lives inside each game. */
     const uint32_t all_fed = (1u << MUSE_PET_FEED_KINDS) - 1u;
     bool feed_done = (s_snap.feed_mask & all_fed) == all_fed;
-    lv_label_set_text(s_btn_feed_lbl,
-                      feed_done ? "喂饭 ｜ 今日已领满" : "喂饭 ｜ 每种 +10金币");
+    set_label(s_btn_feed_lbl,
+              feed_done ? "喂饭 ｜ 今日已领满" : "喂饭 ｜ 每种 +10金币");
     lv_obj_set_style_text_color(s_btn_feed_lbl,
                                 lv_color_hex(feed_done ? MUSE_THEME_DIM : MUSE_THEME_TEXT), 0);
-    lv_label_set_text(s_btn_game_lbl, "小游戏 ｜ 每种扣5金币");
+    set_label(s_btn_game_lbl, "小游戏 ｜ 每种扣5金币");
     lv_obj_set_style_text_color(s_btn_game_lbl, lv_color_hex(MUSE_THEME_TEXT), 0);
     if (s_snap.fortune_day >= 0) {
         const char *grade = muse_pet_fortune_grade(s_snap.fortune);
         char fbuf[48];
         snprintf(fbuf, sizeof(fbuf), "今日运势 ｜ %s", grade ? grade : "已抽");
-        lv_label_set_text(s_btn_fortune_lbl, fbuf);
+        set_label(s_btn_fortune_lbl, fbuf);
     } else {
-        lv_label_set_text(s_btn_fortune_lbl, "今日运势 ｜ 未抽");
+        set_label(s_btn_fortune_lbl, "今日运势 ｜ 未抽");
     }
 
-    /* Mini-game rows: all four games cost 5 coins per start, so all
-     * four dim together when poor. Dimming is not disabling: a tap
-     * still opens the game, and the gate inside refuses with
-     * "金币不够…" there. */
+    /* Mini-game rows: snake and whack-a-mole cost 5 coins per start, sudoku
+     * costs 5 once per calendar day (user decision 2026-11-01), so all three
+     * dim together only when nothing can be started -- a day's sudoku ticket
+     * already paid means sudoku stays bright even at 0 coins. Dimming is not
+     * disabling: a tap still opens the game, and the gate inside refuses
+     * with "金币不够…" there. */
     bool poor = s_snap.coins < MUSE_PET_GAME_STAKE;
+    bool sudoku_paid = false;
+    muse_pet_sudoku_today(&s_snap, time(NULL), &sudoku_paid, NULL);
     uint32_t mg_color = poor ? MUSE_THEME_DIM : MUSE_THEME_TEXT;
     lv_obj_set_style_text_color(s_mg_rps_lbl, lv_color_hex(mg_color), 0);
-    lv_obj_set_style_text_color(s_mg_sudoku_lbl, lv_color_hex(mg_color), 0);
+    lv_obj_set_style_text_color(s_mg_sudoku_lbl,
+                                lv_color_hex(poor && !sudoku_paid ? MUSE_THEME_DIM
+                                                                 : MUSE_THEME_TEXT), 0);
     lv_obj_set_style_text_color(s_mg_snake_lbl, lv_color_hex(mg_color), 0);
     lv_obj_set_style_text_color(s_mg_whack_lbl, lv_color_hex(mg_color), 0);
 }
@@ -407,17 +430,12 @@ static void refresh_status(void)
 /* One list row: full-width button with a single centred label, at the
  * main list's IC_ROW_H. The label is returned for refresh_status() when
  * its copy changes (feed / fortune / mini-game dimming), or NULL for a
- * static row. */
+ * static row. The card look comes from muse_card. */
 static lv_obj_t *main_button(lv_obj_t *parent, int y, const char *text,
                              lv_event_cb_t cb, lv_obj_t **lbl_out)
 {
-    lv_obj_t *b = lv_btn_create(parent);
-    lv_obj_set_size(b, IC_LIST_W, IC_ROW_H);
+    lv_obj_t *b = muse_card(parent, IC_LIST_W, IC_ROW_H, IC_RADIUS);
     lv_obj_set_pos(b, (360 - IC_LIST_W) / 2, y);
-    lv_obj_set_style_bg_opa(b, LV_OPA_COVER, 0);
-    lv_obj_set_style_bg_color(b, lv_color_hex(MUSE_THEME_CARD), 0);
-    lv_obj_set_style_bg_color(b, lv_color_hex(MUSE_THEME_CARD_PRESSED), LV_STATE_PRESSED);
-    lv_obj_set_style_radius(b, IC_RADIUS, 0);
     lv_obj_t *l = label(b, muse_font_btn(), MUSE_THEME_TEXT, text);
     lv_obj_center(l);
     lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, NULL);
@@ -433,14 +451,7 @@ static lv_obj_t *main_button(lv_obj_t *parent, int y, const char *text,
 static lv_obj_t *list_row(lv_obj_t *parent, const char *text,
                           lv_event_cb_t cb, lv_obj_t **lbl_out)
 {
-    lv_obj_t *b = lv_btn_create(parent);
-    lv_obj_set_size(b, lv_pct(100), IC_ROW_H);
-    lv_obj_set_style_bg_opa(b, LV_OPA_COVER, 0);
-    lv_obj_set_style_bg_color(b, lv_color_hex(MUSE_THEME_CARD), 0);
-    lv_obj_set_style_bg_color(b, lv_color_hex(MUSE_THEME_CARD_PRESSED), LV_STATE_PRESSED);
-    lv_obj_set_style_radius(b, IC_RADIUS, 0);
-    lv_obj_set_style_pad_all(b, 0, 0);
-    lv_obj_remove_flag(b, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_t *b = muse_card(parent, lv_pct(100), IC_ROW_H, IC_RADIUS);
     lv_obj_t *l = label(b, muse_font_btn(), MUSE_THEME_TEXT, text);
     lv_obj_center(l);
     lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, NULL);
@@ -885,6 +896,14 @@ static void drain_feedback(void)
             /* 1.5b: the request is answered, whatever the result, so the
              * next tap may go through. */
             s_feed_pending = false;
+            if (s_feed_skip > 0) {
+                /* Stale receipt: the feed it belongs to was already given up
+                 * by the backstop, and s_last_feed_idx/before now describe a
+                 * different (later) tap. Dropping it keeps "+10 金币" from
+                 * being announced for the wrong food. */
+                s_feed_skip--;
+                break;
+            }
             /* PET_OK means "settled"; whether coins moved is read from the
              * snapshot's feed_mask for THIS food vs the bit at click time
              * (design §4.3) -- the result code alone does not say. */
@@ -933,21 +952,47 @@ static void drain_feedback(void)
                 /* Snapshot was stale: the 5 coins were never deducted,
                  * so there is nothing to refund -- cancel the game
                  * (which was only a start of a never-settled game).
-                 * All four games share PET_FEE, but only whack-a-mole
-                 * exposes a cancel hook; gate on the visible page so a
-                 * sudoku/snake refusal never touches its overlay. */
+                 * Snake and whack-a-mole share PET_FEE; both expose a
+                 * cancel hook, so route by the visible page so a refusal
+                 * for one game never touches the other's overlay. */
                 if (s_page == IC_PAGE_WHACKAMOLE) {
                     muse_whackamole_ui_fee_refused();
+                } else if (s_page == IC_PAGE_SNAKE) {
+                    muse_snake_ui_fee_refused();
                 }
                 write_pet_caption("金币不够，先摸摸 / 喂饭 / 抽运势");
             } else if (fb.result == PET_STORAGE) {
                 if (s_page == IC_PAGE_WHACKAMOLE) {
                     muse_whackamole_ui_fee_refused();
+                } else if (s_page == IC_PAGE_SNAKE) {
+                    muse_snake_ui_fee_refused();
                 }
                 write_pet_caption("互动数据损坏");
             }
             /* PET_OK: deduction confirmed; the game already started, so
              * nothing more to do here. */
+            break;
+        case PET_SUDOKU_ENTRY:
+            /* The sudoku page words its own refusals synchronously, from the
+             * snapshot it just read; this branch only covers the stale-snapshot
+             * case (the UI's gate passed, the worker's did not). Nothing on the
+             * sudoku page listens for it, so the face caption is the only place
+             * left to explain why the board did not unlock. */
+            if (fb.result == PET_POOR) {
+                char cap[48];
+                snprintf(cap, sizeof(cap), "金币不够（数独入场 %u 枚）",
+                         (unsigned)MUSE_PET_GAME_STAKE);
+                write_pet_caption(cap);
+            } else if (fb.result == PET_STORAGE) {
+                write_pet_caption("互动数据损坏");
+            }
+            break;
+        case PET_SUDOKU_SOLVE:
+        case PET_PLAY_REWARD:
+            /* Mini-game payouts. Every game page prints its own result line
+             * (the sudoku win card, the snake / whack OVER cards), so the face
+             * caption is deliberately left alone -- it is not on screen while a
+             * game is being played anyway. */
             break;
         case PET_FORTUNE:
             show_fortune_card();
@@ -1262,15 +1307,20 @@ static void build_fortune(void)
      * "improved" mockup) the card is 300x160 at y = 114 and its content
      * is centred as a group instead of hugging the top edge: the old
      * 150 px card with grade at 12 / body at 52 left 54 px of dead space
-     * under the text. Group: 大吉 (34) -> 28x2 gold rule (64) -> body (80).
-     * With the CJK face's 20 px line box that is 20 + 10 + 2 + 14 + 46 =
-     * 92 px of content in a 160 px card, i.e. 34 px of air above and
-     * below -- both halves of the card read as one centred block
-     * (2026-11-01, user request "与下方文字一起居中").
-     * The grade keeps muse_font_cjk() (16 px, same face and size as the
-     * body -- MUSE_THEME_GOLD is what makes it read as the heading; the
-     * chain has no larger CJK cut, see muse_font.h). Body in white,
-     * line spacing 6 (the CJK font's own size). */
+     * under the text.
+     * Two halves since 2026-11-01 (user request): 大吉 at 28 (visual
+     * 22..54) + the 200x4 gold rule at 76..80 sit in the top 76 px; the
+     * body starts at 97 and ends at 143, centred in the bottom 80 px. So
+     * the rule is both the grade's underline and the card's divider, and
+     * each half has ~20 px of air above and below its content.
+     * The grade label's BOX stays 16 px tall (the only CJK face in the
+     * firmware); transform_scale 2x around its centre makes it DRAW 32 px,
+     * so optically it covers ~28..60 and the card still reads as one
+     * centred block (2026-11-01, user request "与下方文字一起居中" +
+     * "不要引入新字体，单纯放大"). The upscaled 16 px glyphs are a little
+     * soft at the edges -- the accepted trade for not shipping a second
+     * font; the same mechanism scales the sudoku side strips. Body in
+     * white at 16 px, line spacing 6 (the CJK font's own size). */
     lv_obj_t *card = lv_obj_create(s_fortune_page);
     lv_obj_set_size(card, IC_FORTUNE_CARD_W, IC_FORTUNE_CARD_H);
     lv_obj_set_pos(card, (360 - IC_FORTUNE_CARD_W) / 2, IC_FORTUNE_CARD_Y);
@@ -1280,16 +1330,22 @@ static void build_fortune(void)
     lv_obj_set_style_border_width(card, 0, 0);
     lv_obj_remove_flag(card, LV_OBJ_FLAG_SCROLLABLE);
     s_fortune_grade = label(card, muse_font_cjk(), MUSE_THEME_GOLD, "-");
-    lv_obj_align(s_fortune_grade, LV_ALIGN_TOP_MID, 0, 34);
+    lv_obj_align(s_fortune_grade, LV_ALIGN_TOP_MID, 0, 28);
+    /* Scale about the label's own centre, so growing it does not push the
+     * text off the card's centreline. */
+    lv_obj_set_style_transform_pivot_x(s_fortune_grade, LV_PCT(50), 0);
+    lv_obj_set_style_transform_pivot_y(s_fortune_grade, LV_PCT(50), 0);
+    lv_obj_set_style_transform_scale_x(s_fortune_grade, IC_FORTUNE_GRADE_SCALE, 0);
+    lv_obj_set_style_transform_scale_y(s_fortune_grade, IC_FORTUNE_GRADE_SCALE, 0);
     /* Short gold rule under the grade: purely decorative, so it is a plain
      * container strip at 55% gold (bg_opa 140), not a line object. Width
      * and height live in IC_FORTUNE_RULE_* with the other layout numbers. */
     lv_obj_t *sep = lv_obj_create(card);
     lv_obj_set_size(sep, IC_FORTUNE_RULE_W, IC_FORTUNE_RULE_H);
-    lv_obj_align(sep, LV_ALIGN_TOP_MID, 0, 64);
-    lv_obj_set_style_bg_opa(sep, 140, 0);
+    lv_obj_align(sep, LV_ALIGN_TOP_MID, 0, 76);
+    lv_obj_set_style_bg_opa(sep, 120, 0);  /* 47% gold: a divider, not a highlight */
     lv_obj_set_style_bg_color(sep, lv_color_hex(MUSE_THEME_GOLD), 0);
-    lv_obj_set_style_radius(sep, 1, 0);
+    lv_obj_set_style_radius(sep, IC_FORTUNE_RULE_H / 2, 0);  /* pill ends */
     lv_obj_set_style_border_width(sep, 0, 0);
     lv_obj_remove_flag(sep, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_remove_flag(sep, LV_OBJ_FLAG_CLICKABLE);
@@ -1298,7 +1354,7 @@ static void build_fortune(void)
     lv_obj_set_width(s_fortune_body, IC_FORTUNE_CARD_W - 32);
     lv_obj_set_style_text_line_space(s_fortune_body, 6, 0);
     lv_obj_set_style_text_align(s_fortune_body, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_align(s_fortune_body, LV_ALIGN_TOP_MID, 0, 80);
+    lv_obj_align(s_fortune_body, LV_ALIGN_TOP_MID, 0, 97);
     /* Rule line: TOP slot (y = 84), the same slot the 喂饭 subpage's
      * "喂饭不花币…" line uses (user request 2026-11-01: "同喂饭那句的
      * 位置"). It is read before the card, and it keeps the bottom free
@@ -1404,7 +1460,7 @@ void muse_interact_ui_tick(bool active)
         if (s_game_coins_lbl) {
             char buf[32];
             snprintf(buf, sizeof(buf), "金币 %lu/100", (unsigned long)s_snap.coins);
-            lv_label_set_text(s_game_coins_lbl, buf);
+            set_label(s_game_coins_lbl, buf);
         }
     } else if (muse_pet_storage_error()) {
         /* Worker stopped on a corrupt blob: show it once, and only once
@@ -1425,6 +1481,11 @@ void muse_interact_ui_tick(bool active)
      * must not wedge the feed buttons forever. */
     if (s_feed_pending && (int32_t)(lv_tick_get() - s_feed_pending_ms) > 5000) {
         s_feed_pending = false;
+        /* The feedback for this feed can still arrive (a slow worker store or
+         * a backed-up queue). s_last_feed_idx/before already describe the NEXT
+         * feed, so count the stale one off instead of judging it with the
+         * wrong food name. */
+        s_feed_skip++;
     }
 
     /* Decay notice: announce once, then ACK. Only while IDLE (same gate

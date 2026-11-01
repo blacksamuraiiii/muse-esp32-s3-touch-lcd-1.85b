@@ -34,6 +34,7 @@
 #include "muse_board.h"
 #include "muse_mem.h"
 #include "muse_state.h"
+#include "muse_theme.h"
 #include "muse_yuv.h"
 
 static const char *TAG = "muse_video";
@@ -1146,17 +1147,17 @@ static void build(void)
     s_root = lv_obj_create(scr);
     lv_obj_remove_style_all(s_root);
     lv_obj_set_size(s_root, muse_board->width, muse_board->height);
-    lv_obj_set_style_bg_color(s_root, lv_color_black(), 0);
+    lv_obj_set_style_bg_color(s_root, lv_color_hex(MUSE_THEME_BG), 0);
     lv_obj_set_style_bg_opa(s_root, LV_OPA_COVER, 0);
     lv_obj_remove_flag(s_root, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
     s_title = lv_label_create(s_root);
     lv_obj_set_style_text_font(s_title, &lv_font_montserrat_20, 0);
-    lv_obj_set_style_text_color(s_title, lv_color_hex(0xa77dff), 0);
+    lv_obj_set_style_text_color(s_title, lv_color_hex(MUSE_THEME_ACCENT), 0);
     lv_label_set_text(s_title, "PHONE CAMERA");
     lv_obj_align(s_title, LV_ALIGN_CENTER, 0, -24);
     s_caption = lv_label_create(s_root);
     lv_obj_set_style_text_font(s_caption, &lv_font_montserrat_20, 0);
-    lv_obj_set_style_text_color(s_caption, lv_color_hex(0xf2efff), 0);
+    lv_obj_set_style_text_color(s_caption, lv_color_hex(MUSE_THEME_TEXT), 0);
     lv_obj_set_style_text_align(s_caption, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_width(s_caption, muse_board->width * 3 / 4);
     lv_label_set_long_mode(s_caption, LV_LABEL_LONG_MODE_WRAP);

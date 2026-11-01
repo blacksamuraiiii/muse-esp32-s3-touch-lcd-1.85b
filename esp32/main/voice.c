@@ -145,7 +145,7 @@ static bool fail(const char *why) {
 static bool reply(void) {
     static int16_t pcm[REPLY_CHUNK];
     char text[96];
-    bool done = false;
+    bool done = false, incomplete = false;
     size_t played = 0;
     int64_t t0 = esp_timer_get_time();
     voice_player_begin();
@@ -167,6 +167,12 @@ static bool reply(void) {
                 break;
             case MUSE_HATCH_EV_DONE:
                 done = true;
+                /* "REPLY INCOMPLETE": the turn ceiling hit while the reply
+                 * was still arriving, so report the truncated reply as a
+                 * failure instead of a clean finish (upstream 91410c5). */
+                if (text[0]) {
+                    incomplete = true;
+                }
                 break;
             case MUSE_HATCH_EV_ERROR:
                 voice_player_stop();
@@ -195,6 +201,11 @@ static bool reply(void) {
     }
     ESP_LOGI(TAG, "reply: %.1fs of speech, %.1fs total", (double)played / VOICE_PLAYER_RATE,
              (esp_timer_get_time() - t0) / 1e6);
+    if (incomplete) {
+        /* The reply was cut off by the turn ceiling: LED error instead of
+         * the idle light, and the caller hears the failure. */
+        return fail("REPLY INCOMPLETE");
+    }
     led_status_set_voice(LED_VOICE_IDLE);
     return false;
 }
