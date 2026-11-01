@@ -26,7 +26,7 @@
  * button any more (2026-11-01, user request "参考贪吃蛇"): the old 34 px one
  * sat at (283,9), i.e. 195 px from the centre on a 180 px-radius panel, so
  * the crescent clipped most of it. Pausing is a LONG PRESS on the field,
- * exactly like the snake page's centre disc, and the back arrow (which is
+ * exactly like the snake page's centre-button hold, and the back arrow (which is
  * hidden while playing, as on snake) becomes reachable through it.
  * A press that actually hit a mole never pauses: the hit is the deliberate
  * action, and turning a solid tap into a pause would read as a punishment.
@@ -36,8 +36,8 @@
  * behind it); the PAUSED and OVER overlays are 50% black dim.
  *
  * Overlays follow the snake page (2026-11-01, one style across the mini
- * games): the PAUSED card has an ACCENT title at y=100 and a 110 px
- * ACCENT-bordered centre circle, and the OVER card has the price
+ * games): the PAUSED card has an ACCENT title at y=100 and a 98x66
+ * ACCENT-bordered centre button, and the OVER card has the price
  * "- 5 金币" on its own line under the replay label -- on_restart charges
  * the fee the moment it is pressed, so the price belongs on the button.
  * The OVER card itself carries no title and no payout line any more (UI
@@ -440,11 +440,12 @@ static lv_obj_t *overlay(lv_obj_t *page, bool dim)
     return ov;
 }
 
-static lv_obj_t *round_btn(lv_obj_t *parent, lv_coord_t x, lv_coord_t y)
+static lv_obj_t *centre_btn(lv_obj_t *parent, lv_coord_t x, lv_coord_t y)
 {
-    /* The shared card, round: the ACCENT ring is this page's own accent on
+    /* The shared card, a 98x66 rounded rect (user decision 2026-11-01,
+     * was a 110 px circle): the ACCENT ring is this page's own accent on
      * top of the shared CARD / CARD_PRESSED base. */
-    lv_obj_t *btn = muse_card(parent, 110, 110, LV_RADIUS_CIRCLE);
+    lv_obj_t *btn = muse_card(parent, 98, 66, 14);
     lv_obj_set_pos(btn, x, y);
     lv_obj_set_style_border_color(btn, lv_color_hex(MUSE_THEME_ACCENT), LV_PART_MAIN);
     lv_obj_set_style_border_width(btn, 2, LV_PART_MAIN);
@@ -508,13 +509,13 @@ void muse_whackamole_ui_build(lv_obj_t *page, lv_event_cb_t back_cb)
 
     /* START overlay: not dimmed, the field stays visible behind it. */
     s_start_ov = overlay(page, false);
-    lv_obj_t *start_btn = round_btn(s_start_ov, 125, 125);
+    lv_obj_t *start_btn = centre_btn(s_start_ov, 131, 147);
     lv_obj_t *start_lb = label(start_btn, muse_font_cjk(), MUSE_THEME_TEXT);
     lv_label_set_text(start_lb, "开始");
     lv_obj_center(start_lb);
     lv_obj_add_event_cb(start_btn, on_start, LV_EVENT_CLICKED, NULL);
 
-    /* PAUSED overlay: dim, ACCENT title, 继续 circle with the PLAY symbol
+    /* PAUSED overlay: dim, ACCENT title, 继续 button with the PLAY symbol
      * above the label (snake's card). No restart capsule: it charged 5
      * coins on a single tap in the narrowest part of the bezel; the back
      * arrow leaves, and 开始 charges again on the next visit. */
@@ -522,25 +523,25 @@ void muse_whackamole_ui_build(lv_obj_t *page, lv_event_cb_t back_cb)
     lv_obj_t *paused_lb = label(s_paused_ov, muse_font_cjk(), MUSE_THEME_ACCENT);
     lv_label_set_text(paused_lb, "已暂停");
     lv_obj_align(paused_lb, LV_ALIGN_TOP_MID, 0, 100);
-    lv_obj_t *resume_btn = round_btn(s_paused_ov, 125, 125);
+    lv_obj_t *resume_btn = centre_btn(s_paused_ov, 131, 147);
     lv_obj_t *resume_sym = label(resume_btn, &lv_font_montserrat_20, MUSE_THEME_TEXT);
     lv_label_set_text(resume_sym, LV_SYMBOL_PLAY);
-    lv_obj_align(resume_sym, LV_ALIGN_TOP_MID, 0, 31);
+    lv_obj_align(resume_sym, LV_ALIGN_TOP_MID, 0, 12);
     lv_obj_t *resume_lb = label(resume_btn, muse_font_cjk(), MUSE_THEME_TEXT);
     lv_label_set_text(resume_lb, "继续");
-    lv_obj_align(resume_lb, LV_ALIGN_TOP_MID, 0, 59);
+    lv_obj_align(resume_lb, LV_ALIGN_TOP_MID, 0, 34);
     lv_obj_add_event_cb(resume_btn, on_resume, LV_EVENT_CLICKED, NULL);
 
-    /* OVER overlay: dim + 再玩一次 circle only (UI polish 2026-11-01).
+    /* OVER overlay: dim + 再玩一次 button only (UI polish 2026-11-01).
      * The result title lives in the page-title slot and the result line
      * under the field -- both page-level, above the dim -- so the overlay
      * itself carries no title and no payout line any more. No hits/missed
      * split here either. */
     s_over_ov = overlay(page, true);
-    lv_obj_t *again_btn = round_btn(s_over_ov, 125, 125);
+    lv_obj_t *again_btn = centre_btn(s_over_ov, 131, 147);
     lv_obj_t *again_lb = label(again_btn, muse_font_cjk(), MUSE_THEME_TEXT);
     lv_label_set_text(again_lb, "再玩一次");
-    lv_obj_align(again_lb, LV_ALIGN_TOP_MID, 0, 32);
+    lv_obj_align(again_lb, LV_ALIGN_TOP_MID, 0, 12);
     /* on_restart charges through charge_for_game() the moment it is
      * pressed, so the price belongs on the button (same as snake; the
      * amount comes from the macro, not a literal). */
@@ -549,7 +550,7 @@ void muse_whackamole_ui_build(lv_obj_t *page, lv_event_cb_t back_cb)
              (unsigned)MUSE_PET_GAME_STAKE);
     lv_obj_t *again_price = label(again_btn, muse_font_cjk(), MUSE_THEME_GOLD);
     lv_label_set_text(again_price, price_buf);
-    lv_obj_align(again_price, LV_ALIGN_TOP_MID, 0, 56);
+    lv_obj_align(again_price, LV_ALIGN_TOP_MID, 0, 34);
     lv_obj_add_event_cb(again_btn, on_restart, LV_EVENT_CLICKED, NULL);
 
     /* Back arrow: the shared transparent one (no filled background, user
