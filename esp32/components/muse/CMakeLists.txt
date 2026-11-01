@@ -35,6 +35,7 @@ if(CONFIG_MUSE_ENABLED)
         "third_party/pcf85063a/pcf85063a.c"
         "muse_ui.c"
         "muse_font.c"     # the one shared CJK chain (1.5b)
+        "muse_widgets.c"  # the shared back arrow / card / title (1.5g)
         "muse_audio.c"
         "muse_pmu.c"
         "muse_input.c"

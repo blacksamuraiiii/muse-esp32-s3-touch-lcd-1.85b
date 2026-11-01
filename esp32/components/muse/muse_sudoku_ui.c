@@ -15,13 +15,24 @@
  *     largest square this circle allows: an S-px board starting at y = 68
  *     puts its bottom corners S/2 out and S-112 down, so S = 240 lands
  *     175.5 from the centre (180 available) while S = 248 already needs 179.
- *   - Side strips: 提示 and 下一题 are vertical labels beside the board, not
- *     a row under it (user decision 2026-10-31). A bottom row cannot work:
- *     the chord at y = 320 is only ~148px wide, so the old 64x24 pills sat
- *     on the round edge and were too small to hit (and 24px is below the
- *     ~40px tap target the rest of this UI uses). 34x72 strips at x = 10 /
- *     316, y = 144 keep 16px clear of the grid on both sides and put the
- *     far corner 173.8 from the centre, i.e. 6px inside the bezel.
+ *   - Side strips: 上一题 on the left, 下一题 on the right -- vertical labels
+ *     beside the board, not a row under it (user decision 2026-10-31, left
+ *     strip changed from 提示 to 上一题 on 2026-11-01). A bottom row cannot
+ *     work for two buttons: the chord at y = 320 is only ~148px wide, so the
+ *     old 64x24 pills sat on the round edge and were too small to hit (and
+ *     24px is below the ~40px tap target the rest of this UI uses). 34x72
+ *     strips at x = 10 / 316, y = 144 keep 16px clear of the grid on both
+ *     sides and put the far corner 173.8 from the centre, i.e. 6px inside
+ *     the bezel.
+ *   - 提示 button: moved under the board (2026-11-01, user request) so the
+ *     two puzzle-flipping strips are the left/right pair. 108x36 at
+ *     (126,310) -- the board's frame ends at 308, the button clears it by
+ *     2px, its bottom corners sit 174.6 from the centre and the chord at its
+ *     bottom edge is 139px, so 108 fits with 15px to spare on each side.
+ *     It is the only horizontal button on the page. Its 36px height was the
+ *     page's smallest target, so it now has its own invisible hit band --
+ *     same trick as the side strips, the pill itself is untouched
+ *     (2026-11-01, user report "点击区域过小").
  *   - Margin bands: a 34px-wide pill is a 4.5mm target on a 195dpi panel, so
  *     aiming at it alone still missed (second user report, 2026-10-31). The
  *     whole margin either side of the board is now a hit region: invisible
@@ -34,12 +45,26 @@
  *   - Strip type and centring: the firmware carries exactly one CJK face
  *     (16px, see muse_font.h), so the strips scale their label instead of
  *     pulling in a second generated face: transform_scale 224 = 87.5% of
- *     16px = 14px glyphs on a 17.5px line, so 下一题 occupies 52.5px of the
- *     72px strip. Each label is centred in both axes -- lv_obj_center puts
+ *     16px = 14px glyphs on a 17.5px line, so 下一题 / 上一题 occupy 52.5px of
+ *     the 72px strip. Each label is centred in both axes -- lv_obj_center puts
  *     the text box on the strip's centre and the transform pivot is set to
  *     50%/50%, so scaling does not shift it, and the one-character-per-line
  *     box is the same width for every line, which keeps it centred across
  *     the strip (9px of card either side of a 16px glyph column).
+ *   - Button type is shared by ALL THREE labels (2026-11-01, user request
+ *     "三个按钮文字字号完全一致"): 上一题, 提示 and 下一题 draw the same
+ *     muse_font_cjk() face with the same SU_LABEL_TEXT_SCALE, so they are the
+ *     same 14px glyph on a 15.3px line. Only 提示 changed -- it used to be the
+ *     one label left at 16px, which is why it read a size larger than the two
+ *     strips beside it. Scaling, not a second face, is what keeps them equal:
+ *     the ratio is applied to the font's own line height, so no panel size or
+ *     rounding can put one label a fraction of a pixel off another, and none
+ *     of the three is ever re-laid out to fit (two glyphs in a 108px pill,
+ *     one glyph per line in a 34px strip), so no wrap can shrink one and not
+ *     the other. 提示's horizontal centring also survives the scale: the
+ *     pivot is the label box's centre, the same point lv_obj_center aligned
+ *     on, so the shrink happens around the button's centre, not towards a
+ *     corner.
  *   - Grid lines: thin lines are per-cell right/bottom borders would
  *     need per-side widths, which LVGL does not offer, so ALL lines
  *     are lv_line objects: 1px DIM for cell dividers, 3px TEXT for
@@ -60,13 +85,16 @@
  *     the overlay dismisses the popup (or the win card, when that is open);
  *     the back arrow is unreachable while a modal is open, which is the
  *     intended modal behaviour.
- *   - Win card: 260x150 at (50,105) with "完成！", the elapsed time
- *     and 下一题 / 再玩一次 (19 and 136, 105 wide: 19px clear on both
- *     sides). It shares the dim overlay with the pad.
- *   - Refusal note: y = 316, under the board in the band the old pill row
- *     used to occupy. It used to sit at y = 280, on top of the board's last
- *     row, and its old copy was ~320px wide where the circle only leaves
- *     ~299px of chord.
+ *   - Win card: 260x170 at (50,95) with "完成！", the elapsed time, the
+ *     completion reward and 下一题 / 再玩一次 (19 and 136, 105 wide: 19px
+ *     clear on both sides). It shares the dim overlay with the pad. The card
+ *     grew from 150 to 170 tall on 2026-11-01 to make room for the reward
+ *     line; its corners are still 155px from the centre (180 available).
+ *   - Refusal note: it takes the 提示 button's slot under the board (y = 316,
+ *     centred in the 108px pill's 310..346 band) and the button is hidden
+ *     while the note is up: a refused entry makes the hint unusable anyway,
+ *     and the note is the answer to the tap that was refused. It used to sit
+ *     in that same band before the 提示 button moved there.
  *
  * Colours are the shared table in muse_theme.h, NOT the mockup's
  * palette: clues TEXT (near-white), player entries ACCENT (purple),
@@ -80,19 +108,28 @@
  * the selected cell again closes the pad. A digit fills immediately
  * and is flagged red on conflict, never rejected. 提示 fills the
  * selected cell when it is fillable and not already right, else the
- * first empty cell. 下一题 (the right-hand side strip) cycles 1..20. The
- * entry fee is 5 coins (PET_FEE): entering the page charges it, 再玩一次
- * charges it again, and 下一题 does NOT -- one ticket covers a run of
- * puzzles (user decision 2026-11-01, superseding the per-puzzle fee of
- * 2026-10-31). Re-entering a puzzle already paid for in this run is free;
- * under 5 coins the load is refused with "金币不够…" and the current puzzle
- * stays. No 3-strike rule, no pencil marks (v1 scope, see muse_sudoku.h).
+ * first empty cell. 上一题 / 下一题 (the side strips) step through 1..20
+ * and reload the board -- both are free and both discard the current
+ * board's entries.
+ *
+ * Economy (user decision 2026-11-01, superseding the per-puzzle fee of
+ * 2026-10-31): entering sudoku costs 5 coins ONCE PER CALENDAR DAY
+ * (PET_SUDOKU_ENTRY, idempotent in the worker), so every later entry that
+ * day, 上一题, 下一题 and 再玩一次 are free. Completing a puzzle pays
+ * MUSE_PET_SUDOKU_SOLVE_COINS (5) through PET_SUDOKU_SOLVE, capped at 5 per
+ * day -- only the first puzzle of the day pays, later ones show "今日数独
+ * 金币已满". Net effect: sudoku can at best refund its own entry fee.
+ * Under 5 coins an unpaid entry is refused with "金币不够（需 5 枚）" and
+ * the current puzzle stays. No 3-strike rule, no pencil marks (v1 scope,
+ * see muse_sudoku.h).
  */
 #include "muse_sudoku_ui.h"
 
 #include <stdio.h>
+#include <time.h>
 
 #include "muse_font.h"
+#include "muse_widgets.h"
 #include "muse_pet.h"
 #include "muse_sudoku.h"
 #include "muse_theme.h"
@@ -121,20 +158,44 @@
 #define SU_ACT_W 105
 #define SU_ACT_GAP 7 /* 2 x 105 + 7 = 217, the digit block's width */
 #define SU_WIN_X0 50
-#define SU_WIN_Y0 105
+#define SU_WIN_Y0 95
 #define SU_WIN_W 260
-#define SU_WIN_H 150
+#define SU_WIN_H 170
 /* Side strips: vertical labels that leave the board its full 240px. Both
  * are 34x72 at y = 144 (centre 180), 16px clear of the grid at x = 44 / 300,
  * and their far corners sit 173.8 from the centre -- inside the 180 bezel.
- * SU_SIDE_TEXT_SCALE is LVGL's fixed-point scale for the label (256 = 100%);
- * 224 draws the 16px CJK face at 14px. */
+ * SU_LABEL_TEXT_SCALE is LVGL's fixed-point scale for ALL THREE button
+ * labels (256 = 100%); 224 draws the 16px CJK face at 14px, which is what
+ * keeps 上一题 / 提示 / 下一题 identical in size. */
 #define SU_SIDE_W 34
 #define SU_SIDE_H 72
 #define SU_SIDE_Y0 144
 #define SU_SIDE_X_L 10
 #define SU_SIDE_X_R 316
-#define SU_SIDE_TEXT_SCALE 224
+#define SU_LABEL_TEXT_SCALE 224
+/* 提示 under the board (2026-11-01, user request): the board's frame ends at
+ * 308, so 310 leaves 2px of air; 108x36 keeps both bottom corners 174.6 from
+ * the centre and fits the 139px chord at y = 346. The refusal note shares
+ * this slot (the button is hidden while one is up). */
+#define SU_HINT_X0 126
+#define SU_HINT_Y0 310
+#define SU_HINT_W 108
+#define SU_HINT_H 36
+#define SU_NOTE_Y 316
+/* 提示 hit band (2026-11-01, user report: the 36px-tall pill was hard to
+ * hit). The visible pill keeps its size, colour, position and font; the tap
+ * target grows underneath it to everything the circle offers below the
+ * board's frame: a 252x48 box at (54,308), i.e. 54..306 across (the chord is
+ * 253px at y = 308 and 139px at y = 346) and 308..356 down. y0 = 308 is the
+ * board's own bottom edge, so no band can take a cell tap, and the two side
+ * bands end at 308 as well, so the three hit regions tile without overlap.
+ * Of that box the round panel exposes the ~9,000 px2 cap below y = 308, which
+ * is 2.3x the pill's 3,888 px2. Created before the pill, like the side bands,
+ * so the pill still wins its own taps and keeps its pressed look. */
+#define SU_HINT_HIT_X0 54
+#define SU_HINT_HIT_Y0 308
+#define SU_HINT_HIT_W 252
+#define SU_HINT_HIT_H 48
 /* Margin bands: the whole strip of screen left of the board (0..56) and right
  * of it (304..360) is a hit region, so a tap does not have to land on the
  * 34px pill. 224 tall = the board's own span, minus the top 16px that the
@@ -148,32 +209,30 @@
  * so the header has one centred object instead of two competing ones. */
 static lv_obj_t *s_title;
 static lv_obj_t *s_note;
+static lv_obj_t *s_hint_btn;
 static lv_obj_t *s_fills[MUSE_SUDOKU_CELLS];
 static lv_obj_t *s_cell_lbls[MUSE_SUDOKU_CELLS];
 static lv_obj_t *s_overlay;
 static lv_obj_t *s_pad_card;
 static lv_obj_t *s_win_card;
 static lv_obj_t *s_win_time;
+static lv_obj_t *s_win_reward;
 static muse_sudoku_state_t s_state;
 static int s_selected = -1; /* 0..35, -1 = none */
 static bool s_pad_open;
 static bool s_win_open;
-/* True once the currently displayed puzzle has been paid for. Build
- * leaves it false (the boot-time load is not a charge); every user
- * load sets it through charge_for_new_puzzle, and leaving the tile
- * keeps it, so re-entering a paid puzzle never charges twice.
- * 下一题 does not charge and does not clear it, so one ticket covers a run
- * of puzzles; 再玩一次 clears it and pays again (user decision 2026-11-01). */
-static bool s_current_paid;
 static uint32_t s_start_ms;
 /* 1 once this puzzle's clock is running. The page is built at boot, long
  * before anyone opens it, so building does NOT start the clock: the first
- * muse_sudoku_ui_show() does. Puzzles loaded from the side strip (下一题)
- * or the win card start theirs at once -- the page is on screen then. */
+ * muse_sudoku_ui_show() does. Puzzles loaded from the side strips (上一题 /
+ * 下一题) or the win card start theirs at once -- the page is on screen then. */
 static bool s_timed;
 
-static bool try_charge(void);
+static bool ensure_entry(void);
+static bool coins_paid_today(uint32_t *out);
 static void load_puzzle(int idx);
+static void set_note(const char *text);
+static void clear_note(void);
 
 static lv_obj_t *label(lv_obj_t *parent, const lv_font_t *font, uint32_t color,
                        const char *text)
@@ -184,6 +243,19 @@ static lv_obj_t *label(lv_obj_t *parent, const lv_font_t *font, uint32_t color,
     lv_label_set_text(o, text);
     lv_obj_remove_flag(o, LV_OBJ_FLAG_CLICKABLE);
     return o;
+}
+
+/* Every button label on this page goes through here: one font face, one
+ * scale, so 上一题 / 提示 / 下一题 render at exactly the same size.
+ * The pivot is set to the box centre for every label, so the shrink is
+ * symmetric about whatever lv_obj_center/align put the box on -- a transformed
+ * label keeps the position its untransformed box was laid out at. */
+static void scale_label(lv_obj_t *l)
+{
+    lv_obj_set_style_transform_pivot_x(l, LV_PCT(50), 0);
+    lv_obj_set_style_transform_pivot_y(l, LV_PCT(50), 0);
+    lv_obj_set_style_transform_scale_x(l, SU_LABEL_TEXT_SCALE, 0);
+    lv_obj_set_style_transform_scale_y(l, SU_LABEL_TEXT_SCALE, 0);
 }
 
 /* A side strip's copy: one character per line, centred in the strip in both
@@ -198,10 +270,7 @@ static void side_label(lv_obj_t *parent, const char *text)
     lv_obj_t *l = label(parent, muse_font_cjk(), MUSE_THEME_DIM, text);
     lv_obj_set_style_text_align(l, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_style_text_line_space(l, 0, 0);
-    lv_obj_set_style_transform_pivot_x(l, LV_PCT(50), 0);
-    lv_obj_set_style_transform_pivot_y(l, LV_PCT(50), 0);
-    lv_obj_set_style_transform_scale_x(l, SU_SIDE_TEXT_SCALE, 0);
-    lv_obj_set_style_transform_scale_y(l, SU_SIDE_TEXT_SCALE, 0);
+    scale_label(l);
     lv_obj_center(l);
 }
 
@@ -235,13 +304,34 @@ static void hide_win(void)
     refresh_overlay();
 }
 
-static void show_win(void)
+static void show_win(uint32_t coins, bool ledger_ready)
 {
     uint32_t secs = (lv_tick_get() - s_start_ms) / 1000;
     char buf[32];
     snprintf(buf, sizeof(buf), "用时 %lu:%02lu",
              (unsigned long)(secs / 60), (unsigned long)(secs % 60));
     lv_label_set_text(s_win_time, buf);
+    /* The completion reward (user decision 2026-11-01): 5 coins for the first
+     * puzzle of the day, nothing after -- the worker enforces the cap, this
+     * line only reports what coins_paid_today() promised before the request
+     * went out, so the card never claims coins the wallet will not get.
+     * Known race: two boards finishing before the worker settles the first
+     * SOLVE both read paid < max, and the second card promises coins the
+     * worker then refuses with PET_CAP; without a callback into this page
+     * from the drain the card cannot self-correct. Accepted for now. */
+    if (coins != 0) {
+        snprintf(buf, sizeof(buf), "完成奖励 +%lu 金币", (unsigned long)coins);
+        lv_obj_set_style_text_color(s_win_reward, lv_color_hex(MUSE_THEME_GOLD), 0);
+    } else if (ledger_ready) {
+        snprintf(buf, sizeof(buf), "今日数独金币已满");
+        lv_obj_set_style_text_color(s_win_reward, lv_color_hex(MUSE_THEME_DIM), 0);
+    } else {
+        /* Snapshot unreadable: the request was not even queued, so "已满"
+         * would be a lie -- the usual worker-not-ready wording applies. */
+        snprintf(buf, sizeof(buf), "互动未就绪");
+        lv_obj_set_style_text_color(s_win_reward, lv_color_hex(MUSE_THEME_DIM), 0);
+    }
+    lv_label_set_text(s_win_reward, buf);
     s_win_open = true;
     lv_obj_remove_flag(s_win_card, LV_OBJ_FLAG_HIDDEN);
     refresh_overlay();
@@ -250,7 +340,7 @@ static void show_win(void)
 static void refresh_counter(void)
 {
     char buf[32];
-    snprintf(buf, sizeof(buf), "数独（%d/20）", s_state.idx + 1);
+    snprintf(buf, sizeof(buf), "数独（%d/%d）", s_state.idx + 1, MUSE_SUDOKU_COUNT);
     lv_label_set_text(s_title, buf);
 }
 
@@ -298,10 +388,24 @@ static void refresh_grid(void)
 static void after_fill(void)
 {
     refresh_grid();
-    if (muse_sudoku_is_complete(&s_state)) {
-        close_pad();
-        show_win();
+    if (!muse_sudoku_is_complete(&s_state)) {
+        return;
     }
+    close_pad();
+    /* Completion reward, settled exactly once per solved board: the card is
+     * the only place a board becomes complete, and hidden boards are never
+     * re-rendered into a win. 5 coins the first time that day, 0 afterwards
+     * (MUSE_PET_SUDOKU_DAILY_MAX), which the worker re-checks. An unreadable
+     * snapshot also skips the request: promising nothing is the only honest
+     * line when the ledger cannot be read. */
+    uint32_t coins = 0;
+    uint32_t paid = 0;
+    bool ledger_ready = coins_paid_today(&paid);
+    if (ledger_ready && paid < MUSE_PET_SUDOKU_DAILY_MAX &&
+        muse_pet_request(PET_SUDOKU_SOLVE)) {
+        coins = MUSE_PET_SUDOKU_SOLVE_COINS;
+    }
+    show_win(coins, ledger_ready);
 }
 
 static void on_cell(lv_event_t *e)
@@ -310,7 +414,7 @@ static void on_cell(lv_event_t *e)
     /* The pad overlay covers the grid while the pad is open, so a cell
      * tap always means the pad is closed; tapping outside the pad
      * dismisses it through the overlay instead. */
-    if (!try_charge()) {
+    if (!ensure_entry()) {
         /* Unpaid puzzle (first entry poor, or worker not ready):
          * retrying the charge on the next tap is the only way in. */
         return;
@@ -364,10 +468,10 @@ static void on_overlay(lv_event_t *e)
 static void on_hint(lv_event_t *e)
 {
     (void)e;
-    /* The hint writes into the board, so it pays the same entry fee as a
-     * cell tap: a puzzle refused on entry must not become solvable one
-     * hint at a time. */
-    if (!try_charge()) {
+    /* The hint writes into the board, so it needs the day's entry to be paid
+     * just like a cell tap: a puzzle refused on entry must not become
+     * solvable one hint at a time. */
+    if (!ensure_entry()) {
         return;
     }
     int pos = -1;
@@ -384,53 +488,73 @@ static void on_hint(lv_event_t *e)
     after_fill();
 }
 
-static void show_note(const char *text)
+/* The refusal note takes the 提示 button's slot under the board: a refused
+ * entry makes the hint unusable too, so the two never need to be visible at
+ * the same time (see the file header). */
+static void set_note(const char *text)
 {
     lv_label_set_text(s_note, text);
     lv_obj_remove_flag(s_note, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(s_hint_btn, LV_OBJ_FLAG_HIDDEN);
 }
 
-/* The entry fee (user decision 2026-10-31): 5 coins per puzzle, gated
- * on the pet snapshot and settled by the worker as PET_FEE. True when
- * the displayed puzzle is already paid for, or when this call just
- * paid for it; false shows the refusal note and starts nothing. */
-static bool try_charge(void)
+static void clear_note(void)
 {
-    if (s_current_paid) {
-        return true;
-    }
+    lv_obj_add_flag(s_note, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_remove_flag(s_hint_btn, LV_OBJ_FLAG_HIDDEN);
+}
+
+/* Coins today's solved puzzles have already paid (0..5). The win card asks
+ * before it promises anything, so the cap notice is decided locally instead
+ * of waiting for the worker's PET_CAP feedback (which arrives asynchronously,
+ * long after the card is up). False means the snapshot was not readable:
+ * the caller must not read 0 as "the day's coins are spent". */
+static bool coins_paid_today(uint32_t *out)
+{
     muse_pet_model_t snap;
     if (!muse_pet_snapshot(&snap)) {
-        show_note("互动未就绪");
         return false;
     }
-    if (snap.coins < MUSE_PET_GAME_STAKE) {
-        /* Short on purpose: the note lives under the board (y = 316), where
-         * the circle leaves ~236px of chord; the old "金币不够，先摸摸 /
-         * 喂饭 / 抽运势" was ~320px and lost both ends. */
-        show_note("金币不够（需 5 枚）");
-        return false;
-    }
-    if (!muse_pet_request(PET_FEE)) {
-        show_note("互动未就绪");
-        return false;
-    }
-    s_current_paid = true;
-    lv_obj_add_flag(s_note, LV_OBJ_FLAG_HIDDEN);
+    muse_pet_sudoku_today(&snap, time(NULL), NULL, out);
     return true;
 }
 
-/* Load a puzzle and pay for it: 再玩一次 goes through here, so reopening the
- * puzzle that was just solved costs another ticket (user decision 2026-11-01).
- * 下一题 deliberately does NOT -- it keeps s_current_paid and just loads.
- * False leaves the current puzzle on screen. */
-static bool load_puzzle_paid(int idx)
+/* The sudoku entry fee is charged ONCE PER CALENDAR DAY (user decision
+ * 2026-11-01, superseding the per-puzzle fee of 2026-10-31): the first entry
+ * of the day costs 5 coins; every later entry, 上一题, 下一题 and 再玩一次
+ * that day are free. PET_SUDOKU_ENTRY is idempotent in the worker (it checks
+ * the day itself), so this can be called before anything that would touch the
+ * board -- the snapshot read is only here to refuse early with a readable
+ * note and to avoid a pointless queue post. False means the board must not
+ * change. */
+static bool ensure_entry(void)
 {
-    s_current_paid = false;
-    if (!try_charge()) {
+    muse_pet_model_t snap;
+    if (!muse_pet_snapshot(&snap)) {
+        set_note("互动未就绪");
         return false;
     }
-    load_puzzle(idx);
+    bool paid = false;
+    muse_pet_sudoku_today(&snap, time(NULL), &paid, NULL);
+    if (paid) {
+        clear_note(); /* today's ticket covers this visit and every flip */
+        return true;
+    }
+    if (snap.coins < MUSE_PET_GAME_STAKE) {
+        /* Short on purpose: the note shares the 提示 slot (310..346), where
+         * the circle leaves ~139px of chord; the old "金币不够，先摸摸 /
+         * 喂饭 / 抽运势" was ~320px and lost both ends. */
+        char note[32];
+        snprintf(note, sizeof(note), "金币不够（需 %u 枚）",
+                 (unsigned)MUSE_PET_GAME_STAKE);
+        set_note(note);
+        return false;
+    }
+    if (!muse_pet_request(PET_SUDOKU_ENTRY)) {
+        set_note("互动未就绪");
+        return false;
+    }
+    clear_note();
     return true;
 }
 
@@ -445,27 +569,37 @@ static void load_puzzle(int idx)
     refresh_grid();
 }
 
-/* 下一题 is free: one ticket covers a whole run of puzzles (user decision
- * 2026-11-01, from a report of being charged on every flip). It still needs
- * a paid entry, otherwise a refused entry could be bypassed by flipping
- * puzzles, so an unpaid board just does nothing here -- the refusal note is
- * already up and a cell tap / 提示 retries the charge. */
+/* 上一题 / 下一题 are free and both RELOAD the puzzle (muse_sudoku_load resets
+ * the grid to its clues), so flipping away always costs the entries made on
+ * the previous board -- that is the price of a free flip, not a coin
+ * (user decision 2026-11-01). Both still need the day's entry to be paid,
+ * otherwise a refused entry could be bypassed by flipping puzzles; an unpaid
+ * board therefore does nothing here and the refusal note explains why. */
+static void on_prev(lv_event_t *e)
+{
+    (void)e;
+    if (!ensure_entry()) {
+        return;
+    }
+    load_puzzle(s_state.idx - 1);
+}
+
 static void on_next(lv_event_t *e)
 {
     (void)e;
-    if (!s_current_paid) {
+    if (!ensure_entry()) {
         return;
     }
     load_puzzle(s_state.idx + 1);
 }
 
-/* The win card's 下一题 is the same "next puzzle" action and is free for the
- * same reason; 再玩一次 reopens the puzzle that was just solved and pays
- * again (user decision 2026-11-01). */
+/* The win card's 下一题 is the same free flip, and 再玩一次 reopens the puzzle
+ * that was just solved -- also free since 2026-11-01 (the day's entry fee
+ * already covers it; charging again was the old per-puzzle rule). */
 static void on_win_next(lv_event_t *e)
 {
     (void)e;
-    if (!s_current_paid) {
+    if (!ensure_entry()) {
         return;
     }
     load_puzzle(s_state.idx + 1);
@@ -474,7 +608,10 @@ static void on_win_next(lv_event_t *e)
 static void on_win_replay(lv_event_t *e)
 {
     (void)e;
-    load_puzzle_paid(s_state.idx);
+    if (!ensure_entry()) {
+        return;
+    }
+    load_puzzle(s_state.idx);
 }
 
 /* Grid lines: LVGL keeps the point array pointer (it does not copy
@@ -502,16 +639,30 @@ static void line(lv_obj_t *parent, int x1, int y1, int x2, int y2,
 }
 
 static lv_obj_t *btn(lv_obj_t *parent, int x, int y, int w, int h,
-                     uint32_t bg, int radius, lv_event_cb_t cb, void *user_data)
+                     int radius, lv_event_cb_t cb, void *user_data)
 {
-    lv_obj_t *b = lv_btn_create(parent);
+    lv_obj_t *b = muse_card(parent, w, h, radius);
+    lv_obj_set_pos(b, x, y);
+    lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, user_data);
+    return b;
+}
+
+/* An invisible clickable region: no style, no drawing, just a hit box with a
+ * click callback. Used for the two margin bands and the 提示 band -- the
+ * visible controls on this page are deliberately small (a 34px strip is a
+ * 4.5mm target on a 195dpi panel, the 提示 pill is 36px tall), so each one
+ * gets a much larger transparent target behind it. Created BEFORE the control
+ * it serves, so the control stays on top and keeps its pressed look. */
+static lv_obj_t *hit_band(lv_obj_t *parent, int x, int y, int w, int h,
+                          lv_event_cb_t cb)
+{
+    lv_obj_t *b = lv_obj_create(parent);
+    lv_obj_remove_style_all(b);
     lv_obj_set_size(b, w, h);
     lv_obj_set_pos(b, x, y);
-    lv_obj_set_style_bg_opa(b, LV_OPA_COVER, 0);
-    lv_obj_set_style_bg_color(b, lv_color_hex(bg), 0);
-    lv_obj_set_style_radius(b, radius, 0);
-    lv_obj_set_style_border_width(b, 0, 0);
-    lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, user_data);
+    lv_obj_add_flag(b, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_remove_flag(b, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, NULL);
     return b;
 }
 
@@ -526,33 +677,19 @@ static lv_obj_t *btn(lv_obj_t *parent, int x, int y, int w, int h,
  * back arrow's 28..76 box. Bands are created before their pill. */
 static lv_obj_t *side_band(lv_obj_t *parent, int x, lv_event_cb_t cb)
 {
-    lv_obj_t *b = lv_obj_create(parent);
-    lv_obj_remove_style_all(b);
-    lv_obj_set_size(b, SU_BAND_W, SU_BAND_H);
-    lv_obj_set_pos(b, x, SU_BAND_Y0);
-    lv_obj_add_flag(b, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_remove_flag(b, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, NULL);
-    return b;
+    return hit_band(parent, x, SU_BAND_Y0, SU_BAND_W, SU_BAND_H, cb);
 }
 
 void muse_sudoku_ui_build(lv_obj_t *page, lv_event_cb_t back_cb)
 {
-    /* Header: back arrow + title, the shared subpage pattern. */
-    lv_obj_t *back = lv_obj_create(page);
-    lv_obj_remove_style_all(back);
-    lv_obj_set_size(back, 56, 48);
-    lv_obj_align(back, LV_ALIGN_TOP_MID, -112, 28);
-    lv_obj_add_event_cb(back, back_cb, LV_EVENT_CLICKED, NULL);
-    lv_obj_t *arrow = label(back, &lv_font_montserrat_20, MUSE_THEME_ACCENT, LV_SYMBOL_LEFT);
-    lv_obj_center(arrow);
+    /* Header: back arrow + title, the shared subpage pieces. */
+    muse_back_button(page, back_cb);
     /* "数独（n/20）": the number lives inside the title now. ACCENT for
      * the whole line, same font and y as every other subpage title; the
      * fullwidth parens come from the CJK face, the digits from its
      * Montserrat fallback. ~92 px wide, well clear of the back arrow
      * whose box ends at x = 96. */
-    s_title = label(page, muse_font_cjk(), MUSE_THEME_ACCENT, "数独（1/20）");
-    lv_obj_align(s_title, LV_ALIGN_TOP_MID, 0, 44);
+    s_title = muse_page_title(page, "数独（1/20）", 44);
 
     /* Grid fills (behind the lines), then the lines, then the cells. */
     for (int i = 0; i < MUSE_SUDOKU_CELLS; i++) {
@@ -596,29 +733,46 @@ void muse_sudoku_ui_build(lv_obj_t *page, lv_event_cb_t back_cb)
         s_cell_lbls[i] = l;
     }
 
-    /* Side strips: 提示 on the left, 下一题 on the right, both vertical and
+    /* Side strips: 上一题 on the left, 下一题 on the right, both vertical and
      * both beside the board so the grid keeps its full 240px. pad_all = 0
      * keeps the theme's 16/10 button pad out of the way -- a 34px-wide strip
      * would otherwise have a 2px content box -- so lv_obj_center in
      * side_label() centres on the strip itself. Each band is created first so
      * the pill sits on top of it. */
-    side_band(page, 0, on_hint);
-    lv_obj_t *hint = btn(page, SU_SIDE_X_L, SU_SIDE_Y0, SU_SIDE_W, SU_SIDE_H,
-                         MUSE_THEME_CARD, 10, on_hint, NULL);
-    lv_obj_set_style_pad_all(hint, 0, 0);
-    side_label(hint, "提\n示");
+    side_band(page, 0, on_prev);
+    lv_obj_t *prev = btn(page, SU_SIDE_X_L, SU_SIDE_Y0, SU_SIDE_W, SU_SIDE_H,
+                         10, on_prev, NULL);
+    lv_obj_set_style_pad_all(prev, 0, 0);
+    side_label(prev, "上\n一\n题");
     side_band(page, 360 - SU_BAND_W, on_next);
     lv_obj_t *next = btn(page, SU_SIDE_X_R, SU_SIDE_Y0, SU_SIDE_W, SU_SIDE_H,
-                         MUSE_THEME_CARD, 10, on_next, NULL);
+                         10, on_next, NULL);
     lv_obj_set_style_pad_all(next, 0, 0);
     side_label(next, "下\n一\n题");
+
+    /* 提示 under the board (2026-11-01, user request): the only horizontal
+     * button on the page. Its label is the same font and the same
+     * SU_LABEL_TEXT_SCALE as the two strips (2026-11-01: the three must read
+     * as one size), still centred by lv_obj_center -- the transform pivot is
+     * the label box centre, so the 16 -> 14px shrink stays on that centre.
+     * s_hint_btn is hidden while the refusal note is up; they share this
+     * slot. The hit band is created first so the pill stays on top of it:
+     * the band is what makes the 36px pill easy to hit, the pill itself is
+     * unchanged. */
+    hit_band(page, SU_HINT_HIT_X0, SU_HINT_HIT_Y0, SU_HINT_HIT_W, SU_HINT_HIT_H, on_hint);
+    s_hint_btn = btn(page, SU_HINT_X0, SU_HINT_Y0, SU_HINT_W, SU_HINT_H,
+                     10, on_hint, NULL);
+    lv_obj_set_style_pad_all(s_hint_btn, 0, 0);
+    lv_obj_t *hl = label(s_hint_btn, muse_font_cjk(), MUSE_THEME_TEXT, "提示");
+    scale_label(hl);
+    lv_obj_center(hl);
 
     /* Dim overlay (below both modals, above the grid). */
     s_overlay = lv_obj_create(page);
     lv_obj_set_size(s_overlay, 360, 360);
     lv_obj_set_pos(s_overlay, 0, 0);
     lv_obj_set_style_bg_opa(s_overlay, LV_OPA_50, 0);
-    lv_obj_set_style_bg_color(s_overlay, lv_color_hex(0x000000), 0);
+    lv_obj_set_style_bg_color(s_overlay, lv_color_hex(MUSE_THEME_BG), 0);
     lv_obj_set_style_border_width(s_overlay, 0, 0);
     lv_obj_set_style_radius(s_overlay, 0, 0);
     lv_obj_remove_flag(s_overlay, LV_OBJ_FLAG_SCROLLABLE);
@@ -645,24 +799,24 @@ void muse_sudoku_ui_build(lv_obj_t *page, lv_event_cb_t back_cb)
         int x = SU_DIGIT_X0 + col * (SU_DIGIT_W + SU_DIGIT_GAP);
         int y = SU_DIGIT_Y0 + row * (SU_DIGIT_H + SU_DIGIT_GAP);
         lv_obj_t *b = btn(s_pad_card, x, y, SU_DIGIT_W, SU_DIGIT_H,
-                          MUSE_THEME_CARD_PRESSED, 10, on_pad_digit,
+                          10, on_pad_digit,
                           (void *)(intptr_t)(i + 1));
-        /* Pressed flash: the theme has no lighter card shade, so the
-         * press tints ACCENT instead of going invisible. */
-        lv_obj_set_style_bg_color(b, lv_color_hex(MUSE_THEME_ACCENT), LV_STATE_PRESSED);
+        /* Pressed flash: CARD -> CARD_PRESSED, the same feedback every
+         * other page's buttons give. */
+        lv_obj_set_style_bg_color(b, lv_color_hex(MUSE_THEME_CARD_PRESSED), LV_STATE_PRESSED);
         char buf[2] = {(char)('0' + i + 1), '\0'};
         lv_obj_t *l = label(b, muse_font_btn(), MUSE_THEME_TEXT, buf);
         lv_obj_center(l);
     }
     lv_obj_t *clear = btn(s_pad_card, SU_ACT_X0, SU_ACT_Y0, SU_ACT_W, SU_ACT_H,
-                          MUSE_THEME_CARD_PRESSED, 10, on_pad_clear, NULL);
-    lv_obj_set_style_bg_color(clear, lv_color_hex(MUSE_THEME_ACCENT), LV_STATE_PRESSED);
+                          10, on_pad_clear, NULL);
+    lv_obj_set_style_bg_color(clear, lv_color_hex(MUSE_THEME_CARD_PRESSED), LV_STATE_PRESSED);
     lv_obj_t *cl = label(clear, muse_font_cjk(), MUSE_THEME_DIM, "清除");
     lv_obj_center(cl);
     lv_obj_t *cancel = btn(s_pad_card, SU_ACT_X0 + SU_ACT_W + SU_ACT_GAP, SU_ACT_Y0,
                            SU_ACT_W, SU_ACT_H,
-                           MUSE_THEME_CARD_PRESSED, 10, on_pad_cancel, NULL);
-    lv_obj_set_style_bg_color(cancel, lv_color_hex(MUSE_THEME_ACCENT), LV_STATE_PRESSED);
+                           10, on_pad_cancel, NULL);
+    lv_obj_set_style_bg_color(cancel, lv_color_hex(MUSE_THEME_CARD_PRESSED), LV_STATE_PRESSED);
     lv_obj_t *xl = label(cancel, muse_font_cjk(), MUSE_THEME_DIM, "取消");
     lv_obj_center(xl);
 
@@ -683,34 +837,38 @@ void muse_sudoku_ui_build(lv_obj_t *page, lv_event_cb_t back_cb)
     lv_obj_t *wt = label(s_win_card, muse_font_cjk(), MUSE_THEME_ACCENT, "完成！");
     lv_obj_align(wt, LV_ALIGN_TOP_MID, 0, 16);
     s_win_time = label(s_win_card, muse_font_cjk(), MUSE_THEME_TEXT, "");
-    lv_obj_align(s_win_time, LV_ALIGN_TOP_MID, 0, 60);
-    lv_obj_t *wn = btn(s_win_card, 19, 94, SU_ACT_W, SU_ACT_H,
-                       MUSE_THEME_CARD_PRESSED, 10, on_win_next, NULL);
-    lv_obj_set_style_bg_color(wn, lv_color_hex(MUSE_THEME_ACCENT), LV_STATE_PRESSED);
+    lv_obj_align(s_win_time, LV_ALIGN_TOP_MID, 0, 56);
+    /* Reward line (2026-11-01): 5 coins for the day's first solved puzzle,
+     * "今日数独金币已满" afterwards. Its colour is set per outcome by
+     * show_win(), so the initial GOLD here is only a placeholder. */
+    s_win_reward = label(s_win_card, muse_font_cjk(), MUSE_THEME_GOLD, "");
+    lv_obj_align(s_win_reward, LV_ALIGN_TOP_MID, 0, 80);
+    lv_obj_t *wn = btn(s_win_card, 19, 110, SU_ACT_W, SU_ACT_H,
+                       10, on_win_next, NULL);
+    lv_obj_set_style_bg_color(wn, lv_color_hex(MUSE_THEME_CARD_PRESSED), LV_STATE_PRESSED);
     lv_obj_t *wnl = label(wn, muse_font_cjk(), MUSE_THEME_TEXT, "下一题");
     lv_obj_center(wnl);
-    lv_obj_t *wr = btn(s_win_card, 136, 94, SU_ACT_W, SU_ACT_H,
-                       MUSE_THEME_CARD_PRESSED, 10, on_win_replay, NULL);
-    lv_obj_set_style_bg_color(wr, lv_color_hex(MUSE_THEME_ACCENT), LV_STATE_PRESSED);
+    lv_obj_t *wr = btn(s_win_card, 136, 110, SU_ACT_W, SU_ACT_H,
+                       10, on_win_replay, NULL);
+    lv_obj_set_style_bg_color(wr, lv_color_hex(MUSE_THEME_CARD_PRESSED), LV_STATE_PRESSED);
     lv_obj_t *wrl = label(wr, muse_font_cjk(), MUSE_THEME_TEXT, "再玩一次");
     lv_obj_center(wrl);
 
     /* Refusal note, last so it stays above the dim overlay: a blocked
      * charge (under 5 coins, or worker not ready) shows here until the next
-     * charge succeeds or the tile is left. y = 316 is the band the old pill
-     * row used to occupy, clear of the board's last row (which ends at 308)
-     * and inside the circle's chord for a note this short. */
+     * charge succeeds or the tile is left. It shares the 提示 button's band
+     * (y = 316 inside 310..346) and hides that button while it is up; the
+     * copy is short because the chord there is only ~139px. */
     s_note = label(page, muse_font_cjk(), MUSE_THEME_DANGER, "");
-    lv_obj_align(s_note, LV_ALIGN_TOP_MID, 0, 316);
+    lv_obj_align(s_note, LV_ALIGN_TOP_MID, 0, SU_NOTE_Y);
     lv_obj_add_flag(s_note, LV_OBJ_FLAG_HIDDEN);
 
     load_puzzle(0);
     /* The page is built once, at boot. Loading a puzzle here would start its
      * clock hours before the player opens the page, so the first puzzle waits
      * for muse_sudoku_ui_show() to start it. The boot-time load is not a
-     * charge either: the first entry pays for puzzle #01. */
+     * charge either: the first entry of the day pays for it. */
     s_timed = false;
-    s_current_paid = false;
 }
 
 void muse_sudoku_ui_show(void)
@@ -724,10 +882,10 @@ void muse_sudoku_ui_show(void)
         s_start_ms = lv_tick_get();
         s_timed = true;
     }
-    /* Entering with an unpaid puzzle pays for it here; a paid puzzle
-     * re-enters free, and a refused charge leaves the puzzle on screen
-     * with the note up (cell taps retry the charge). */
-    try_charge();
+    /* Entering pays the day's entry fee if it is not paid yet; every later
+     * entry that day is free, and a refused charge leaves the puzzle on
+     * screen with the note up (cell taps and 提示 retry the charge). */
+    ensure_entry();
     refresh_grid();
 }
 
@@ -735,5 +893,7 @@ void muse_sudoku_ui_hide(void)
 {
     close_pad();
     hide_win();
-    lv_obj_add_flag(s_note, LV_OBJ_FLAG_HIDDEN);
+    /* Also restores the 提示 button a refusal note had hidden: the note never
+     * outlives the visit, and the next show() decides again from scratch. */
+    clear_note();
 }

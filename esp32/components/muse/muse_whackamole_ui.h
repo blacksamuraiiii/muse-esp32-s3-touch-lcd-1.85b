@@ -8,16 +8,18 @@
  *
  * Threading follows the interact contract: LVGL callbacks only touch
  * this module's own objects and the RAM game state (muse_whackamole.c);
- * there is no worker, no NVS and no coin settlement here -- the entry
- * fee goes through the pet worker as PET_FEE (see below), the score
- * here is hits and is never currency.
+ * there is no worker and no NVS here -- coin movement is two commands to
+ * the pet worker, PET_FEE at start and PET_PLAY_REWARD once at OVER
+ * (see below).
  *
- * Economy (user decision 2026-10-31, same as the other mini-games):
+ * Economy (user decision 2026-10-31, payout 2026-11-01):
  * each game costs 5 coins. Tapping 开始 on the START overlay or
- * 再玩一次 on the OVER overlay (which prints "− 5 金币" under the
+ * 再玩一次 on the OVER overlay (which prints "- 5 金币" under the
  * label) first checks the pet snapshot: under 5 coins the start is
- * refused with "金币不够，先摸摸 / 喂饭 / 抽运势" and nothing is
- * charged; otherwise PET_FEE is queued and the game starts. Resume
+ * refused with "金币不够（需 5 枚）" -- the short copy, because the note
+ * now shares the slot under the field, where only ~213 px of chord is
+ * left (2026-11-01) -- and nothing is charged; otherwise PET_FEE is
+ * queued and the game starts. Resume
  * after pause never charges again, and there is no restart button on
  * the pause card (2026-11-01, same decision as snake: one tap in the
  * bezel must not spend 5 coins). The worker is the only writer of
@@ -25,6 +27,22 @@
  * feedback PET_POOR), the interact tile calls
  * muse_whackamole_ui_fee_refused(), which cancels a running game back
  * to START with the refusal note.
+ *
+ * Score and payout: one mole is one point, and the 30 s round's score is
+ * converted exactly once, at OVER, by muse_pet_round_coins() -- 1 point per
+ * coin (corrected 2026-11-01 from 5, which paid a 13-point snake round only
+ * 2 coins), at most 5 coins per round -- then sent as PET_PLAY_REWARD.
+ * That ceiling is the entry fee, so an ordinary round breaks even and no
+ * round mints coins. The conversion is printed twice: under the field, in
+ * the status line ("本局 n 分 · 兑 m 金币", the same slot and copy the snake
+ * page uses, 2026-11-01), and on the OVER card; leaving the page mid-round
+ * pauses and settles nothing.
+ *
+ * Pause is a LONG PRESS on the field (user request 2026-11-01, "参考贪吃
+ * 蛇"): the old 34 px pause button sat outside the round bezel, so only a
+ * clipped sliver of it could be hit. A press that hit a mole never pauses,
+ * and the back arrow stays hidden while playing -- long-press first, then
+ * leave from the pause card.
  *
  * Progress lives in static RAM: leaving the tile
  * (muse_whackamole_ui_hide) pauses a running game, so a return visit

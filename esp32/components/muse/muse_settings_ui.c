@@ -16,6 +16,8 @@
 
 #include "muse_settings_ui.h"
 #include "muse_theme.h"   /* MUSE_THEME_*, the one colour table (1.5b) */
+#include "muse_font.h"    /* muse_font_btn(), the one CJK chain (1.5b) */
+#include "muse_widgets.h" /* the shared back arrow / card / title (1.5g) */
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -187,18 +189,6 @@ static void on_back(lv_event_t *e)
     go_back();
 }
 
-static lv_obj_t *back_button(lv_obj_t *p)
-{
-    lv_obj_t *b = lv_button_create(p);
-    lv_obj_remove_style_all(b);
-    lv_obj_set_size(b, 56, 48);
-    lv_obj_align(b, LV_ALIGN_TOP_MID, -112, 28);
-    lv_obj_add_event_cb(b, on_back, LV_EVENT_CLICKED, NULL);
-    lv_obj_t *arrow = label(b, &lv_font_montserrat_20, MUSE_THEME_ACCENT, LV_SYMBOL_LEFT);
-    lv_obj_center(arrow);
-    return b;
-}
-
 /* A page: title, optional back arrow, and a vertically scrolling column. */
 static lv_obj_t *page(lv_obj_t *tile, const char *title, bool back, lv_obj_t **list_out)
 {
@@ -212,12 +202,14 @@ static lv_obj_t *page(lv_obj_t *tile, const char *title, bool back, lv_obj_t **l
     lv_obj_add_flag(p, LV_OBJ_FLAG_HIDDEN);
     catch_swipes(p);
 
-    lv_obj_t *t = label(p, compact ? &lv_font_montserrat_16 : &lv_font_unscii_16, MUSE_THEME_ACCENT, title);
+    /* The title is the shared subpage title (muse_font_cjk + ACCENT), the
+     * same one every game subpage uses; only its y and letter spacing keep
+     * the compact-panel variations. */
+    lv_obj_t *t = muse_page_title(p, title, compact ? (back ? 12 : 8) : 44);
     lv_obj_set_style_text_letter_space(t, compact ? 0 : 2, 0);
-    lv_obj_align(t, LV_ALIGN_TOP_MID, 0, compact ? (back ? 12 : 8) : 44);
 
     if (back) {
-        lv_obj_t *b = back_button(p);
+        lv_obj_t *b = muse_back_button(p, on_back);
         if (compact) {
             lv_obj_set_size(b, 44, 44);
             lv_obj_align(b, LV_ALIGN_TOP_LEFT, 4, 0);
@@ -241,18 +233,25 @@ static lv_obj_t *page(lv_obj_t *tile, const char *title, bool back, lv_obj_t **l
 
 static lv_obj_t *card(lv_obj_t *list, bool clickable)
 {
-    lv_obj_t *c = clickable ? lv_button_create(list) : lv_obj_create(list);
-    lv_obj_remove_style_all(c);
-    lv_obj_set_size(c, lv_pct(100), ROW_H);
-    lv_obj_set_style_radius(c, 18, 0);
-    lv_obj_set_style_bg_opa(c, LV_OPA_COVER, 0);
-    lv_obj_set_style_bg_color(c, lv_color_hex(MUSE_THEME_CARD), 0);
-    lv_obj_set_style_bg_color(c, lv_color_hex(MUSE_THEME_CARD_PRESSED), LV_STATE_PRESSED);
+    /* muse_card is the shared look (CARD / CARD_PRESSED / radius / no
+     * border or shadow); the flex row the icon / text / value live in, and
+     * the non-clickable variant (info_row), stay local to this list. */
+    lv_obj_t *c;
+    if (clickable) {
+        c = muse_card(list, lv_pct(100), ROW_H, 18);
+    } else {
+        c = lv_obj_create(list);
+        lv_obj_remove_style_all(c);
+        lv_obj_set_size(c, lv_pct(100), ROW_H);
+        lv_obj_set_style_radius(c, 18, 0);
+        lv_obj_set_style_bg_opa(c, LV_OPA_COVER, 0);
+        lv_obj_set_style_bg_color(c, lv_color_hex(MUSE_THEME_CARD), 0);
+        lv_obj_remove_flag(c, LV_OBJ_FLAG_SCROLLABLE);
+    }
     lv_obj_set_style_pad_hor(c, 16, 0);
     lv_obj_set_flex_flow(c, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(c, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_set_style_pad_column(c, 12, 0);
-    lv_obj_remove_flag(c, LV_OBJ_FLAG_SCROLLABLE);
     return c;
 }
 
@@ -263,9 +262,9 @@ static lv_obj_t *row(lv_obj_t *list, const char *icon, const char *text, lv_obj_
 {
     lv_obj_t *c = card(list, cb != NULL);
     if (icon) {
-        label(c, &lv_font_montserrat_20, MUSE_THEME_ACCENT, icon);
+        label(c, muse_font_btn(), MUSE_THEME_ACCENT, icon);
     }
-    lv_obj_t *t = label(c, &lv_font_montserrat_20, MUSE_THEME_TEXT, text);
+    lv_obj_t *t = label(c, muse_font_btn(), MUSE_THEME_TEXT, text);
     lv_obj_set_flex_grow(t, 1);
     lv_label_set_long_mode(t, LV_LABEL_LONG_MODE_DOTS);
     if (value_out) {
@@ -283,11 +282,11 @@ static lv_obj_t *row(lv_obj_t *list, const char *icon, const char *text, lv_obj_
 static lv_obj_t *switch_row(lv_obj_t *list, const char *text, bool on, lv_event_cb_t cb)
 {
     lv_obj_t *c = card(list, false);
-    lv_obj_t *t = label(c, &lv_font_montserrat_20, MUSE_THEME_TEXT, text);
+    lv_obj_t *t = label(c, muse_font_btn(), MUSE_THEME_TEXT, text);
     lv_obj_set_flex_grow(t, 1);
     lv_obj_t *sw = lv_switch_create(c);
     lv_obj_set_size(sw, 60, 32);
-    lv_obj_set_style_bg_color(sw, lv_color_hex(0x3a3358), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(sw, lv_color_hex(MUSE_THEME_DOT_OFF), LV_PART_MAIN);
     lv_obj_set_style_bg_color(sw, lv_color_hex(MUSE_THEME_ACCENT), LV_PART_INDICATOR | LV_STATE_CHECKED);
     if (on) {
         lv_obj_add_state(sw, LV_STATE_CHECKED);
@@ -300,7 +299,7 @@ static lv_obj_t *button(lv_obj_t *list, const char *text, uint32_t color, lv_eve
 {
     lv_obj_t *b = card(list, true);
     lv_obj_set_flex_align(b, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_t *l = label(b, &lv_font_montserrat_20, color, text);
+    lv_obj_t *l = label(b, muse_font_btn(), color, text);
     lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, NULL);
     if (label_out) {
         *label_out = l;
@@ -319,8 +318,8 @@ static lv_obj_t *slider(lv_obj_t *list, const char *text, int lo, int hi, int va
     lv_obj_set_style_pad_ver(c, 6, 0);
     lv_obj_remove_flag(c, LV_OBJ_FLAG_SCROLLABLE);
 
-    label(c, &lv_font_montserrat_20, MUSE_THEME_TEXT, text);
-    lv_obj_t *v = label(c, &lv_font_montserrat_20, MUSE_THEME_ACCENT, "");
+    label(c, muse_font_btn(), MUSE_THEME_TEXT, text);
+    lv_obj_t *v = label(c, muse_font_btn(), MUSE_THEME_ACCENT, "");
     lv_obj_align(v, LV_ALIGN_TOP_RIGHT, 0, 0);
     *value_out = v;
 
@@ -330,7 +329,7 @@ static lv_obj_t *slider(lv_obj_t *list, const char *text, int lo, int hi, int va
     lv_obj_align(s, LV_ALIGN_TOP_MID, 0, 40);
     lv_slider_set_range(s, lo, hi);
     lv_slider_set_value(s, value, LV_ANIM_OFF);
-    lv_obj_set_style_bg_color(s, lv_color_hex(0x2a2345), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(s, lv_color_hex(MUSE_THEME_RULE), LV_PART_MAIN);
     lv_obj_set_style_bg_color(s, lv_color_hex(MUSE_THEME_ACCENT), LV_PART_INDICATOR);
     lv_obj_set_style_bg_color(s, lv_color_hex(MUSE_THEME_TEXT), LV_PART_KNOB);
     lv_obj_set_style_pad_all(s, 6, LV_PART_KNOB);
@@ -513,7 +512,7 @@ static void build_keyboard(void)
     lv_obj_set_style_bg_opa(s_text_kb, LV_OPA_TRANSP, 0);
     lv_obj_set_style_pad_all(s_text_kb, 2, 0);
     lv_obj_set_style_pad_gap(s_text_kb, 4, 0);
-    lv_obj_set_style_text_font(s_text_kb, &lv_font_montserrat_20, LV_PART_ITEMS);
+    lv_obj_set_style_text_font(s_text_kb, muse_font_btn(), LV_PART_ITEMS);
     lv_obj_set_style_bg_color(s_text_kb, lv_color_hex(MUSE_THEME_CARD), LV_PART_ITEMS);
     lv_obj_set_style_text_color(s_text_kb, lv_color_hex(MUSE_THEME_TEXT), LV_PART_ITEMS);
     lv_obj_set_style_radius(s_text_kb, 8, LV_PART_ITEMS);
@@ -532,16 +531,16 @@ static void build_text_page(lv_obj_t *tile)
     lv_obj_remove_flag(s_text, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_flag(s_text, LV_OBJ_FLAG_HIDDEN);
     catch_swipes(s_text);
-    lv_obj_t *back = back_button(s_text);
+    lv_obj_t *back = muse_back_button(s_text, on_back);
 
     /* Between the back arrow and its mirror image. */
-    s_text_title = label(s_text, &lv_font_montserrat_20, MUSE_THEME_ACCENT, "");
+    s_text_title = label(s_text, muse_font_btn(), MUSE_THEME_ACCENT, "");
     lv_obj_set_width(s_text_title, 150);
     lv_obj_set_style_text_align(s_text_title, LV_TEXT_ALIGN_CENTER, 0);
     lv_label_set_long_mode(s_text_title, LV_LABEL_LONG_MODE_DOTS);
     lv_obj_align(s_text_title, LV_ALIGN_TOP_MID, 0, 40);
 
-    const lv_font_t *font = &lv_font_montserrat_20;
+    const lv_font_t *font = muse_font_btn();
     int h = text_px(48), border = 2;
     int pad = (h - 2 * border - lv_font_get_line_height(font)) / 2;
     s_text_ta = lv_textarea_create(s_text);
@@ -1107,7 +1106,7 @@ static void build_sound_page(lv_obj_t *tile)
     lv_obj_set_size(s_mic_bar, lv_pct(94), 10);
     lv_obj_align(s_mic_bar, LV_ALIGN_TOP_MID, 0, 26);
     lv_bar_set_range(s_mic_bar, 0, 60);   /* -70..-10 dBFS */
-    lv_obj_set_style_bg_color(s_mic_bar, lv_color_hex(0x2a2345), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(s_mic_bar, lv_color_hex(MUSE_THEME_RULE), LV_PART_MAIN);
     lv_obj_set_style_anim_duration(s_mic_bar, 80, 0);
     if (muse_board->epaper) {
         lv_obj_add_flag(meter, LV_OBJ_FLAG_HIDDEN);

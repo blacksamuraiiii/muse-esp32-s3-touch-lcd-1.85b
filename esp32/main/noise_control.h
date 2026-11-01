@@ -92,6 +92,12 @@ bool noise_ctrl_is_connected(void);
 // the session reconnects by itself meanwhile.
 bool noise_ctrl_is_running(void);
 
+// The VM id and token this session authenticated with, copied out under the
+// connect lock. *token_out is a strdup the caller frees. False before the
+// first noise_ctrl_connect(). Callers that cannot afford a fresh fetch (the
+// muse_vm task needs 8 KB of internal RAM) reuse these instead.
+bool noise_ctrl_vm_credentials(char *vm_id, size_t vm_id_cap, char **token_out);
+
 void noise_ctrl_send_command_result(
     noise_ctrl_session_generation_t session_generation,
     const char *request_id, cJSON *result);

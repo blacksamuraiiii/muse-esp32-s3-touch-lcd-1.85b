@@ -28,11 +28,11 @@ static void check_food_sane(const muse_snake_t *g)
 int main(void)
 {
     /* v1 defaults, documented in the header. */
-    assert(MUSE_SNAKE_TICK_MS == 200);
+    assert(MUSE_SNAKE_TICK_MS == 500);
     assert(MUSE_SNAKE_COLS == 12);
     assert(MUSE_SNAKE_ROWS == 12);
     assert(MUSE_SNAKE_INIT_LEN == 3);
-    assert(MUSE_SNAKE_FOOD_SCORE == 10);
+    assert(MUSE_SNAKE_FOOD_SCORE == 1);
 
     srand(1234);
 
@@ -87,7 +87,7 @@ int main(void)
     assert(g.dir == MUSE_SNAKE_UP);
     assert(g.body[0].x == 8 && g.body[0].y == 6);
 
-    /* Eat: food ahead grows the snake and scores 10, new food is sane. */
+    /* Eat: food ahead grows the snake and scores 1, new food is sane. */
     muse_snake_t e;
     muse_snake_init(&e);
     assert(muse_snake_set_food(&e, 7, 5));
@@ -95,7 +95,7 @@ int main(void)
     muse_snake_tick(&e);
     assert(e.body[0].x == 7 && e.body[0].y == 5);
     assert(e.len == 4);
-    assert(e.score == 10);
+    assert(e.score == 1);
     check_food_sane(&e);
 
     /* set_food refusals: out of bounds and on the snake. */
@@ -172,7 +172,7 @@ int main(void)
     muse_snake_set_dir(&s, MUSE_SNAKE_DOWN);
     assert(muse_snake_set_food(&s, 8, 6));
     muse_snake_tick(&s); /* eat -> len 6 */
-    assert(s.len == 6 && s.score == 30);
+    assert(s.len == 6 && s.score == 3);
     assert(muse_snake_set_food(&s, 0, 0));
     muse_snake_set_dir(&s, MUSE_SNAKE_LEFT);
     muse_snake_tick(&s);

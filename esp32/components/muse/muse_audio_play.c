@@ -50,6 +50,9 @@ typedef struct {
 
 static TaskHandle_t s_task;
 static volatile bool s_abort;
+/* esp_http_client ignores the event handler's return value, so a decoder that
+ * falls behind cannot abort the download; remember it and report failure. */
+static bool s_dropped;
 
 static uint8_t *s_mp3;
 static size_t s_len;
@@ -61,11 +64,20 @@ static int s_in_rate;
 
 static bool ensure_buffers(void)
 {
-    if (s_mp3) return true;
+    if (s_mp3 && s_pcm && s_pcm16) return true;
     s_mp3 = (uint8_t *)heap_caps_malloc(MP3_BUF, MALLOC_CAP_SPIRAM);
     s_pcm = (int16_t *)heap_caps_malloc(MINIMP3_MAX_SAMPLES_PER_FRAME * sizeof(int16_t), MALLOC_CAP_SPIRAM);
     s_pcm16 = (int16_t *)heap_caps_malloc(MINIMP3_MAX_SAMPLES_PER_FRAME * 2 * sizeof(int16_t), MALLOC_CAP_SPIRAM);
     if (!s_mp3 || !s_pcm || !s_pcm16) {
+        /* Free whatever landed. Leaving a partial set behind would pass the
+         * s_mp3 sentinel on the next call with s_pcm/s_pcm16 still NULL and
+         * crash the decoder on the first frame. */
+        free(s_mp3);
+        s_mp3 = NULL;
+        free(s_pcm);
+        s_pcm = NULL;
+        free(s_pcm16);
+        s_pcm16 = NULL;
         ESP_LOGE(TAG, "no buffer for playback (need %d KB of PSRAM)", (MP3_BUF + 3 * 4096) / 1024);
         return false;
     }
@@ -165,6 +177,7 @@ static esp_err_t on_http_data(esp_http_client_event_t *ev)
             room = MP3_BUF - s_len;
             if (room < 1024) {
                 ESP_LOGW(TAG, "decoder is not keeping up");
+                s_dropped = true;
                 return ESP_FAIL;
             }
         }
@@ -225,10 +238,20 @@ static void play_task(void *arg)
                 ESP_LOGW(TAG, "endpoint answered %d", status);
             } else {
                 drain(true);       /* flush the tail minimp3 was holding back */
-                ok = true;
-                code = "ok";
-                snprintf(message, sizeof(message), "played %lld bytes", (long long)body);
-                ESP_LOGI(TAG, "played %lld bytes", (long long)body);
+                if (s_dropped) {
+                    /* The fetch answered 200 but chunks were discarded when
+                     * the decoder fell behind; reporting ok would claim a
+                     * complete playback that never happened. */
+                    ok = false;
+                    code = "audio_dropped";
+                    snprintf(message, sizeof(message), "decoder fell behind, part of the audio was dropped");
+                    ESP_LOGW(TAG, "reporting failure: audio was dropped");
+                } else {
+                    ok = true;
+                    code = "ok";
+                    snprintf(message, sizeof(message), "played %lld bytes", (long long)body);
+                    ESP_LOGI(TAG, "played %lld bytes", (long long)body);
+                }
             }
         }
     } else {
@@ -263,6 +286,7 @@ bool muse_audio_play_url(const char *url, muse_audio_play_done_cb_t done, void *
         return false;
     }
     s_abort = false;
+    s_dropped = false;
     if (xTaskCreate(play_task, "muse_aplay", TASK_STACK, req, TASK_PRIO, &s_task) != pdPASS) {
         free(req->url);
         free(req);

@@ -376,7 +376,28 @@ static bool op_hatch_linked(void) {
 
 static bool op_hatch_vm(const char *want_vm, char *vm_id, size_t id_cap, char *vm_name, size_t name_cap,
                         char **vm_token) {
-    return s_linked && app_hatch_vm_credentials(want_vm, vm_id, id_cap, vm_name, name_cap, vm_token);
+    if (!s_linked) return false;
+    // The control session already authenticated with a VM. Reuse those
+    // credentials when they match: the muse_vm lookup task wants 8 KB of
+    // internal RAM and this build's largest free block is about 4 KB, so
+    // spawning it fails and the chat session reports "Can't reach Muse's
+    // server" while the control channel is up.
+    char cached_id[128] = {0};
+    char *cached_token = NULL;
+    if (noise_ctrl_vm_credentials(cached_id, sizeof(cached_id), &cached_token)
+        && (!want_vm || !want_vm[0] || strcmp(want_vm, cached_id) == 0)) {
+        if (strlen(cached_id) + 1 > id_cap) {
+            free(cached_token);
+            return false;
+        }
+        strcpy(vm_id, cached_id);
+        if (name_cap) vm_name[0] = '\0';
+        *vm_token = cached_token;
+        ESP_LOGI(TAG, "VM %s from the control session", cached_id);
+        return true;
+    }
+    free(cached_token);
+    return app_hatch_vm_credentials(want_vm, vm_id, id_cap, vm_name, name_cap, vm_token);
 }
 
 // Pairing and the API client take the SDK token at boot, so a new one

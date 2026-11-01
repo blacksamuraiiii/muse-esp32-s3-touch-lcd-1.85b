@@ -8,21 +8,30 @@
  *
  * Threading follows the interact contract: LVGL callbacks only touch
  * this module's own objects and the RAM game state (muse_snake.c);
- * there is no worker, no NVS and no coin settlement here -- the entry
- * fee goes through the pet worker as PET_FEE (see below), the score
- * here is food x 10 and is never currency.
+ * there is no worker and no NVS here -- coin movement is two commands to
+ * the pet worker, PET_FEE at start and PET_PLAY_REWARD once at OVER
+ * (see below).
  *
- * Economy (user decision 2026-10-31): each game costs 5 coins.
- * Tapping 开始 on the START overlay or 重开 on the OVER overlay (or
- * on the pause overlay) first checks the pet snapshot: under 5 coins
- * the start is refused with "金币不够，先摸摸 / 喂饭 / 抽运势" and
- * nothing is charged; otherwise PET_FEE is queued and the game
- * starts. Resume after pause never charges again, and a restart
- * counts as a new game and charges again. The worker is the only
- * writer of coins; a stale snapshot that lets a fee through is
- * settled by the worker (PET_POOR feedback is ignored here -- the
- * snapshot is the authority and no second game can deduct
- * concurrently, so the gate cannot be beaten in practice).
+ * Economy (user decision 2026-10-31, payout 2026-11-01): each game costs
+ * 5 coins. Tapping 开始 on the START overlay or 再玩一次 on the OVER
+ * overlay (which prints "- 5 金币" under the label) first checks the pet
+ * snapshot: under 5 coins the start is refused with "金币不够…" and
+ * nothing is charged; otherwise PET_FEE is queued and the game starts.
+ * Resume after pause never charges again, and a restart counts as a new
+ * game and charges again. The worker is the only writer of coins; a
+ * stale snapshot that lets a fee through is settled by the worker
+ * (PET_POOR feedback is ignored here -- the snapshot is the authority
+ * and no second game can deduct concurrently, so the gate cannot be
+ * beaten in practice).
+ *
+ * The score (1 point per food) is converted exactly once, when the round
+ * ends, by muse_pet_round_coins() -- 1 point per coin (corrected
+ * 2026-11-01 from 5, which paid a 13-point round only 2 coins), at most 5
+ * coins per round -- and sent as PET_PLAY_REWARD. That ceiling is the
+ * entry fee, so a round can at best break even and never mints coins. The
+ * conversion is shown twice: under the board, in the score line
+ * ("本局 n 分 · 兑 m 金币", 2026-11-01), and on the OVER card; leaving the
+ * page mid-round pauses and settles nothing.
  *
  * Progress lives in static RAM: leaving the tile (muse_snake_ui_hide)
  * pauses a running game, so a return visit resumes it from the pause
@@ -50,3 +59,10 @@ void muse_snake_ui_show(void);
  * overlay shown), so it cannot play on invisibly. Any other state is
  * left as-is, so a return visit resumes exactly where it left off. */
 void muse_snake_ui_hide(void);
+
+/* PET_FEE came back refused (PET_POOR / PET_STORAGE) for a round this
+ * page optimistically started: reset to START -- the round never
+ * settled, so no payout may fire from it -- and show the short
+ * refusal note. Same contract as muse_whackamole_ui_fee_refused.
+ * Call from the LVGL task only (interact's drain_feedback). */
+void muse_snake_ui_fee_refused(void);

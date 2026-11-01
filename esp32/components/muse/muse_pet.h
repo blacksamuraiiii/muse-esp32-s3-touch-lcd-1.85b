@@ -55,6 +55,17 @@ bool muse_pet_request(muse_pet_action_t action);
  * balance is below the 5-coin stake. */
 bool muse_pet_request_game(int outcome);
 
+/*
+ * Settle a finished mini-game round (snake / whack-a-mole) at OVER:
+ * `coins` is what the UI converted the round's score to with
+ * muse_pet_round_coins() (0..5). Sent once per round, never per point.
+ * The worker clamps the amount to MUSE_PET_ROUND_COIN_MAX, so a UI bug can
+ * cost at most a wrong-looking label, never extra coins. Returns false only
+ * when the worker is not ready or its queue is full -- in that case the
+ * reward is lost and the caller must not claim it in its UI.
+ */
+bool muse_pet_request_play_reward(uint32_t coins);
+
 /* Acknowledge the living-cost notice for one day (1.5b). The worker only
  * clears a notice whose decay_day matches `day`, so an ACK that arrives
  * after a midnight rollover cannot silently clear a new notice. The bare

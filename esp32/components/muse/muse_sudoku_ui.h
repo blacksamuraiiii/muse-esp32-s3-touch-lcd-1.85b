@@ -8,12 +8,23 @@
  *
  * Threading follows the interact contract: LVGL callbacks only touch
  * this module's own objects and the RAM puzzle state (muse_sudoku.c);
- * there is no worker and no NVS here -- the only coin movement is the
- * 5-coin entry fee per puzzle, sent as PET_FEE (see the .c file);
- * Sudoku never pays coins out. Progress lives in static RAM: leaving
- * the tile (muse_sudoku_ui_hide) closes the pad popup and the win overlay
- * but keeps the puzzle and its paid flag, so re-entering the page resumes
- * it without charging again; a reboot restarts puzzle #01.
+ * there is no worker and no NVS here -- coin movement is two commands to
+ * the pet worker, PET_SUDOKU_ENTRY and PET_SUDOKU_SOLVE (see below).
+ *
+ * Economy (user decision 2026-11-01, superseding the per-puzzle fee of
+ * 2026-10-31): entering sudoku costs 5 coins ONCE PER CALENDAR DAY, and that
+ * one ticket covers everything else the page does that day -- re-entering,
+ * 上一题, 下一题 and 再玩一次 are all free. The request is idempotent in the
+ * worker, so the page simply asks again on each action instead of keeping a
+ * local "paid" flag that a reboot would lose. Completing a puzzle pays 5
+ * coins, capped at 5 per day: only the day's first solved board pays, and
+ * later ones say "今日数独金币已满". A day's sudoku can therefore at best
+ * refund its own entry fee.
+ *
+ * Progress lives in static RAM: leaving the tile (muse_sudoku_ui_hide) closes
+ * the pad popup and the win overlay but keeps the puzzle, so re-entering the
+ * page resumes it (no charge once the day's ticket is paid); a reboot
+ * restarts puzzle #01 and the day's ticket state survives in NVS.
  */
 #pragma once
 

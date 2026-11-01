@@ -15,16 +15,18 @@
  *   - Steering: a 180-degree reversal is ignored, and each tick takes
  *     at most one turn -- rapid taps resolve to the last VALID
  *     direction (valid = not the opposite of the current direction).
- *   - Eating food scores 10 and grows the snake by one cell.
+ *   - Eating food scores 1 and grows the snake by one cell (2026-11-01:
+ *     was 10; one point is now the economy's unit -- see
+ *     muse_pet_model.h, muse_pet_round_coins()).
  *   - Hitting a wall or the snake's own body ends the game (OVER).
- *   - No coins, no NVS here: the entry fee lives in the UI layer
- *     (PET_FEE through the pet worker), this file only plays.
+ *   - No coins, no NVS here: the entry fee and the end-of-round payout
+ *     live in the UI layer (PET_FEE / PET_PLAY_REWARD through the pet
+ *     worker), this file only plays.
  *   - Progress lives in RAM (leaving the page pauses, re-entering
  *     resumes; a reboot restarts from START).
  *
- * v1 defaults (change here to retune): tick 400 ms (the UI timer rate,
- * halved from 200 on user feedback), +10 per food, initial length 3,
- * 12x12 board.
+ * v1 defaults (change here to retune): tick 500 ms (the UI timer rate),
+ * +1 per food, initial length 3, 12x12 board.
  */
 #pragma once
 
@@ -35,12 +37,14 @@
 #define MUSE_SNAKE_ROWS 12
 #define MUSE_SNAKE_CELLS (MUSE_SNAKE_COLS * MUSE_SNAKE_ROWS)
 #define MUSE_SNAKE_INIT_LEN 3
-#define MUSE_SNAKE_FOOD_SCORE 10
-/* Tick interval, milliseconds. v1 default was 200; the board is only 12
- * cells wide, so 200 ms crossed it in 2.4 s and read as too fast on the
- * device (user feedback 2026-10-31). 400 ms halves the speed. This is
- * the one knob for game pace: the UI creates its timer with it. */
-#define MUSE_SNAKE_TICK_MS 400
+/* One point per food (2026-11-01, user decision): the score is the unit the
+ * coin curve counts, so it must be 1 per action like whack-a-mole's hit. */
+#define MUSE_SNAKE_FOOD_SCORE 1
+/* Tick interval, milliseconds. 200 (v1) crossed the 12-cell board in 2.4 s
+ * and read as too fast on the device (user feedback 2026-10-31), so it went
+ * to 400; 500 slows it down once more (user request 2026-11-01) and is the
+ * one knob for pace: the UI creates its timer with it. */
+#define MUSE_SNAKE_TICK_MS 500
 
 typedef enum {
     MUSE_SNAKE_UP = 0,
@@ -63,7 +67,7 @@ typedef struct {
 typedef struct {
     muse_snake_state_t state;
     muse_snake_dir_t dir;               /* direction of the last move */
-    uint16_t score;                     /* foods eaten x 10 */
+    uint16_t score;                     /* foods eaten x 1 (points) */
     uint8_t len;                        /* 3..144, body[0] is the head */
     muse_snake_cell_t body[MUSE_SNAKE_CELLS];
     muse_snake_cell_t food;
