@@ -45,3 +45,6 @@ esp32/build-*.log
 esp32/flash-*.log
 esp32/reconf.log
 esp32/probe_build.log
+
+# Local scratch refs (temporary comparison dumps used while reviewing merges).
+.refs/
