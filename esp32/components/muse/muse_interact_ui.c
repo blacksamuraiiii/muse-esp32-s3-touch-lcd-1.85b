@@ -124,12 +124,12 @@
 #define IC_FORTUNE_CARD_W 300
 #define IC_FORTUNE_CARD_H 160
 #define IC_FORTUNE_CARD_Y 114
-/* The card is split in two halves since 2026-11-01 (user request): the
- * grade + its rule own the top, the body owns the bottom, and this rule
- * IS the divider -- 200x4, i.e. two thirds of the 300 px card, so it
- * reads as a section break rather than a stray underline. It scales with
- * the grade (2x), which is why it is 4 px and not 2. */
-#define IC_FORTUNE_RULE_W 200
+/* The gold rule under the grade (v2, user request 2026-11-01): it is
+ * the grade's own underline, exactly as wide as the grade draws (2-char
+ * grade at 2x = 64 px, 1-char grade = 32 px), NOT a fixed 200 px divider.
+ * Its width is set by fortune_layout() from the measured grade width, so
+ * it can never drift from the text above it. It is 4 px and not 2 because
+ * it scales with the grade (2x). */
 #define IC_FORTUNE_RULE_H 4
 /* Grade size: the firmware carries exactly one CJK face (16 px, see
  * muse_font.h). 512 = 2.0x, i.e. the 大吉 line draws 32 px tall. The
@@ -201,7 +201,8 @@ static lv_obj_t *s_game_you_img, *s_game_house_img;
 static lv_obj_t *s_game_result_lbl, *s_game_streak_lbl, *s_game_chant_lbl;
 static lv_obj_t *s_game_coins_lbl;
 static bool s_storage_noted, s_unready_noted;
-static lv_obj_t *s_fortune_grade, *s_fortune_body;
+static lv_obj_t *s_fortune_card, *s_fortune_grade, *s_fortune_rule,
+    *s_fortune_body;
 /* Bottom gold row (y = 302) on the feed and fortune subpages, added
  * 2026-11-01 so every interaction page ends with the same coin line.
  * Written by refresh_status() from the snapshot, same as s_status1 and
@@ -827,18 +828,55 @@ static void game_tick(void)
 }
 
 /* --- fortune subpage --- */
+/* Fortune card layout (v2, user request 2026-11-01): grade + rule +
+ * body are ONE group, centred vertically AND horizontally in the
+ * 300x160 card. The group height is measured, not fixed: the grade
+ * draws 32 px (16 px face at 2x), then 8 px, the 4 px rule, 12 px, then
+ * the body at its real wrapped height (font line height 20 + line
+ * space 6 = 26 px per line). So a 2-line body groups to 108 px and sits
+ * at top 26; a 1-line body groups to 82 px and sits at top 39. The
+ * grade label's BOX stays 16 px tall and is drawn scaled about its
+ * centre, so its box top is group_top + 8 for a drawn top of
+ * group_top. The rule's width is the grade's drawn width: label box
+ * width x the 2x scale. Callers must set both texts first; this only
+ * measures and positions. */
+static void fortune_layout(void)
+{
+    if (!s_fortune_card || !s_fortune_grade || !s_fortune_rule ||
+        !s_fortune_body) {
+        return;
+    }
+    lv_obj_update_layout(s_fortune_card);
+    lv_coord_t body_h = lv_obj_get_height(s_fortune_body);
+    if (body_h <= 0) {
+        body_h = 26;
+    }
+    lv_coord_t grade_w = lv_obj_get_width(s_fortune_grade) *
+                         (IC_FORTUNE_GRADE_SCALE / 256);
+    lv_coord_t group_h = 32 + 8 + IC_FORTUNE_RULE_H + 12 + body_h;
+    lv_coord_t top = (IC_FORTUNE_CARD_H - group_h) / 2;
+    if (top < 0) {
+        top = 0;
+    }
+    lv_obj_align(s_fortune_grade, LV_ALIGN_TOP_MID, 0, top + 8);
+    lv_obj_set_size(s_fortune_rule, grade_w, IC_FORTUNE_RULE_H);
+    lv_obj_align(s_fortune_rule, LV_ALIGN_TOP_MID, 0, top + 40);
+    lv_obj_align(s_fortune_body, LV_ALIGN_TOP_MID, 0, top + 56);
+}
 
 static void show_fortune_card(void)
 {
     if (!s_have_snap || s_snap.fortune_day < 0) {
         lv_label_set_text(s_fortune_grade, "-");
         lv_label_set_text(s_fortune_body, "抽取中...");
+        fortune_layout();
         return;
     }
     const char *grade = muse_pet_fortune_grade(s_snap.fortune);
     const char *text = muse_pet_fortune_text(s_snap.fortune);
     lv_label_set_text(s_fortune_grade, grade ? grade : "吉");
     lv_label_set_text(s_fortune_body, text ? text : "");
+    fortune_layout();
 }
 
 static void on_fortune_open(lv_event_t *e)
@@ -1303,33 +1341,32 @@ static void build_fortune(void)
 {
     page_header(s_fortune_page, "今日运势", on_back);
     /* Dark unified card (design v22): CARD background, no beige paper,
-     * no upstream left/right split. Since 2026-11-01 (user pick of the
-     * "improved" mockup) the card is 300x160 at y = 114 and its content
-     * is centred as a group instead of hugging the top edge: the old
-     * 150 px card with grade at 12 / body at 52 left 54 px of dead space
-     * under the text.
-     * Two halves since 2026-11-01 (user request): 大吉 at 28 (visual
-     * 22..54) + the 200x4 gold rule at 76..80 sit in the top 76 px; the
-     * body starts at 97 and ends at 143, centred in the bottom 80 px. So
-     * the rule is both the grade's underline and the card's divider, and
-     * each half has ~20 px of air above and below its content.
+     * no upstream left/right split. The card is 300x160 at y = 114.
+     * v2 (user request 2026-11-01, mockup fortune-mockup-v2): grade +
+     * rule + body are ONE group, centred vertically and horizontally in
+     * the card -- not two halves. fortune_layout() measures the body
+     * height after every text change and positions the group from it,
+     * so a body that wraps to a different line count stays centred
+     * instead of leaving dead space at the card's bottom. The rule is
+     * the grade's own underline (width = grade drawn width), not a
+     * section divider.
      * The grade label's BOX stays 16 px tall (the only CJK face in the
-     * firmware); transform_scale 2x around its centre makes it DRAW 32 px,
-     * so optically it covers ~28..60 and the card still reads as one
-     * centred block (2026-11-01, user request "与下方文字一起居中" +
-     * "不要引入新字体，单纯放大"). The upscaled 16 px glyphs are a little
-     * soft at the edges -- the accepted trade for not shipping a second
-     * font; the same mechanism scales the sudoku side strips. Body in
-     * white at 16 px, line spacing 6 (the CJK font's own size). */
-    lv_obj_t *card = lv_obj_create(s_fortune_page);
-    lv_obj_set_size(card, IC_FORTUNE_CARD_W, IC_FORTUNE_CARD_H);
-    lv_obj_set_pos(card, (360 - IC_FORTUNE_CARD_W) / 2, IC_FORTUNE_CARD_Y);
-    lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
-    lv_obj_set_style_bg_color(card, lv_color_hex(MUSE_THEME_CARD), 0);
-    lv_obj_set_style_radius(card, IC_RADIUS, 0);
-    lv_obj_set_style_border_width(card, 0, 0);
-    lv_obj_remove_flag(card, LV_OBJ_FLAG_SCROLLABLE);
-    s_fortune_grade = label(card, muse_font_cjk(), MUSE_THEME_GOLD, "-");
+     * firmware); transform_scale 2x around its centre makes it DRAW 32 px
+     * (2026-11-01, user request "与下方文字一起居中" + "不要引入新字体，
+     * 单纯放大"). The upscaled 16 px glyphs are a little soft at the
+     * edges -- the accepted trade for not shipping a second font; the
+     * same mechanism scales the sudoku side strips. Body in white at
+     * 16 px, line spacing 6. */
+    s_fortune_card = lv_obj_create(s_fortune_page);
+    lv_obj_set_size(s_fortune_card, IC_FORTUNE_CARD_W, IC_FORTUNE_CARD_H);
+    lv_obj_set_pos(s_fortune_card, (360 - IC_FORTUNE_CARD_W) / 2,
+                   IC_FORTUNE_CARD_Y);
+    lv_obj_set_style_bg_opa(s_fortune_card, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_color(s_fortune_card, lv_color_hex(MUSE_THEME_CARD), 0);
+    lv_obj_set_style_radius(s_fortune_card, IC_RADIUS, 0);
+    lv_obj_set_style_border_width(s_fortune_card, 0, 0);
+    lv_obj_remove_flag(s_fortune_card, LV_OBJ_FLAG_SCROLLABLE);
+    s_fortune_grade = label(s_fortune_card, muse_font_cjk(), MUSE_THEME_GOLD, "-");
     lv_obj_align(s_fortune_grade, LV_ALIGN_TOP_MID, 0, 28);
     /* Scale about the label's own centre, so growing it does not push the
      * text off the card's centreline. */
@@ -1338,18 +1375,21 @@ static void build_fortune(void)
     lv_obj_set_style_transform_scale_x(s_fortune_grade, IC_FORTUNE_GRADE_SCALE, 0);
     lv_obj_set_style_transform_scale_y(s_fortune_grade, IC_FORTUNE_GRADE_SCALE, 0);
     /* Short gold rule under the grade: purely decorative, so it is a plain
-     * container strip at 55% gold (bg_opa 140), not a line object. Width
-     * and height live in IC_FORTUNE_RULE_* with the other layout numbers. */
-    lv_obj_t *sep = lv_obj_create(card);
-    lv_obj_set_size(sep, IC_FORTUNE_RULE_W, IC_FORTUNE_RULE_H);
-    lv_obj_align(sep, LV_ALIGN_TOP_MID, 0, 76);
-    lv_obj_set_style_bg_opa(sep, 120, 0);  /* 47% gold: a divider, not a highlight */
-    lv_obj_set_style_bg_color(sep, lv_color_hex(MUSE_THEME_GOLD), 0);
-    lv_obj_set_style_radius(sep, IC_FORTUNE_RULE_H / 2, 0);  /* pill ends */
-    lv_obj_set_style_border_width(sep, 0, 0);
-    lv_obj_remove_flag(sep, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_remove_flag(sep, LV_OBJ_FLAG_CLICKABLE);
-    s_fortune_body = label(card, muse_font_cjk(), MUSE_THEME_TEXT, "");
+     * container strip at 47% gold (bg_opa 120), not a line object. Its
+     * width is NOT fixed here: fortune_layout() sets it to the grade's
+     * drawn width every time the texts change (v2 underline rule). The
+     * initial aligns below are placeholders; fortune_layout() at the end
+     * of this function positions grade, rule and body as one group. */
+    s_fortune_rule = lv_obj_create(s_fortune_card);
+    lv_obj_set_size(s_fortune_rule, 64, IC_FORTUNE_RULE_H);
+    lv_obj_align(s_fortune_rule, LV_ALIGN_TOP_MID, 0, 76);
+    lv_obj_set_style_bg_opa(s_fortune_rule, 120, 0);  /* 47% gold */
+    lv_obj_set_style_bg_color(s_fortune_rule, lv_color_hex(MUSE_THEME_GOLD), 0);
+    lv_obj_set_style_radius(s_fortune_rule, IC_FORTUNE_RULE_H / 2, 0);  /* pill ends */
+    lv_obj_set_style_border_width(s_fortune_rule, 0, 0);
+    lv_obj_remove_flag(s_fortune_rule, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_remove_flag(s_fortune_rule, LV_OBJ_FLAG_CLICKABLE);
+    s_fortune_body = label(s_fortune_card, muse_font_cjk(), MUSE_THEME_TEXT, "");
     lv_label_set_long_mode(s_fortune_body, LV_LABEL_LONG_WRAP);
     lv_obj_set_width(s_fortune_body, IC_FORTUNE_CARD_W - 32);
     lv_obj_set_style_text_line_space(s_fortune_body, 6, 0);
@@ -1370,6 +1410,7 @@ static void build_fortune(void)
      * 内容"). Written by refresh_status() from the snapshot. */
     s_fortune_coins = label(s_fortune_page, muse_font_cjk(), MUSE_THEME_TEXT, "金币 --/100");
     lv_obj_align(s_fortune_coins, LV_ALIGN_TOP_MID, 0, 302);
+    fortune_layout();
 }
 
 /* --- public API --- */

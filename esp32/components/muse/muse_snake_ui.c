@@ -52,14 +52,20 @@
  *     A blocked start shows one page-level note ("金币不够（需 5 枚）" or
  *     "互动未就绪") under the board, above the dim (see the message
  *     slot below).
- *   - Payout: OVER also carries "本局 n 分 · 兑 m 金币" at y = 64 (user
- *     decision 2026-11-01: the score is settled once, at OVER, through
- *     PET_PLAY_REWARD). m comes from muse_pet_round_coins() -- 1 point per
- *     coin since the 2026-11-01 correction (it was 5, which paid a 13-point
- *     round only 2 coins) with a 5-coin ceiling, so any ordinary round
- *     refunds the 5-coin entry fee and no round can mint coins. The line
- *     sits between the page name (ends ~55) and the title (100); at y = 81
- *     the circle still leaves ~300 px of chord.
+ *   - OVER result (user decision 2026-11-01, UI polish): there is NO
+ *     payout line on the OVER card any more, and no "游戏结束" title at
+ *     y = 100. The page name slot itself becomes "游戏结束" at OVER
+ *     (the name label is page-level, above the dim, and refresh_display()
+ *     swaps its text), and the result moves to the line under the board:
+ *     at OVER that line turns GOLD and reads "本局 n 分，+m 金币" with m
+ *     the GROSS payout the wallet actually accepted (s_round_coins, from
+ *     muse_pet_round_coins() -- 1 point per coin, 5-coin ceiling on this
+ *     branch; the score is settled once, at OVER, through
+ *     PET_PLAY_REWARD). The net (payout minus the 5-coin entry fee) is
+ *     deliberately NOT printed: the user said kids cannot tell net
+ *     apart, so the card shows what was added, not what was gained
+ *     after the fee. While PLAYING or PAUSED the same line is white and
+ *     score-only ("本局 n 分"): no coin conversion mid-round.
  *   - Message slot (user request 2026-11-01, "提示统一显示在游戏区域下方"):
  *     the band under the board (y = 304..325) hosts exactly ONE line at a
  *     time, in this priority: refusal note > score line > START hint. The
@@ -119,18 +125,18 @@
  * ~181, outside the bezel. A 6px difference between a chevron at x = 68
  * and centred text at x = 180 is not readable as misalignment. */
 #define SN_NAME_Y 38
-/* "本局 n 分 · 兑 m 金币" under the board. The interaction pages put their
- * coin line at y = 302, but their content above ends at 274; this board's
- * frame ends at 300, so 308 keeps ~7px of air under the 3px frame instead
- * of gluing the text to it. The line grew from ~115px to ~152px when the
- * conversion was added (2026-11-01) and the chord at its bottom (325) is
- * ~213px, so it still clears the bezel with room to spare. */
+/* Score / result line under the board (UI polish 2026-11-01): white
+ * score-only ("本局 n 分") while PLAYING or PAUSED, gold gross payout
+ * ("本局 n 分，+m 金币", ~150 px) at OVER. The interaction pages put
+ * their coin line at y = 302, but their content above ends at 274; this
+ * board's frame ends at 300, so 308 keeps ~7px of air under the 3px
+ * frame instead of gluing the text to it. The chord at its bottom (325)
+ * is ~213px, so even the longer OVER line clears the bezel. */
 #define SN_SCORE_Y 308
 #define SN_TITLE_Y 100
-/* Round payout line on the OVER card (see the file header). Between the
- * page name (SN_NAME_Y, ends ~55) and SN_TITLE_Y, and 300 px of chord at
- * its bottom edge, so a 13-glyph line never touches the bezel. */
-#define SN_PAYOUT_Y 64
+/* SN_TITLE_Y is the PAUSED title's slot only since the 2026-11-01 UI
+ * polish: the OVER title moved to the page-name slot (see the file
+ * header), so nothing on the OVER card sits at y = 100 any more. */
 /* START hint, ONE line since 2026-11-01 (user request): "点四周转向，长按
  * 中间暂停" is ~208 px wide and its bottom (321) sits where the chord is
  * still ~224 px, so it clears the bezel. The old second slot (322, for
@@ -143,13 +149,13 @@
 
 static lv_obj_t *s_page;
 static lv_obj_t *s_back;
+static lv_obj_t *s_name;
 static lv_obj_t *s_score;
 static lv_obj_t *s_note;
 static lv_obj_t *s_touch;
 static lv_obj_t *s_start_ov;
 static lv_obj_t *s_pause_ov;
 static lv_obj_t *s_over_ov;
-static lv_obj_t *s_over_payout;
 static lv_obj_t *s_hint;
 static lv_obj_t *s_food;
 static lv_obj_t *s_eye1;
@@ -442,32 +448,35 @@ static void settle_round(void)
 
 static void refresh_display(void)
 {
+    /* Page name: "贪吃蛇" in every state except OVER, where the name
+     * slot itself becomes the result title (UI polish 2026-11-01). */
+    set_label(s_name, s_game.state == MUSE_SNAKE_OVER ? "游戏结束" : "贪吃蛇");
     /* One line under the board: the note wins the slot, the score line
      * takes it otherwise (and is hidden on START, where the hint sits there
-     * instead). The conversion is printed live from the same curve the
-     * settlement uses, so the number under the board and the number on the
-     * OVER card can never disagree -- except at OVER, where the line shows
-     * what the wallet actually accepted, not what it was asked for. */
+     * instead). While PLAYING or PAUSED it is white and score-only --
+     * no coin conversion mid-round (user request 2026-11-01). At OVER
+     * it turns GOLD and adds the gross payout the wallet actually
+     * accepted ("本局 n 分，+m 金币"); the net is deliberately not
+     * printed (user: kids cannot tell net apart). A refused settlement
+     * leaves s_round_coins at 0, so the line honestly reads +0. */
     bool note_up = !lv_obj_has_flag(s_note, LV_OBJ_FLAG_HIDDEN);
     if (s_game.state == MUSE_SNAKE_START || note_up) {
         lv_obj_add_flag(s_score, LV_OBJ_FLAG_HIDDEN);
+    } else if (s_game.state == MUSE_SNAKE_OVER) {
+        char buf[64];
+        snprintf(buf, sizeof(buf), "本局 %u 分，+%u 金币",
+                 (unsigned)s_game.score, (unsigned)s_round_coins);
+        set_label(s_score, buf);
+        lv_obj_set_style_text_color(s_score, lv_color_hex(MUSE_THEME_GOLD), 0);
+        lv_obj_remove_flag(s_score, LV_OBJ_FLAG_HIDDEN);
     } else {
         char buf[64];
-        uint32_t coins = (s_game.state == MUSE_SNAKE_OVER)
-                             ? s_round_coins
-                             : muse_pet_round_coins(s_game.score);
-        snprintf(buf, sizeof(buf), "本局 %u 分 · 兑 %u 金币",
-                 (unsigned)s_game.score, (unsigned)coins);
+        snprintf(buf, sizeof(buf), "本局 %u 分", (unsigned)s_game.score);
         set_label(s_score, buf);
+        lv_obj_set_style_text_color(s_score, lv_color_hex(MUSE_THEME_TEXT), 0);
         lv_obj_remove_flag(s_score, LV_OBJ_FLAG_HIDDEN);
     }
     sync_message_band();
-    if (s_game.state == MUSE_SNAKE_OVER) {
-        char buf[64];
-        snprintf(buf, sizeof(buf), "本局 %u 分 · 兑 %u 金币",
-                 (unsigned)s_game.score, (unsigned)s_round_coins);
-        set_label(s_over_payout, buf);
-    }
     set_hidden(s_start_ov, s_game.state != MUSE_SNAKE_START);
     set_hidden(s_pause_ov, s_game.state != MUSE_SNAKE_PAUSED);
     set_hidden(s_over_ov, s_game.state != MUSE_SNAKE_OVER);
@@ -727,16 +736,12 @@ void muse_snake_ui_build(lv_obj_t *page, lv_event_cb_t back_cb)
      * the bezel. Leaving is the back arrow's job; restarting is offered
      * on the OVER card, where the price is printed. */
 
-    /* OVER overlay: dim + payout line + title + 再来一局 circle. The score
-     * needs no copy here: the page-level "本局 n 分" line sits below the
-     * board and is created after the overlays, so it stays readable through
-     * the dim. s_over_payout restates it with the round's conversion --
-     * that line is written by refresh_display() only while OVER is up. */
+    /* OVER overlay: dim + 再来一局 circle only (UI polish 2026-11-01).
+     * The result title lives in the page-name slot and the result line
+     * under the board -- both page-level, created after the overlays, so
+     * they stay readable through the dim -- so the overlay itself carries
+     * no title and no payout line any more. */
     s_over_ov = overlay(page, true);
-    s_over_payout = label(s_over_ov, muse_font_cjk(), MUSE_THEME_GOLD, "");
-    lv_obj_align(s_over_payout, LV_ALIGN_TOP_MID, 0, SN_PAYOUT_Y);
-    lv_obj_t *ot = label(s_over_ov, muse_font_cjk(), MUSE_THEME_ACCENT, "游戏结束");
-    lv_obj_align(ot, LV_ALIGN_TOP_MID, 0, SN_TITLE_Y);
     lv_obj_t *over_btn = centre_button(s_over_ov, on_restart);
     lv_obj_t *ol = label(over_btn, muse_font_cjk(), MUSE_THEME_TEXT, "再来一局");
     lv_obj_align(ol, LV_ALIGN_TOP_MID, 0, 32);
@@ -755,13 +760,14 @@ void muse_snake_ui_build(lv_obj_t *page, lv_event_cb_t back_cb)
 
     /* Name + score + note, page-level and last, so they stay above the
      * dim. The name is the same slot/page_header() pattern the other two
-     * mini-games use ("贪吃蛇" above the play area), and the score takes
-     * the coin line's slot from the interaction pages (y = 302, under the
-     * board) so all four screens read the same way. */
+     * mini-games use ("贪吃蛇" above the play area); refresh_display()
+     * swaps it to "游戏结束" at OVER. The score takes the coin line's
+     * slot from the interaction pages (y = 302, under the board) so all
+     * four screens read the same way. */
     /* The shared subpage title (muse_font_cjk + ACCENT); y stays this
      * page's calibrated 38 -- at 44 the title's ink ran into the board
      * frame (see SN_NAME_Y above, user report 2026-11-01). */
-    muse_page_title(page, "贪吃蛇", SN_NAME_Y);
+    s_name = muse_page_title(page, "贪吃蛇", SN_NAME_Y);
     s_score = label(page, muse_font_cjk(), MUSE_THEME_TEXT, "");
     lv_obj_align(s_score, LV_ALIGN_TOP_MID, 0, SN_SCORE_Y);
     s_note = label(page, muse_font_cjk(), MUSE_THEME_DANGER, "");
