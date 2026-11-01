@@ -18,22 +18,44 @@
  *     or intercepts -- the coin gate lives inside each game. Coin
  *     line at y = 302. The main page has NO back arrow (its header
  *     back callback is NULL); the face is one swipe away.
- *   - Mini-game list page: title "小游戏" with a back arrow, FOUR
- *     rows (石头剪刀布 / 数独 / 贪吃蛇 / 打地鼠) plus its own coin
- *     line at y = 302. Four games no longer fit the main list's
- *     58 + 8 pitch (the fourth row would start at 282 and sit on the
- *     coin line), so this page alone uses 48px rows with a 4px gap:
- *     y = 84 / 136 / 188 / 240, last row bottom 288, coin line
- *     untouched at 302. Same 330px width and x, so the two pages still
- *     line up. All four games cost 5 coins per start (user decision
- *     2026-10-31); the rows only dim when poor, they are never
- *     disabled.
+ *   - Mini-game list page: title "小游戏" with a back arrow, and a
+ *     VERTICALLY SCROLLING column like the settings page's list
+ *     (2026-11-01, user request): four 330x58 cards in a flex column,
+ *     10px gaps, with the coin line as the column's last item. The
+ *     rows keep the main list's 58px height -- the earlier 48px
+ *     "compressed" pitch is gone -- and the column scrolls instead,
+ *     with a 110px bottom pad so the last row can clear the bottom
+ *     curve of the bezel. All four games cost 5 coins per start (user
+ *     decision 2026-10-31); the rows only dim when poor, they are
+ *     never disabled.
  *   - Subpages are groups inside the interaction tile, all with the same
  *     title/back pattern (title centred y = 52, "<" at centre x = 68).
- *     Tile swipe stays ENABLED inside subpages (unlike settings subpages):
- *     design §5.2 says the tile-swipe-disable logic does not apply to the
- *     interaction tile, so swiping away from a subpage is legal and
- *     muse_interact_ui_on_hidden() resets it.
+ *     Since 2026-11-01 every subpage also ends with the same coin line
+ *     at y = 302 (user request "统一页面内容"), the sole exception being
+ *     石头剪刀布 below.
+ *     The 喂饭 subpage keeps its rule line ("喂饭不花币，每种食物每天
+ *     +10") at the TOP slot (y = 84), above the three 100 px food cards
+ *     (y = 120), and its result line ("喂了…") at y = 262 -- the slot
+ *     the rule line used to own before the two swapped on 2026-11-01
+ *     (user request); the food names sit at y = 228 between them.
+ *     The 今日运势 subpage: rule line "每天+20，同日再抽无效" in the same
+ *     TOP slot as the 喂饭 one (y = 84), then a 300x160 card at y = 114
+ *     with its content centred (grade 36, 28x2 gold rule 66, body 84),
+ *     coin line at y = 302.
+ *     The 石头剪刀布 game page is the one exception to the coin-slot
+ *     rule: its coin line sits at y = 300 and the "点一张手出拳，每局
+ *     -5 金币" cost hint at y = 84 (swapped, 2026-11-01, user request),
+ *     because the result / streak lines already own y = 240 / 272.
+ *     Tile swipe stays ENABLED on the feed, fortune and minigame-list
+ *     pages, so swiping away from them is legal and
+ *     muse_interact_ui_on_hidden() resets the page. The four GAME pages
+ *     (小游戏 / 数独 / 贪吃蛇 / 打地鼠) are the exception since
+ *     2026-10-31: their buttons sit near the rim of the 360px circle
+ *     and the default 10px scroll limit turned a slightly drifting
+ *     press into a tile scroll, which swallowed the click and dropped
+ *     the player out of the round. muse_interact_ui_swipe_locked()
+ *     reports that state and muse_ui.c applies it with the same rule it
+ *     already uses for settings subpages.
  *
  * Colours: the shared table in muse_theme.h (1.5b), values taken from 1.4d
  *   muse_settings_ui.c / muse_ui.c, NOT invented. DANGER is the in-repo
@@ -88,19 +110,22 @@
 #define IC_LIST_TOP 84
 #define IC_ROW_H 58
 #define IC_ROW_GAP 8
-/* Mini-game menu pitch (four games since the 2026-11-01 whack-a-mole
- * merge). The main list's 58 + 8 would put the fourth row at 282, on
- * the coin line; 48 + 4 gives 84 / 136 / 188 / 240 and leaves the coin
- * line at 302. These two macros are the only knobs for that pitch. */
-#define IC_MG_ROW_H 48
-#define IC_MG_ROW_GAP 4
+/* Mini-game menu list (2026-11-01, user request): the settings page's
+ * scrolling-column pattern instead of a compressed fixed pitch. 58px
+ * rows keep the main list's height; 10px gaps and a 110px bottom pad
+ * match muse_settings_ui.c's list exactly. */
+#define IC_MG_ROW_SPACE 10
+#define IC_MG_LIST_PAD_BOTTOM 110
 #define IC_RADIUS 18
 #define IC_FEED_CARD 100
 #define IC_FEED_ICON 80
 #define IC_GAME_CHOICE 100
 #define IC_HAND_RESULT 130
 #define IC_FORTUNE_CARD_W 300
-#define IC_FORTUNE_CARD_H 150
+#define IC_FORTUNE_CARD_H 160
+#define IC_FORTUNE_CARD_Y 114
+#define IC_FORTUNE_RULE_W 28
+#define IC_FORTUNE_RULE_H 2
 
 /* --- timing (design §5.5: ~2s total, never over 3s) --- */
 #define IC_SHAKE_MS 1000
@@ -162,6 +187,11 @@ static lv_obj_t *s_game_result_lbl, *s_game_streak_lbl, *s_game_chant_lbl;
 static lv_obj_t *s_game_coins_lbl;
 static bool s_storage_noted, s_unready_noted;
 static lv_obj_t *s_fortune_grade, *s_fortune_body;
+/* Bottom gold row (y = 302) on the feed and fortune subpages, added
+ * 2026-11-01 so every interaction page ends with the same coin line.
+ * Written by refresh_status() from the snapshot, same as s_status1 and
+ * s_minigame_coins above. */
+static lv_obj_t *s_feed_coins, *s_fortune_coins;
 
 static const char *TAG = "muse_ic";
 
@@ -255,6 +285,15 @@ static void show_page(int page)
     lv_obj_remove_flag(show, LV_OBJ_FLAG_HIDDEN);
 }
 
+bool muse_interact_ui_swipe_locked(void)
+{
+    /* The four games: 小游戏 (rock/paper/scissors), 贪吃蛇, 数独 and 打地鼠.
+     * They are played with buttons that sit close to the rim, so a drag of a
+     * few pixels must not be read as a tile swipe. */
+    return s_page == IC_PAGE_GAME || s_page == IC_PAGE_SUDOKU ||
+           s_page == IC_PAGE_SNAKE || s_page == IC_PAGE_WHACKAMOLE;
+}
+
 static void on_back(lv_event_t *e)
 {
     (void)e;
@@ -317,6 +356,8 @@ static void refresh_status(void)
     if (!s_have_snap) {
         lv_label_set_text(s_status1, "金币 --/100");
         lv_label_set_text(s_minigame_coins, "金币 --/100");
+        lv_label_set_text(s_feed_coins, "金币 --/100");
+        lv_label_set_text(s_fortune_coins, "金币 --/100");
         lv_label_set_text(s_btn_feed_lbl, "喂饭 ｜ 每种 +10金币");
         lv_label_set_text(s_btn_fortune_lbl, "今日运势 ｜ 未抽");
         return;
@@ -325,6 +366,8 @@ static void refresh_status(void)
     snprintf(buf, sizeof(buf), "金币 %lu/100", (unsigned long)s_snap.coins);
     lv_label_set_text(s_status1, buf);
     lv_label_set_text(s_minigame_coins, buf);
+    lv_label_set_text(s_feed_coins, buf);
+    lv_label_set_text(s_fortune_coins, buf);
 
     /* Dynamic row copy (design §5.2). Dimming is a pre-press signal,
      * not a disable: a fully claimed feed row still works (happy only),
@@ -361,14 +404,15 @@ static void refresh_status(void)
     lv_obj_set_style_text_color(s_mg_whack_lbl, lv_color_hex(mg_color), 0);
 }
 
-/* One list row: full-width button with a single centred label, at an
- * explicit height. The main list uses IC_ROW_H; the mini-game menu uses
- * the compressed IC_MG_ROW_H because it carries a fourth game. */
-static lv_obj_t *main_button_h(lv_obj_t *parent, int y, int h, const char *text,
-                               lv_event_cb_t cb, lv_obj_t **lbl_out)
+/* One list row: full-width button with a single centred label, at the
+ * main list's IC_ROW_H. The label is returned for refresh_status() when
+ * its copy changes (feed / fortune / mini-game dimming), or NULL for a
+ * static row. */
+static lv_obj_t *main_button(lv_obj_t *parent, int y, const char *text,
+                             lv_event_cb_t cb, lv_obj_t **lbl_out)
 {
     lv_obj_t *b = lv_btn_create(parent);
-    lv_obj_set_size(b, IC_LIST_W, h);
+    lv_obj_set_size(b, IC_LIST_W, IC_ROW_H);
     lv_obj_set_pos(b, (360 - IC_LIST_W) / 2, y);
     lv_obj_set_style_bg_opa(b, LV_OPA_COVER, 0);
     lv_obj_set_style_bg_color(b, lv_color_hex(MUSE_THEME_CARD), 0);
@@ -383,14 +427,27 @@ static lv_obj_t *main_button_h(lv_obj_t *parent, int y, int h, const char *text,
     return b;
 }
 
-/* One list row: full-width button with a single centred label, at the
- * main list's IC_ROW_H. The label is returned for refresh_status() when
- * its copy changes (feed / fortune / mini-game dimming), or NULL for a
- * static row. */
-static lv_obj_t *main_button(lv_obj_t *parent, int y, const char *text,
-                             lv_event_cb_t cb, lv_obj_t **lbl_out)
+/* One row of the mini-game menu's scrolling column: same card look and the
+ * same IC_ROW_H as the main list, but sized to the column and placed by
+ * flex (no set_pos), exactly like the settings page's list rows. */
+static lv_obj_t *list_row(lv_obj_t *parent, const char *text,
+                          lv_event_cb_t cb, lv_obj_t **lbl_out)
 {
-    return main_button_h(parent, y, IC_ROW_H, text, cb, lbl_out);
+    lv_obj_t *b = lv_btn_create(parent);
+    lv_obj_set_size(b, lv_pct(100), IC_ROW_H);
+    lv_obj_set_style_bg_opa(b, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_color(b, lv_color_hex(MUSE_THEME_CARD), 0);
+    lv_obj_set_style_bg_color(b, lv_color_hex(MUSE_THEME_CARD_PRESSED), LV_STATE_PRESSED);
+    lv_obj_set_style_radius(b, IC_RADIUS, 0);
+    lv_obj_set_style_pad_all(b, 0, 0);
+    lv_obj_remove_flag(b, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_t *l = label(b, muse_font_btn(), MUSE_THEME_TEXT, text);
+    lv_obj_center(l);
+    lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, NULL);
+    if (lbl_out) {
+        *lbl_out = l;
+    }
+    return b;
 }
 
 /* --- global pet caption (subtitle) --- */
@@ -1007,22 +1064,33 @@ static void build_main(void)
 static void build_minigame(void)
 {
     page_header(s_minigame_page, "小游戏", on_back);
-    /* Four bare game names, same 330px width as the main list, on the
-     * compressed menu pitch (IC_MG_ROW_H / IC_MG_ROW_GAP): with the main
-     * list's 58 + 8 the fourth row would start at 282 and sit on the coin
-     * line. The menu itself never charges: each game page gates its own
-     * fee. */
-    main_button_h(s_minigame_page, IC_LIST_TOP, IC_MG_ROW_H, "石头剪刀布",
-                  on_open_game, &s_mg_rps_lbl);
-    main_button_h(s_minigame_page, IC_LIST_TOP + (IC_MG_ROW_H + IC_MG_ROW_GAP),
-                  IC_MG_ROW_H, "数独", on_open_sudoku, &s_mg_sudoku_lbl);
-    main_button_h(s_minigame_page, IC_LIST_TOP + 2 * (IC_MG_ROW_H + IC_MG_ROW_GAP),
-                  IC_MG_ROW_H, "贪吃蛇", on_open_snake, &s_mg_snake_lbl);
-    main_button_h(s_minigame_page, IC_LIST_TOP + 3 * (IC_MG_ROW_H + IC_MG_ROW_GAP),
-                  IC_MG_ROW_H, "打地鼠", on_open_whackamole, &s_mg_whack_lbl);
-    /* Coin line, same slot as the main page's (y = 302). */
-    s_minigame_coins = label(s_minigame_page, muse_font_cjk(), MUSE_THEME_TEXT, "金币 --/100");
-    lv_obj_align(s_minigame_coins, LV_ALIGN_TOP_MID, 0, 302);
+    /* Scrolling column, the settings page's pattern (muse_settings_ui.c
+     * page()): flex column, vertical scroll only, scrollbar off, 10px
+     * gaps, 110px bottom pad so the last row can be scrolled clear of the
+     * bottom curve. Full 58px rows -- no compressed pitch (2026-11-01,
+     * user request). The menu itself never charges: each game page gates
+     * its own fee. */
+    lv_obj_t *list = lv_obj_create(s_minigame_page);
+    lv_obj_remove_style_all(list);
+    lv_obj_set_size(list, IC_LIST_W, 360 - IC_LIST_TOP);
+    lv_obj_align(list, LV_ALIGN_TOP_MID, 0, IC_LIST_TOP);
+    lv_obj_set_flex_flow(list, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(list, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
+                          LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_row(list, IC_MG_ROW_SPACE, 0);
+    lv_obj_set_style_pad_bottom(list, IC_MG_LIST_PAD_BOTTOM, 0);
+    lv_obj_set_scroll_dir(list, LV_DIR_VER);
+    lv_obj_set_scrollbar_mode(list, LV_SCROLLBAR_MODE_OFF);
+
+    list_row(list, "石头剪刀布", on_open_game, &s_mg_rps_lbl);
+    list_row(list, "数独", on_open_sudoku, &s_mg_sudoku_lbl);
+    list_row(list, "贪吃蛇", on_open_snake, &s_mg_snake_lbl);
+    list_row(list, "打地鼠", on_open_whackamole, &s_mg_whack_lbl);
+
+    /* Coin line: the column's last item, so it scrolls with the list
+     * instead of sitting in a fixed slot the scroller would run under.
+     * refresh_status() keeps rewriting it like the main page's. */
+    s_minigame_coins = label(list, muse_font_cjk(), MUSE_THEME_TEXT, "金币 --/100");
 }
 
 static void build_feed(void)
@@ -1086,6 +1154,13 @@ static void build_feed(void)
     lv_label_set_long_mode(s_feed_note, LV_LABEL_LONG_DOT);
     lv_obj_set_width(s_feed_note, 240);
     lv_obj_set_style_text_align(s_feed_note, LV_TEXT_ALIGN_CENTER, 0);
+    /* Coin line: the page's last row, same slot as the main page's
+     * (y = 302), so every interaction page ends the same way
+     * (2026-11-01, user request "统一页面内容"). The result line ends at
+     * 278, leaving a 24 px gap; the chord at y = 310 is 248 px wide, well
+     * over "金币 100/100". */
+    s_feed_coins = label(s_feed_page, muse_font_cjk(), MUSE_THEME_TEXT, "金币 --/100");
+    lv_obj_align(s_feed_coins, LV_ALIGN_TOP_MID, 0, 302);
 }
 
 static void build_game(void)
@@ -1093,8 +1168,13 @@ static void build_game(void)
     /* Rock-paper-scissors page: its own title now that "小游戏" is the
      * mini-game menu (2026-10-31), so the two pages never share a name. */
     page_header(s_game_page, "石头剪刀布", on_back);
+    /* Coin line sits in the BOTTOM slot (y = 300) since 2026-11-01: it
+     * traded places with the "点一张手出拳" instruction line, which now
+     * takes this page's top slot (y = 84). Text, colour and refresh
+     * logic are unchanged -- only the y offset moved, so the coin line
+     * still lines up with the other pages' coin slot (y = 302). */
     lv_obj_t *coins = label(s_game_page, muse_font_cjk(), MUSE_THEME_TEXT, "金币 --/100");
-    lv_obj_align(coins, LV_ALIGN_TOP_MID, 0, 84);
+    lv_obj_align(coins, LV_ALIGN_TOP_MID, 0, 302);
     /* The coin line is a live status, not a static label: refresh_status
      * rewrites the main / menu coin rows, so the game page keeps its own
      * pointer and the tick rewrites it from the snapshot too. */
@@ -1166,45 +1246,74 @@ static void build_game(void)
     s_game_streak_lbl = label(s_game_page, muse_font_cjk(), MUSE_THEME_DIM, "");
     lv_obj_align(s_game_streak_lbl, LV_ALIGN_TOP_MID, 0, 272);
     lv_obj_add_flag(s_game_streak_lbl, LV_OBJ_FLAG_HIDDEN);
+    /* Cost hint: top slot (y = 84), swapped with the coin line on
+     * 2026-11-01. Same copy and DIM colour as before; 84 is the main
+     * page's first-row y, so it clears the title (centre y = 52) and
+     * stops ~1 px above the reveal hands (top y = 105). */
     lv_obj_t *hint = label(s_game_page, muse_font_cjk(), MUSE_THEME_DIM, "点一张手出拳，每局 -5 金币");
-    lv_obj_align(hint, LV_ALIGN_TOP_MID, 0, 300);
+    lv_obj_align(hint, LV_ALIGN_TOP_MID, 0, 84);
 }
 
 static void build_fortune(void)
 {
     page_header(s_fortune_page, "今日运势", on_back);
     /* Dark unified card (design v22): CARD background, no beige paper,
-     * no upstream left/right split. Card 300x150, centred, top at 105.
-     * Grade in GOLD, large; body in white, centred, line spacing 6
-     * (the CJK font's own size, see the file header on the 18px note). */
+     * no upstream left/right split. Since 2026-11-01 (user pick of the
+     * "improved" mockup) the card is 300x160 at y = 114 and its content
+     * is centred as a group instead of hugging the top edge: the old
+     * 150 px card with grade at 12 / body at 52 left 54 px of dead space
+     * under the text. Group: 大吉 (34) -> 28x2 gold rule (64) -> body (80).
+     * With the CJK face's 20 px line box that is 20 + 10 + 2 + 14 + 46 =
+     * 92 px of content in a 160 px card, i.e. 34 px of air above and
+     * below -- both halves of the card read as one centred block
+     * (2026-11-01, user request "与下方文字一起居中").
+     * The grade keeps muse_font_cjk() (16 px, same face and size as the
+     * body -- MUSE_THEME_GOLD is what makes it read as the heading; the
+     * chain has no larger CJK cut, see muse_font.h). Body in white,
+     * line spacing 6 (the CJK font's own size). */
     lv_obj_t *card = lv_obj_create(s_fortune_page);
     lv_obj_set_size(card, IC_FORTUNE_CARD_W, IC_FORTUNE_CARD_H);
-    lv_obj_set_pos(card, (360 - IC_FORTUNE_CARD_W) / 2, 105);
+    lv_obj_set_pos(card, (360 - IC_FORTUNE_CARD_W) / 2, IC_FORTUNE_CARD_Y);
     lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
     lv_obj_set_style_bg_color(card, lv_color_hex(MUSE_THEME_CARD), 0);
     lv_obj_set_style_radius(card, IC_RADIUS, 0);
     lv_obj_set_style_border_width(card, 0, 0);
     lv_obj_remove_flag(card, LV_OBJ_FLAG_SCROLLABLE);
     s_fortune_grade = label(card, muse_font_cjk(), MUSE_THEME_GOLD, "-");
-    lv_obj_align(s_fortune_grade, LV_ALIGN_TOP_MID, 0, 12);
+    lv_obj_align(s_fortune_grade, LV_ALIGN_TOP_MID, 0, 34);
+    /* Short gold rule under the grade: purely decorative, so it is a plain
+     * container strip at 55% gold (bg_opa 140), not a line object. Width
+     * and height live in IC_FORTUNE_RULE_* with the other layout numbers. */
+    lv_obj_t *sep = lv_obj_create(card);
+    lv_obj_set_size(sep, IC_FORTUNE_RULE_W, IC_FORTUNE_RULE_H);
+    lv_obj_align(sep, LV_ALIGN_TOP_MID, 0, 64);
+    lv_obj_set_style_bg_opa(sep, 140, 0);
+    lv_obj_set_style_bg_color(sep, lv_color_hex(MUSE_THEME_GOLD), 0);
+    lv_obj_set_style_radius(sep, 1, 0);
+    lv_obj_set_style_border_width(sep, 0, 0);
+    lv_obj_remove_flag(sep, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_remove_flag(sep, LV_OBJ_FLAG_CLICKABLE);
     s_fortune_body = label(card, muse_font_cjk(), MUSE_THEME_TEXT, "");
     lv_label_set_long_mode(s_fortune_body, LV_LABEL_LONG_WRAP);
     lv_obj_set_width(s_fortune_body, IC_FORTUNE_CARD_W - 32);
     lv_obj_set_style_text_line_space(s_fortune_body, 6, 0);
     lv_obj_set_style_text_align(s_fortune_body, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_align(s_fortune_body, LV_ALIGN_TOP_MID, 0, 52);
-    /* Rule line: TOP slot (y = 76) since 2026-11-01 (user request) -- same
-     * move as the 喂饭 subpage. The two old bottom lines ("每天 +20 金币"
-     * at 270 + "同日再抽显示同一张" at 294) are gone: the band between
-     * the title (ends ~60) and the card (top 105) only fits ONE line
-     * (41 px), so the two facts share a single label instead of being
-     * stacked into a 4 px gap under the title. Copy is the old wording,
-     * joined by a fullwidth comma, DIM colour unchanged. Gaps: 16 px
-     * below the title, 13 px above the card; the ~269 px line sits inside
-     * the 312 px chord at y = 90 (21 px margin each side). */
+    lv_obj_align(s_fortune_body, LV_ALIGN_TOP_MID, 0, 80);
+    /* Rule line: TOP slot (y = 84), the same slot the 喂饭 subpage's
+     * "喂饭不花币…" line uses (user request 2026-11-01: "同喂饭那句的
+     * 位置"). It is read before the card, and it keeps the bottom free
+     * for the coin line alone. Card sits at 114 (300x160, ends 274) --
+     * 14 px under this line and 28 px above the coin row. Copy is the
+     * shortened one, DIM colour unchanged; ~148 px wide, far inside the
+     * 316 px chord at y = 94. */
     lv_obj_t *rule = label(s_fortune_page, muse_font_cjk(), MUSE_THEME_DIM,
-                           "每天 +20 金币，同日再抽显示同一张");
-    lv_obj_align(rule, LV_ALIGN_TOP_MID, 0, 76);
+                           "每天+20，同日再抽无效");
+    lv_obj_align(rule, LV_ALIGN_TOP_MID, 0, 84);
+    /* Coin line: same slot as the main / feed / mini-game pages (y = 302),
+     * so all interaction pages end the same way (2026-11-01, "统一页面
+     * 内容"). Written by refresh_status() from the snapshot. */
+    s_fortune_coins = label(s_fortune_page, muse_font_cjk(), MUSE_THEME_TEXT, "金币 --/100");
+    lv_obj_align(s_fortune_coins, LV_ALIGN_TOP_MID, 0, 302);
 }
 
 /* --- public API --- */

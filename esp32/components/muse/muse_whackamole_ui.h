@@ -14,15 +14,17 @@
  *
  * Economy (user decision 2026-10-31, same as the other mini-games):
  * each game costs 5 coins. Tapping 开始 on the START overlay or
- * 再玩一次 / 重开 (OVER / pause overlays) first checks the pet
- * snapshot: under 5 coins the start is refused with
- * "金币不够，先摸摸 / 喂饭 / 抽运势" and nothing is charged;
- * otherwise PET_FEE is queued and the game starts. Resume after
- * pause never charges again, and a restart counts as a new game and
- * charges again. The worker is the only writer of coins; if its
- * re-check finds the snapshot was stale (PET_FEE feedback PET_POOR),
- * the interact tile calls muse_whackamole_ui_fee_refused(), which
- * cancels a running game back to START with the refusal note.
+ * 再玩一次 on the OVER overlay (which prints "− 5 金币" under the
+ * label) first checks the pet snapshot: under 5 coins the start is
+ * refused with "金币不够，先摸摸 / 喂饭 / 抽运势" and nothing is
+ * charged; otherwise PET_FEE is queued and the game starts. Resume
+ * after pause never charges again, and there is no restart button on
+ * the pause card (2026-11-01, same decision as snake: one tap in the
+ * bezel must not spend 5 coins). The worker is the only writer of
+ * coins; if its re-check finds the snapshot was stale (PET_FEE
+ * feedback PET_POOR), the interact tile calls
+ * muse_whackamole_ui_fee_refused(), which cancels a running game back
+ * to START with the refusal note.
  *
  * Progress lives in static RAM: leaving the tile
  * (muse_whackamole_ui_hide) pauses a running game, so a return visit

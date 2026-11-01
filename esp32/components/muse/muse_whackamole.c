@@ -12,13 +12,24 @@
 
 #include <stdlib.h>
 
-/* Spawn interval and mole visible time, in ms: 900 at first, 100 less
- * per 5 seconds played, floored at 500 (full speed from 20 seconds).
- * One curve serves both so a mole never outlives its spawn gap. */
+/* Spawn interval and mole visible time, in ms: 1200 at first, one step
+ * tighter per 10 seconds played, floored at 900. One curve serves both
+ * so a mole never outlives its spawn gap. The knobs live in the header
+ * (MUSE_WHACKAMOLE_PACE_*) so the host harness can derive the same
+ * numbers instead of hard-coding them. */
 static uint32_t pace_ms(uint32_t elapsed_ms)
 {
-    uint32_t pace = 900u - (elapsed_ms / 5000u) * 100u;
-    return pace < 500u ? 500u : pace;
+    const uint32_t step_ms = MUSE_WHACKAMOLE_PACE_STEP_S * 1000u;
+    /* Guard both the division and the subtraction: the host harness builds
+     * this file with -Werror plus the UBSan/ASan pair, and a retuned,
+     * out-of-range knob should clamp rather than wrap. */
+    const uint32_t level = step_ms ? elapsed_ms / step_ms : 0u;
+    const uint32_t drop = level * MUSE_WHACKAMOLE_PACE_STEP_MS;
+    if (drop >= MUSE_WHACKAMOLE_PACE_MS) {
+        return MUSE_WHACKAMOLE_PACE_MIN_MS;
+    }
+    const uint32_t pace = MUSE_WHACKAMOLE_PACE_MS - drop;
+    return pace < MUSE_WHACKAMOLE_PACE_MIN_MS ? MUSE_WHACKAMOLE_PACE_MIN_MS : pace;
 }
 
 static int free_holes(const muse_whackamole_t *g, int *out)
@@ -132,8 +143,8 @@ void muse_whackamole_tick(muse_whackamole_t *g, uint32_t ms)
             }
         }
     }
-    /* Spawn burst: fill up to MAX_UP (at most 2 at once, the donor's
-     * rhythm scaled to six holes). */
+    /* Spawn: fill up to MAX_UP. With MAX_UP == 1 this tops the field up
+     * to exactly one mole, so the loop below runs at most once. */
     g->spawn_ms += ms;
     if (g->spawn_ms >= pace_ms(g->elapsed_ms)) {
         g->spawn_ms = 0;

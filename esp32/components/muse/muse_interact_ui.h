@@ -52,6 +52,16 @@ void muse_interact_ui_tick(bool active);
  * 3-second rule. */
 void muse_interact_ui_on_hidden(void);
 
+/* True while one of the three game subpages is open (小游戏 / 贪吃蛇 / 数独).
+ * muse_ui.c reads this every chrome tick and turns the tile swipe off there:
+ * on those pages the buttons sit on the margin of a 360px circle, and the
+ * default 10px scroll limit (1.3mm on this panel) meant a slightly drifting
+ * press became a tile scroll -- the button lost its LV_EVENT_CLICKED and the
+ * round was abandoned mid-play. They are focus pages with a "<" back arrow,
+ * and the minigame hub is one press away, so nothing is lost; settings
+ * subpages have been locked the same way since 1.4d. */
+bool muse_interact_ui_swipe_locked(void);
+
 /* Called by muse_ui.c's on_canvas_clicked() when a face tap could not
  * even queue PET_TOUCH (worker not ready). The tick turns this flag into
  * the "互动未就绪" caption on the next IDLE frame; it is not written

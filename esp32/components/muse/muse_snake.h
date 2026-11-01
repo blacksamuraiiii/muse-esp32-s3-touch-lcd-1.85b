@@ -22,8 +22,9 @@
  *   - Progress lives in RAM (leaving the page pauses, re-entering
  *     resumes; a reboot restarts from START).
  *
- * v1 defaults (change here to retune): tick 200 ms (the UI timer rate),
- * +10 per food, initial length 3, 12x12 board.
+ * v1 defaults (change here to retune): tick 400 ms (the UI timer rate,
+ * halved from 200 on user feedback), +10 per food, initial length 3,
+ * 12x12 board.
  */
 #pragma once
 
@@ -35,9 +36,11 @@
 #define MUSE_SNAKE_CELLS (MUSE_SNAKE_COLS * MUSE_SNAKE_ROWS)
 #define MUSE_SNAKE_INIT_LEN 3
 #define MUSE_SNAKE_FOOD_SCORE 10
-/* Tick interval, milliseconds. v1 fixed default: the UI timer runs at
- * this rate; change it here to retune game speed. */
-#define MUSE_SNAKE_TICK_MS 200
+/* Tick interval, milliseconds. v1 default was 200; the board is only 12
+ * cells wide, so 200 ms crossed it in 2.4 s and read as too fast on the
+ * device (user feedback 2026-10-31). 400 ms halves the speed. This is
+ * the one knob for game pace: the UI creates its timer with it. */
+#define MUSE_SNAKE_TICK_MS 400
 
 typedef enum {
     MUSE_SNAKE_UP = 0,

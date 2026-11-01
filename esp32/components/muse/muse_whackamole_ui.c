@@ -13,15 +13,27 @@
  * separate uniform-width arc: that was the v8 mockup flaw (1-2px
  * double edge where the arc did not match the rim's 7px x 5px band).
  *
- * The top crescent shows only the title "打地鼠" (y=40); the bottom
- * crescent shows "剩余 X秒 · 得分 Y" (y=332). While playing, the top
- * right crescent holds a small pause button (centre (300,26),
- * radius 17, two bars). There is no back arrow while playing; the
- * back arrow sits in overlay top-left (68,52) like the other games.
+ * The top crescent shows only the title "打地鼠" (y=38: the same slot and
+ * ACCENT colour the snake page uses for its name); the "剩余 X秒 · 得分 Y"
+ * line takes the slot right under the field (y=308, the slot the snake page
+ * prints its score on), so it never rides on the bezel. While playing, the
+ * top right crescent holds a small pause button (centre (300,26),
+ * radius 17, two bars). There is no back arrow while playing; the back
+ * arrow is the shared transparent one (56x48, TOP_MID -112,28,
+ * montserrat LEFT symbol in ACCENT) the other mini games use, with no
+ * filled background of its own.
  * A transparent full-page touch layer, visible only while playing,
  * maps presses to hole cells; outside the hole grid a press does
  * nothing. The START overlay is NOT dimmed (the field stays visible
  * behind it); the PAUSED and OVER overlays are 50% black dim.
+ *
+ * Overlays follow the snake page (2026-11-01, one style across the mini
+ * games): ACCENT title at y=100, a 110 px ACCENT-bordered centre circle,
+ * and on the OVER card the price "- 5 金币" on its own line under the
+ * replay label -- on_restart charges the fee the moment it is pressed, so
+ * the price belongs on the button. The PAUSED card carries no restart
+ * capsule: it charged 5 coins on a single tap in the narrowest part of the
+ * bezel, and leaving is the back arrow's job (same decision as snake).
  */
 #include "muse_whackamole_ui.h"
 
@@ -30,6 +42,7 @@
 #include <stdlib.h>
 
 #include "muse_font.h"
+#include "muse_pet.h"        /* snapshot + request: the entry fee */
 #include "muse_pet_model.h"
 #include "muse_theme.h"
 #include "muse_whackamole.h"
@@ -58,7 +71,6 @@ static lv_obj_t *s_over_ov;
 static lv_obj_t *s_back;
 static lv_obj_t *s_pause_btn;
 static lv_obj_t *s_hud;
-static lv_obj_t *s_over_stats;
 static lv_obj_t *s_note;
 static lv_timer_t *s_timer;
 
@@ -120,11 +132,9 @@ static void refresh_display(void)
              (unsigned long)muse_whackamole_remaining_s(&s_game),
              (unsigned long)s_game.score);
     lv_label_set_text(s_hud, hud);
-    char stats[64];
-    snprintf(stats, sizeof(stats), "得分 %lu · 打中 %lu · 跑掉 %lu",
-             (unsigned long)s_game.score, (unsigned long)s_game.hits,
-             (unsigned long)s_game.missed);
-    lv_label_set_text(s_over_stats, stats);
+    /* No per-game breakdown on the OVER card any more (2026-11-01, user
+     * request): the result line under the field already carries the
+     * score, and the hits/missed split only crowded the overlay. */
     muse_whackamole_phase_t ph = s_game.phase;
     if (ph == MUSE_WHACKAMOLE_START) {
         lv_obj_clear_flag(s_start_ov, LV_OBJ_FLAG_HIDDEN);
@@ -304,25 +314,6 @@ static lv_obj_t *round_btn(lv_obj_t *parent, lv_coord_t x, lv_coord_t y)
     return btn;
 }
 
-static lv_obj_t *capsule_btn(lv_obj_t *parent, lv_coord_t x, lv_coord_t y,
-                             lv_coord_t w, const char *text)
-{
-    lv_obj_t *btn = lv_btn_create(parent);
-    lv_obj_set_size(btn, w, 32);
-    lv_obj_set_pos(btn, x, y);
-    lv_obj_set_style_bg_color(btn, lv_color_hex(MUSE_THEME_CARD), LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, LV_PART_MAIN);
-    lv_obj_set_style_border_color(btn, lv_color_hex(MUSE_THEME_RULE), LV_PART_MAIN);
-    lv_obj_set_style_border_width(btn, 1, LV_PART_MAIN);
-    lv_obj_set_style_radius(btn, 16, LV_PART_MAIN);
-    lv_obj_set_style_pad_all(btn, 0, LV_PART_MAIN);
-    lv_obj_remove_flag(btn, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_t *lb = label(btn, muse_font_cjk(), MUSE_THEME_TEXT);
-    lv_label_set_text(lb, text);
-    lv_obj_center(lb);
-    return btn;
-}
-
 void muse_whackamole_ui_build(lv_obj_t *page, lv_event_cb_t back_cb)
 {
     muse_whackamole_init(&s_game);
@@ -380,46 +371,53 @@ void muse_whackamole_ui_build(lv_obj_t *page, lv_event_cb_t back_cb)
     lv_obj_center(start_lb);
     lv_obj_add_event_cb(start_btn, on_start, LV_EVENT_CLICKED, NULL);
 
-    /* PAUSED overlay: dim, resume in the middle, restart below. */
+    /* PAUSED overlay: dim, ACCENT title, 继续 circle with the PLAY symbol
+     * above the label (snake's card). No restart capsule: it charged 5
+     * coins on a single tap in the narrowest part of the bezel; the back
+     * arrow leaves, and 开始 charges again on the next visit. */
     s_paused_ov = overlay(page, true);
-    lv_obj_t *paused_lb = label(s_paused_ov, muse_font_cjk(), MUSE_THEME_TEXT);
+    lv_obj_t *paused_lb = label(s_paused_ov, muse_font_cjk(), MUSE_THEME_ACCENT);
     lv_label_set_text(paused_lb, "已暂停");
     lv_obj_align(paused_lb, LV_ALIGN_TOP_MID, 0, 100);
     lv_obj_t *resume_btn = round_btn(s_paused_ov, 125, 125);
+    lv_obj_t *resume_sym = label(resume_btn, &lv_font_montserrat_20, MUSE_THEME_TEXT);
+    lv_label_set_text(resume_sym, LV_SYMBOL_PLAY);
+    lv_obj_align(resume_sym, LV_ALIGN_TOP_MID, 0, 31);
     lv_obj_t *resume_lb = label(resume_btn, muse_font_cjk(), MUSE_THEME_TEXT);
     lv_label_set_text(resume_lb, "继续");
-    lv_obj_center(resume_lb);
+    lv_obj_align(resume_lb, LV_ALIGN_TOP_MID, 0, 59);
     lv_obj_add_event_cb(resume_btn, on_resume, LV_EVENT_CLICKED, NULL);
-    lv_obj_t *restart_btn = capsule_btn(s_paused_ov, 138, 314, 84, "重开");
-    lv_obj_add_event_cb(restart_btn, on_restart, LV_EVENT_CLICKED, NULL);
 
-    /* OVER overlay: dim, stats, play again in the middle. */
+    /* OVER overlay: dim, ACCENT title, 再玩一次 circle with the price on
+     * its own line under the label (snake's card). No hits/missed split
+     * here any more: the result line under the field carries the score. */
     s_over_ov = overlay(page, true);
-    lv_obj_t *over_lb = label(s_over_ov, muse_font_cjk(), MUSE_THEME_TEXT);
+    lv_obj_t *over_lb = label(s_over_ov, muse_font_cjk(), MUSE_THEME_ACCENT);
     lv_label_set_text(over_lb, "游戏结束");
     lv_obj_align(over_lb, LV_ALIGN_TOP_MID, 0, 100);
-    s_over_stats = label(s_over_ov, muse_font_cjk(), MUSE_THEME_TEXT);
-    lv_obj_align(s_over_stats, LV_ALIGN_TOP_MID, 0, 250);
     lv_obj_t *again_btn = round_btn(s_over_ov, 125, 125);
     lv_obj_t *again_lb = label(again_btn, muse_font_cjk(), MUSE_THEME_TEXT);
     lv_label_set_text(again_lb, "再玩一次");
-    lv_obj_center(again_lb);
+    lv_obj_align(again_lb, LV_ALIGN_TOP_MID, 0, 32);
+    /* on_restart charges through charge_for_game() the moment it is
+     * pressed, so the price belongs on the button (same as snake). */
+    lv_obj_t *again_price = label(again_btn, muse_font_cjk(), MUSE_THEME_GOLD);
+    lv_label_set_text(again_price, "- 5 金币");
+    lv_obj_align(again_price, LV_ALIGN_TOP_MID, 0, 56);
     lv_obj_add_event_cb(again_btn, on_restart, LV_EVENT_CLICKED, NULL);
 
-    /* Back arrow (overlay top-left), hidden while playing. */
-    s_back = lv_btn_create(page);
+    /* Back arrow: the shared transparent one (no filled background, user
+     * request 2026-11-01), same geometry and symbol as snake / sudoku.
+     * Hidden while playing. Created after the overlays so it stays
+     * clickable on them. */
+    s_back = lv_obj_create(page);
+    lv_obj_remove_style_all(s_back);
     lv_obj_set_size(s_back, 56, 48);
     lv_obj_align(s_back, LV_ALIGN_TOP_MID, -112, 28);
-    lv_obj_set_style_bg_color(s_back, lv_color_hex(MUSE_THEME_CARD), LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(s_back, LV_OPA_COVER, LV_PART_MAIN);
-    lv_obj_set_style_border_width(s_back, 0, LV_PART_MAIN);
-    lv_obj_set_style_radius(s_back, 24, LV_PART_MAIN);
-    lv_obj_set_style_pad_all(s_back, 0, LV_PART_MAIN);
-    lv_obj_remove_flag(s_back, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_t *back_lb = label(s_back, muse_font_btn(), MUSE_THEME_TEXT);
-    lv_label_set_text(back_lb, "<");
-    lv_obj_center(back_lb);
     lv_obj_add_event_cb(s_back, back_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *back_lb = label(s_back, &lv_font_montserrat_20, MUSE_THEME_ACCENT);
+    lv_label_set_text(back_lb, LV_SYMBOL_LEFT);
+    lv_obj_center(back_lb);
 
     /* Pause button, top-right crescent, only while playing. */
     s_pause_btn = lv_btn_create(page);
@@ -441,15 +439,18 @@ void muse_whackamole_ui_build(lv_obj_t *page, lv_event_cb_t back_cb)
     lv_obj_set_pos(bar2, 19, 9);
     lv_obj_add_event_cb(s_pause_btn, on_pause, LV_EVENT_CLICKED, NULL);
 
-    /* Title (top crescent) and bottom HUD: page-level, above the
-     * dim overlays, so they stay visible in every state. */
+    /* Title (top crescent, y=38: snake's name slot) and the result line
+     * right under the field (y=308, snake's score slot): page-level, above
+     * the dim overlays, so they stay readable in every state. The line used
+     * to sit at y=332 and rode on the bezel (user report 2026-11-01). */
     lv_obj_t *title = label(page, muse_font_cjk(), MUSE_THEME_ACCENT);
     lv_label_set_text(title, "打地鼠");
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 40);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 38);
     s_hud = label(page, muse_font_cjk(), MUSE_THEME_TEXT);
-    lv_obj_align(s_hud, LV_ALIGN_TOP_MID, 0, 332);
+    lv_obj_align(s_hud, LV_ALIGN_TOP_MID, 0, 308);
 
-    /* Refusal note, between field and bottom HUD. */
+    /* Refusal note: same slot as snake's (y=280, in the empty band under
+     * the second hole row). */
     s_note = label(page, muse_font_cjk(), MUSE_THEME_DANGER);
     lv_obj_align(s_note, LV_ALIGN_TOP_MID, 0, 280);
     lv_obj_add_flag(s_note, LV_OBJ_FLAG_HIDDEN);
