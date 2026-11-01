@@ -13,13 +13,16 @@
  * separate uniform-width arc: that was the v8 mockup flaw (1-2px
  * double edge where the arc did not match the rim's 7px x 5px band).
  *
- * The top crescent shows only the title "打地鼠" (y=38: the same slot and
- * ACCENT colour the snake page uses for its name); the "本局 n 分 · 兑 m
- * 金币" line takes the slot right under the field (y=308, the slot the snake
- * page prints its score on) so it never rides on the bezel, and it reads
- * exactly like the snake page's (user request 2026-11-01) -- the old
- * "剩余 X秒 · 得分 Y" is gone, so the two games' status lines are the same
- * string in the same slot. There is no pause
+ * The top crescent shows the title (y=38: the same slot and ACCENT colour
+ * the snake page uses for its name): "打地鼠" in every state except OVER,
+ * where the slot itself becomes "游戏结束" (UI polish 2026-11-01, same as
+ * snake). The line under the field (y=308, the slot the snake page
+ * prints its score on) never rides on the bezel: while PLAYING or PAUSED
+ * it is white and reads "本局 n 分 · 剩余 X 秒" -- the score plus the
+ * 30 s round's countdown (muse_whackamole_remaining_s(), 30 at start,
+ * 0 at the end), no coin conversion mid-round -- and at OVER it turns
+ * GOLD and reads "本局 n 分，+m 金币" with m the gross payout. There is
+ * no pause
  * button any more (2026-11-01, user request "参考贪吃蛇"): the old 34 px one
  * sat at (283,9), i.e. 195 px from the centre on a 180 px-radius panel, so
  * the crescent clipped most of it. Pausing is a LONG PRESS on the field,
@@ -33,18 +36,24 @@
  * behind it); the PAUSED and OVER overlays are 50% black dim.
  *
  * Overlays follow the snake page (2026-11-01, one style across the mini
- * games): ACCENT title at y=100, a 110 px ACCENT-bordered centre circle,
- * and on the OVER card the price "- 5 金币" on its own line under the
- * replay label -- on_restart charges the fee the moment it is pressed, so
- * the price belongs on the button. The PAUSED card carries no restart
- * capsule: it charged 5 coins on a single tap in the narrowest part of the
- * bezel, and leaving is the back arrow's job (same decision as snake).
+ * games): the PAUSED card has an ACCENT title at y=100 and a 110 px
+ * ACCENT-bordered centre circle, and the OVER card has the price
+ * "- 5 金币" on its own line under the replay label -- on_restart charges
+ * the fee the moment it is pressed, so the price belongs on the button.
+ * The OVER card itself carries no title and no payout line any more (UI
+ * polish 2026-11-01): both moved to the page-level title and HUD slots.
+ * The PAUSED card carries no restart capsule: it charged 5 coins on a
+ * single tap in the narrowest part of the bezel, and leaving is the back
+ * arrow's job (same decision as snake).
  *
- * Payout (user decision 2026-11-01): the OVER card also carries
- * "本局 n 分 · 兑 m 金币" at y=64. 30 s is one round, one point is one mole,
- * and muse_pet_round_coins() (1 point per coin since the 2026-11-01
- * correction, 5 coins per round ceiling) is the same curve the snake page
- * uses, so both games refund at most the 5-coin entry.
+ * Payout (UI polish 2026-11-01): at OVER the HUD turns gold and reads
+ * "本局 n 分，+m 金币" with m the GROSS payout the wallet actually
+ * accepted (s_round_coins, from muse_pet_round_coins() -- 1 point per
+ * coin, 5 coins per round ceiling on this branch; the score is settled
+ * once, at OVER). The net is deliberately NOT printed: the user said
+ * kids cannot tell net apart, so the result shows what was added, not
+ * what was gained after the 5-coin entry fee. 30 s is one round, one
+ * point is one mole.
  *
  * Message slot (user request 2026-11-01, "提示统一显示在游戏区域下方"): the
  * band under the field (y=308) hosts exactly one line -- the refusal note
@@ -95,21 +104,17 @@ static lv_obj_t *s_touch;
 static lv_obj_t *s_start_ov;
 static lv_obj_t *s_paused_ov;
 static lv_obj_t *s_over_ov;
-static lv_obj_t *s_over_payout;
 static lv_obj_t *s_back;
+static lv_obj_t *s_name;
 static lv_obj_t *s_hud;
 static lv_obj_t *s_note;
 static lv_timer_t *s_timer;
 
-/* OVER card payout line: between the page name (y=38, ends ~55) and the
- * ACCENT title (y=100); ~300 px of chord at y=81, so it never meets the
- * bezel. Same slot and copy shape as the snake page's. */
-#define MUSE_WHACKAMOLE_PAYOUT_Y 64
-
-/* Status / message slot under the field (field ends at y=300): the score
- * line and the refusal note share it, one at a time, so both are below the
+/* Status / message slot under the field (field ends at y=300): the HUD
+ * and the refusal note share it, one at a time, so both are below the
  * play area (user request 2026-11-01). ~213 px of chord at the line's
- * bottom (325) and the longest string here is ~152 px. */
+ * bottom (325) and the longest string here ("本局 n 分 · 剩余 X 秒",
+ * ~180 px) still clears the bezel. */
 #define MUSE_WHACKAMOLE_HUD_Y 308
 #define MUSE_WHACKAMOLE_NOTE_Y 308
 
@@ -195,30 +200,31 @@ static void refresh_display(void)
         }
     }
     muse_whackamole_phase_t ph = s_game.phase;
-    /* Same string, same slot as the snake page's score line (user request
-     * 2026-11-01): "本局 n 分 · 兑 m 金币". The countdown that used to lead
-     * this line is gone -- the round is a fixed 30 s, and the copy the user
-     * asked for states the score and what it is worth. The conversion is
-     * read from the same curve the settlement uses, except at OVER, where
-     * it shows what the wallet actually accepted. */
+    /* Title: "打地鼠" except at OVER, where the title slot itself
+     * becomes the result title (UI polish 2026-11-01, same as snake). */
+    set_label(s_name, ph == MUSE_WHACKAMOLE_OVER ? "游戏结束" : "打地鼠");
+    /* HUD, same slot as the snake page's score line: while PLAYING or
+     * PAUSED it is white, score plus the 30 s countdown, no coin
+     * conversion mid-round (user request 2026-11-01: the countdown that
+     * used to lead this line is back, the conversion is not). At OVER
+     * it turns GOLD and adds the gross payout the wallet actually
+     * accepted; the net is deliberately not printed (user: kids cannot
+     * tell net apart). A refused settlement leaves s_round_coins at 0,
+     * so the line honestly reads +0. */
     char hud[48];
-    unsigned long coins =
-        (unsigned long)(ph == MUSE_WHACKAMOLE_OVER
-                            ? s_round_coins
-                            : muse_pet_round_coins(s_game.score));
-    snprintf(hud, sizeof(hud), "本局 %lu 分 · 兑 %lu 金币",
-             (unsigned long)s_game.score, coins);
-    set_label(s_hud, hud);
-    /* No per-game breakdown on the OVER card any more (2026-11-01, user
-     * request): the result line under the field already carries the
-     * score, and the hits/missed split only crowded the overlay. The card
-     * does carry the round's coin conversion (see the file header). */
     if (ph == MUSE_WHACKAMOLE_OVER) {
-        char pay[48];
-        snprintf(pay, sizeof(pay), "本局 %lu 分 · 兑 %lu 金币",
+        snprintf(hud, sizeof(hud), "本局 %lu 分，+%lu 金币",
                  (unsigned long)s_game.score, (unsigned long)s_round_coins);
-        set_label(s_over_payout, pay);
+        lv_obj_set_style_text_color(s_hud, lv_color_hex(MUSE_THEME_GOLD),
+                                    LV_PART_MAIN);
+    } else {
+        snprintf(hud, sizeof(hud), "本局 %lu 分 · 剩余 %lu 秒",
+                 (unsigned long)s_game.score,
+                 (unsigned long)muse_whackamole_remaining_s(&s_game));
+        lv_obj_set_style_text_color(s_hud, lv_color_hex(MUSE_THEME_TEXT),
+                                    LV_PART_MAIN);
     }
+    set_label(s_hud, hud);
     if (ph == MUSE_WHACKAMOLE_START) {
         lv_obj_clear_flag(s_start_ov, LV_OBJ_FLAG_HIDDEN);
     } else {
@@ -525,17 +531,12 @@ void muse_whackamole_ui_build(lv_obj_t *page, lv_event_cb_t back_cb)
     lv_obj_align(resume_lb, LV_ALIGN_TOP_MID, 0, 59);
     lv_obj_add_event_cb(resume_btn, on_resume, LV_EVENT_CLICKED, NULL);
 
-    /* OVER overlay: dim, payout line, ACCENT title, 再玩一次 circle with the
-     * price on its own line under the label (snake's card). No hits/missed
-     * split here any more: the result line under the field carries the score,
-     * and s_over_payout carries the round's coin conversion (written by
-     * refresh_display() while OVER is up). */
+    /* OVER overlay: dim + 再玩一次 circle only (UI polish 2026-11-01).
+     * The result title lives in the page-title slot and the result line
+     * under the field -- both page-level, above the dim -- so the overlay
+     * itself carries no title and no payout line any more. No hits/missed
+     * split here either. */
     s_over_ov = overlay(page, true);
-    s_over_payout = label(s_over_ov, muse_font_cjk(), MUSE_THEME_GOLD);
-    lv_obj_align(s_over_payout, LV_ALIGN_TOP_MID, 0, MUSE_WHACKAMOLE_PAYOUT_Y);
-    lv_obj_t *over_lb = label(s_over_ov, muse_font_cjk(), MUSE_THEME_ACCENT);
-    lv_label_set_text(over_lb, "游戏结束");
-    lv_obj_align(over_lb, LV_ALIGN_TOP_MID, 0, 100);
     lv_obj_t *again_btn = round_btn(s_over_ov, 125, 125);
     lv_obj_t *again_lb = label(again_btn, muse_font_cjk(), MUSE_THEME_TEXT);
     lv_label_set_text(again_lb, "再玩一次");
@@ -564,8 +565,9 @@ void muse_whackamole_ui_build(lv_obj_t *page, lv_event_cb_t back_cb)
      * font/colour) and the result line right under the field
      * (MUSE_WHACKAMOLE_HUD_Y = 308, snake's score slot): page-level, above
      * the dim overlays, so they stay readable in every state. The line used
-     * to sit at y=332 and rode on the bezel (user report 2026-11-01). */
-    muse_page_title(page, "打地鼠", 38);
+     * to sit at y=332 and rode on the bezel (user report 2026-11-01).
+     * refresh_display() swaps the title to "游戏结束" at OVER. */
+    s_name = muse_page_title(page, "打地鼠", 38);
     s_hud = label(page, muse_font_cjk(), MUSE_THEME_TEXT);
     lv_obj_align(s_hud, LV_ALIGN_TOP_MID, 0, MUSE_WHACKAMOLE_HUD_Y);
 
