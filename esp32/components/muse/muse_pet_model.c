@@ -265,30 +265,33 @@ muse_pet_result_t muse_pet_model_apply(muse_pet_model_t *s, muse_pet_action_t ac
     }
 
     if (action == PET_SUDOKU_SOLVE) {
-        /* Completion reward, capped per day (user decision 2026-11-01):
-         * with SOLVE_COINS == DAILY_MAX only the first puzzle of the day
-         * pays, so solving more is allowed but never farmable. */
+        /* Completion reward, all-or-nothing per day (user decision
+         * 2026-11-01, retuning 1.5f's v4): the day's first completion pays
+         * MUSE_PET_SUDOKU_SOLVE_COINS (10) and every later puzzle pays
+         * nothing (PET_CAP). The gate is "anything already paid", not
+         * "room under the cap": a ledger that already holds a nonzero
+         * reward counts as paid -- in particular a blob written by v4,
+         * which stored 5 for its first solve, is NOT topped up to 10.
+         * The daily maximum constant stays as the validation bound. */
         sudoku_roll(s, day);
-        uint32_t room = s->sudoku_reward_coins < MUSE_PET_SUDOKU_DAILY_MAX
-                            ? MUSE_PET_SUDOKU_DAILY_MAX - s->sudoku_reward_coins
-                            : 0;
-        uint32_t add = MUSE_PET_SUDOKU_SOLVE_COINS < room
-                           ? MUSE_PET_SUDOKU_SOLVE_COINS
-                           : room;
-        if (add == 0) {
+        if (s->sudoku_reward_coins != 0) {
             return PET_CAP; /* today's sudoku coins are already paid */
         }
-        s->sudoku_reward_coins += add;
-        s->coins = capped_add(s->coins, add);
+        s->sudoku_reward_coins = MUSE_PET_SUDOKU_SOLVE_COINS;
+        s->coins = capped_add(s->coins, MUSE_PET_SUDOKU_SOLVE_COINS);
         return PET_OK;
     }
 
     if (action == PET_PLAY_REWARD) {
         /* End-of-round payout for snake / whack-a-mole (user decision
-         * 2026-11-01). The UI converts its own score with
-         * muse_pet_round_coins(); the worker clamps again so a UI bug
-         * cannot mint coins, and 0 is a valid settlement (a round under
-         * 5 points earns nothing) that still returns PET_OK. */
+         * 2026-11-01, ceiling retuned to 10 the same day). The UI converts
+         * its own score with muse_pet_round_coins(); the worker clamps
+         * again so a UI bug cannot mint coins, and 0 is a valid settlement
+         * (a scoreless round earns nothing) that still returns PET_OK.
+         * This is the GROSS payout: the 5-coin entry fee was already
+         * charged at round start through PET_FEE, so the round's net is
+         * payout minus 5 and is the UI's to show, not the model's to
+         * fold in. */
         uint32_t add = arg > 0 ? (uint32_t)arg : 0;
         if (add > MUSE_PET_ROUND_COIN_MAX) {
             add = MUSE_PET_ROUND_COIN_MAX;

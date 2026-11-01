@@ -52,13 +52,15 @@
  *     A blocked start shows one page-level note ("金币不够（需 5 枚）" or
  *     "互动未就绪") under the board, above the dim (see the message
  *     slot below).
- *   - Payout: OVER also carries "本局 n 分 · 兑 m 金币" at y = 64 (user
- *     decision 2026-11-01: the score is settled once, at OVER, through
- *     PET_PLAY_REWARD). m comes from muse_pet_round_coins() -- 1 point per
- *     coin since the 2026-11-01 correction (it was 5, which paid a 13-point
- *     round only 2 coins) with a 5-coin ceiling, so any ordinary round
- *     refunds the 5-coin entry fee and no round can mint coins. The line
- *     sits between the page name (ends ~55) and the title (100); at y = 81
+ *   - Payout: OVER also carries the round's NET at y = 64 (user
+ *     decision 2026-11-01, retuned the same day: the score is settled
+ *     once, at OVER, through PET_PLAY_REWARD). The page-level score line
+ *     keeps showing score and gross payout ("本局 n 分 · 兑 m 金币",
+ *     m from muse_pet_round_coins() -- 1 point per coin, 10-coin
+ *     ceiling), so the OVER card must not restate the payout as if it
+ *     were the gain: it shows the net, payout minus the 5-coin entry
+ *     fee paid at start ("净 +5 / 0 / -5 金币"). The line sits between
+ *     the page name (ends ~55) and the title (100); at y = 81
  *     the circle still leaves ~300 px of chord.
  *   - Message slot (user request 2026-11-01, "提示统一显示在游戏区域下方"):
  *     the band under the board (y = 304..325) hosts exactly ONE line at a
@@ -149,7 +151,7 @@ static lv_obj_t *s_touch;
 static lv_obj_t *s_start_ov;
 static lv_obj_t *s_pause_ov;
 static lv_obj_t *s_over_ov;
-static lv_obj_t *s_over_payout;
+static lv_obj_t *s_over_net;
 static lv_obj_t *s_hint;
 static lv_obj_t *s_food;
 static lv_obj_t *s_eye1;
@@ -421,12 +423,15 @@ static void sync_snake(void)
     lv_obj_remove_flag(s_eye2, LV_OBJ_FLAG_HIDDEN);
 }
 
-/* Score -> coins, once per round, at OVER (user decision 2026-11-01).
+/* Score -> coins, once per round, at OVER (user decision 2026-11-01,
+ * ceiling retuned to 10 the same day).
  * muse_pet_round_coins() is the only conversion curve (1 point per food,
- * 1 point per coin, 5 coins per round ceiling), so any round that eats
- * five foods refunds the 5-coin entry. A refused request (worker not ready or
- * queue full) leaves s_round_coins at 0: the card must never claim coins
- * the wallet did not get. */
+ * 1 point per coin, 10 coins per round ceiling), and the 5-coin entry fee
+ * was already charged at start through PET_FEE -- so the round's net is
+ * payout minus 5, computed on the OVER card, never folded into the
+ * conversion. A refused request (worker not ready or queue full) leaves
+ * s_round_coins at 0: the card must never claim coins the wallet did not
+ * get, and the net then honestly reads -5 (fee paid, payout lost). */
 static void settle_round(void)
 {
     if (s_settled) {
@@ -463,10 +468,20 @@ static void refresh_display(void)
     }
     sync_message_band();
     if (s_game.state == MUSE_SNAKE_OVER) {
+        /* Settlement summary: the NET, not the payout. The page-level
+         * score line already shows score and gross payout
+         * ("本局 n 分 · 兑 m 金币") and stays readable through the dim,
+         * so restating the payout here would read as the gain; the net
+         * is payout minus the 5-coin entry fee, from what the wallet
+         * actually accepted (s_round_coins, 0 when the request failed). */
         char buf[64];
-        snprintf(buf, sizeof(buf), "本局 %u 分 · 兑 %u 金币",
-                 (unsigned)s_game.score, (unsigned)s_round_coins);
-        set_label(s_over_payout, buf);
+        int net = (int)s_round_coins - (int)MUSE_PET_GAME_STAKE;
+        if (net == 0) {
+            snprintf(buf, sizeof(buf), "净 0 金币");
+        } else {
+            snprintf(buf, sizeof(buf), "净 %+d 金币", net);
+        }
+        set_label(s_over_net, buf);
     }
     set_hidden(s_start_ov, s_game.state != MUSE_SNAKE_START);
     set_hidden(s_pause_ov, s_game.state != MUSE_SNAKE_PAUSED);
@@ -727,14 +742,15 @@ void muse_snake_ui_build(lv_obj_t *page, lv_event_cb_t back_cb)
      * the bezel. Leaving is the back arrow's job; restarting is offered
      * on the OVER card, where the price is printed. */
 
-    /* OVER overlay: dim + payout line + title + 再来一局 circle. The score
+    /* OVER overlay: dim + net line + title + 再来一局 circle. The score
      * needs no copy here: the page-level "本局 n 分" line sits below the
      * board and is created after the overlays, so it stays readable through
-     * the dim. s_over_payout restates it with the round's conversion --
-     * that line is written by refresh_display() only while OVER is up. */
+     * the dim. s_over_net carries the round's NET (payout minus the
+     * 5-coin entry fee) -- that line is written by refresh_display() only
+     * while OVER is up. */
     s_over_ov = overlay(page, true);
-    s_over_payout = label(s_over_ov, muse_font_cjk(), MUSE_THEME_GOLD, "");
-    lv_obj_align(s_over_payout, LV_ALIGN_TOP_MID, 0, SN_PAYOUT_Y);
+    s_over_net = label(s_over_ov, muse_font_cjk(), MUSE_THEME_GOLD, "");
+    lv_obj_align(s_over_net, LV_ALIGN_TOP_MID, 0, SN_PAYOUT_Y);
     lv_obj_t *ot = label(s_over_ov, muse_font_cjk(), MUSE_THEME_ACCENT, "游戏结束");
     lv_obj_align(ot, LV_ALIGN_TOP_MID, 0, SN_TITLE_Y);
     lv_obj_t *over_btn = centre_button(s_over_ov, on_restart);
