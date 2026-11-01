@@ -199,6 +199,7 @@ static lv_obj_t *s_game_choices[3];
 static int s_game_choice_base_x[3];
 static lv_obj_t *s_game_you_img, *s_game_house_img;
 static lv_obj_t *s_game_result_lbl, *s_game_streak_lbl, *s_game_chant_lbl;
+static lv_obj_t *s_game_hint_lbl;
 static lv_obj_t *s_game_coins_lbl;
 static bool s_storage_noted, s_unready_noted;
 static lv_obj_t *s_fortune_card, *s_fortune_grade, *s_fortune_rule,
@@ -665,6 +666,10 @@ static void show_game_result(void)
     lv_obj_remove_flag(s_game_result_lbl, LV_OBJ_FLAG_HIDDEN);
     lv_obj_remove_flag(s_game_streak_lbl, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(s_game_chant_lbl, LV_OBJ_FLAG_HIDDEN);
+    /* The cost hint is an instruction for a round not yet played; while
+     * the hands are revealed it is noise above the result, so it hides
+     * for the reveal and returns with the choice row (unified 2026-11-01). */
+    lv_obj_add_flag(s_game_hint_lbl, LV_OBJ_FLAG_HIDDEN);
     for (int i = 0; i < 3; i++) {
         lv_obj_add_flag(s_game_choices[i], LV_OBJ_FLAG_HIDDEN);
     }
@@ -689,6 +694,7 @@ static void reset_game_view(void)
         lv_obj_remove_flag(s_game_choices[i], LV_OBJ_FLAG_HIDDEN);
         lv_obj_set_x(s_game_choices[i], s_game_choice_base_x[i]);
     }
+    lv_obj_remove_flag(s_game_hint_lbl, LV_OBJ_FLAG_HIDDEN);
     set_choice_dim(false);
 }
 
@@ -820,6 +826,7 @@ static void game_tick(void)
             for (int i = 0; i < 3; i++) {
                 lv_obj_remove_flag(s_game_choices[i], LV_OBJ_FLAG_HIDDEN);
             }
+            lv_obj_remove_flag(s_game_hint_lbl, LV_OBJ_FLAG_HIDDEN);
             set_choice_dim(false);
             ESP_LOGI(TAG, "game -> RESULT");
             s_game_phase = IC_GAME_RESULT;
@@ -1280,6 +1287,12 @@ static void build_game(void)
         lv_obj_set_style_bg_color(b, lv_color_hex(MUSE_THEME_CARD), 0);
         lv_obj_set_style_bg_color(b, lv_color_hex(MUSE_THEME_CARD_PRESSED), LV_STATE_PRESSED);
         lv_obj_set_style_radius(b, IC_RADIUS, 0);
+        /* Unified flat button language (2026-11-01): RULE border, no
+         * shadow -- the same family as the muse_card pages, instead of
+         * the raw theme button styling this page used to carry. */
+        lv_obj_set_style_border_width(b, 2, 0);
+        lv_obj_set_style_border_color(b, lv_color_hex(MUSE_THEME_RULE), 0);
+        lv_obj_set_style_shadow_width(b, 0, 0);
         lv_obj_t *img = lv_image_create(b);
         lv_image_set_src(img, hand_img(hand));
         /* The master asset is 128 px; the row is 100 px. Scale to ~80 px so
@@ -1333,8 +1346,8 @@ static void build_game(void)
      * 2026-11-01. Same copy and DIM colour as before; 84 is the main
      * page's first-row y, so it clears the title (centre y = 52) and
      * stops ~1 px above the reveal hands (top y = 105). */
-    lv_obj_t *hint = label(s_game_page, muse_font_cjk(), MUSE_THEME_DIM, "点一张手出拳，每局 -5 金币");
-    lv_obj_align(hint, LV_ALIGN_TOP_MID, 0, 84);
+    s_game_hint_lbl = label(s_game_page, muse_font_cjk(), MUSE_THEME_DIM, "点一张手出拳，每局 -5 金币");
+    lv_obj_align(s_game_hint_lbl, LV_ALIGN_TOP_MID, 0, 84);
 }
 
 static void build_fortune(void)
