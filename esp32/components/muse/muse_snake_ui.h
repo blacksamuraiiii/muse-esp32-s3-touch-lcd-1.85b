@@ -26,12 +26,18 @@
  *
  * The score (1 point per food) is converted exactly once, when the round
  * ends, by muse_pet_round_coins() -- 1 point per coin (corrected
- * 2026-11-01 from 5, which paid a 13-point round only 2 coins), at most 5
- * coins per round -- and sent as PET_PLAY_REWARD. That ceiling is the
- * entry fee, so a round can at best break even and never mints coins. The
- * conversion is shown twice: under the board, in the score line
- * ("本局 n 分 · 兑 m 金币", 2026-11-01), and on the OVER card; leaving the
- * page mid-round pauses and settles nothing.
+ * 2026-11-01 from 5, which paid a 13-point round only 2 coins), at most
+ * 10 coins per round (2026-11-01, was 5) -- and sent as PET_PLAY_REWARD.
+ * The payout is gross: the 5-coin entry fee was already charged at start,
+ * so a round nets min(score,10) - 5 (10 points = +5, 5 points = 0, 0
+ * points = -5, the same win/draw/loss as rock-paper-scissors) and no round
+ * mints more than 5 coins. The result is shown once, under the board: the
+ * line is white and score-only ("本局 n 分") while PLAYING or PAUSED, and
+ * turns GOLD at OVER with the gross payout ("本局 n 分，+m 金币", UI polish
+ * 2026-11-01). The net is deliberately NOT printed -- the user said kids
+ * cannot tell net apart -- and the OVER card carries no line of its own
+ * (the page name becomes "游戏结束"). Leaving the page mid-round pauses
+ * and settles nothing.
  *
  * Progress lives in static RAM: leaving the tile (muse_snake_ui_hide)
  * pauses a running game, so a return visit resumes it from the pause

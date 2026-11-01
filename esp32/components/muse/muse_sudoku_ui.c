@@ -84,12 +84,14 @@
  *     and 40 tall, so x = 16 leaves 16/17 and y = 20 leaves 20/20. Tapping
  *     the overlay dismisses the popup (or the win card, when that is open);
  *     the back arrow is unreachable while a modal is open, which is the
- *     intended modal behaviour.
- *   - Win card: 260x170 at (50,95) with "完成！", the elapsed time, the
- *     completion reward and 下一题 / 再玩一次 (19 and 136, 105 wide: 19px
- *     clear on both sides). It shares the dim overlay with the pad. The card
- *     grew from 150 to 170 tall on 2026-11-01 to make room for the reward
- *     line; its corners are still 155px from the centre (180 available).
+ *     intended modal behaviour. The three bands and their pills are the
+ *     exception: they sit above the overlay (see below), so a band /
+ *     pill tap still acts while a modal is open instead of dismissing it.
+ *   - Win card: 230x140 at (65,110), three rows only (user-confirmed
+ *     mockup v3, 2026-11-01): "完成！", one merged GOLD "用时 m:ss，+n
+ *     金币" line, then 下一题 / 再玩一次 (10 and 120, 100 wide: 10px
+ *     clear on both sides). It shares the dim overlay with the pad;
+ *     its corners are 134.6px from the centre (180 available).
  *   - Refusal note: it takes the 提示 button's slot under the board (y = 316,
  *     centred in the 108px pill's 310..346 band) and the button is hidden
  *     while the note is up: a refused entry makes the hint unusable anyway,
@@ -159,10 +161,11 @@
 #define SU_ACT_H 40
 #define SU_ACT_W 105
 #define SU_ACT_GAP 7 /* 2 x 105 + 7 = 217, the digit block's width */
-#define SU_WIN_X0 50
-#define SU_WIN_Y0 95
-#define SU_WIN_W 260
-#define SU_WIN_H 170
+#define SU_WIN_X0 65
+#define SU_WIN_Y0 110
+#define SU_WIN_W 230
+#define SU_WIN_H 140
+#define SU_WIN_BTN_W 100 /* win buttons only; the pad's action row keeps SU_ACT_W */
 /* Side strips: vertical labels that leave the board its full 240px. Both
  * are 34x72 at y = 144 (centre 180), 16px clear of the grid at x = 44 / 300,
  * and their far corners sit 173.8 from the centre -- inside the 180 bezel.
@@ -193,7 +196,10 @@
  * bands end at 308 as well, so the three hit regions tile without overlap.
  * Of that box the round panel exposes the ~9,000 px2 cap below y = 308, which
  * is 2.3x the pill's 3,888 px2. Created before the pill, like the side bands,
- * so the pill still wins its own taps and keeps its pressed look. */
+ * so the pill still wins its own taps and keeps its pressed look. Both
+ * band and pill are then moved above the dim overlay (see the build
+ * function): without that, the overlay -- created after them -- swallowed
+ * band/pill taps while the pad was open and only dismissed the pad. */
 #define SU_HINT_HIT_X0 54
 #define SU_HINT_HIT_Y0 308
 #define SU_HINT_HIT_W 252
@@ -201,7 +207,11 @@
 /* Margin bands: the whole strip of screen left of the board (0..56) and right
  * of it (304..360) is a hit region, so a tap does not have to land on the
  * 34px pill. 224 tall = the board's own span, minus the top 16px that the
- * back arrow's box (y 28..76) needs. */
+ * back arrow's box (y 28..76) needs. Like the hint band, each side band
+ * and its pill are moved above the dim overlay at build time, so they
+ * stay live while the pad is open. Together the three bands tile
+ * everything the circle offers outside the board's square: left and
+ * right margins plus the cap below the frame. */
 #define SU_BAND_W 56
 #define SU_BAND_Y0 84
 #define SU_BAND_H 224
@@ -217,8 +227,10 @@ static lv_obj_t *s_cell_lbls[MUSE_SUDOKU_CELLS];
 static lv_obj_t *s_overlay;
 static lv_obj_t *s_pad_card;
 static lv_obj_t *s_win_card;
-static lv_obj_t *s_win_time;
-static lv_obj_t *s_win_reward;
+static lv_obj_t *s_win_line;
+static lv_obj_t *s_band_prev;
+static lv_obj_t *s_band_next;
+static lv_obj_t *s_band_hint;
 static muse_sudoku_state_t s_state;
 static int s_selected = -1; /* 0..35, -1 = none */
 static bool s_pad_open;
@@ -269,7 +281,10 @@ static void scale_label(lv_obj_t *l)
  * it off that centre. */
 static void side_label(lv_obj_t *parent, const char *text)
 {
-    lv_obj_t *l = label(parent, muse_font_cjk(), MUSE_THEME_DIM, text);
+    /* TEXT, not DIM (user decision 2026-11-01): the two strips and the
+     * 提示 pill are one set of three buttons, so they share colour as
+     * well as size. */
+    lv_obj_t *l = label(parent, muse_font_cjk(), MUSE_THEME_TEXT, text);
     lv_obj_set_style_text_align(l, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_style_text_line_space(l, 0, 0);
     scale_label(l);
@@ -309,32 +324,40 @@ static void hide_win(void)
 static void show_win(uint32_t coins, bool ledger_ready)
 {
     uint32_t secs = (lv_tick_get() - s_start_ms) / 1000;
-    char buf[32];
-    snprintf(buf, sizeof(buf), "用时 %lu:%02lu",
-             (unsigned long)(secs / 60), (unsigned long)(secs % 60));
-    lv_label_set_text(s_win_time, buf);
-    /* The completion reward (user decision 2026-11-01, retuned the same
-     * day): 10 coins for the first puzzle of the day, nothing after --
-     * the worker enforces the all-or-nothing rule, this line only reports
-     * what coins_paid_today() promised before the request went out, so
-     * the card never claims coins the wallet will not get.
-     * Known race: two boards finishing before the worker settles the first
-     * SOLVE both read paid == 0, and the second card promises coins the
-     * worker then refuses with PET_CAP; without a callback into this page
-     * from the drain the card cannot self-correct. Accepted for now. */
+    /* One merged line (user-confirmed mockup v3, 2026-11-01): time and
+     * reward on a single GOLD line, "用时 m:ss，+n 金币". The amount is
+     * whatever the economy settles -- MUSE_PET_SUDOKU_SOLVE_COINS, 10
+     * since the 2026-11-01 all-or-nothing retune -- never a literal here.
+     * The colour follows the reward state, as the old separate reward
+     * line did: GOLD when coins are paid, DIM when the day is capped or
+     * the ledger could not be read (so a capped / not-ready line reads
+     * grey end to end, time included). The worker enforces the
+     * all-or-nothing rule; this line only reports what
+     * coins_paid_today() promised before the request went out, so the
+     * card never claims coins the wallet will not get. Known race: two
+     * boards finishing before the worker settles the first SOLVE both
+     * read paid == 0, and the second card promises coins the worker then
+     * refuses with PET_CAP; without a callback into this page from the
+     * drain the card cannot self-correct. Accepted for now. */
+    char reward[32];
+    uint32_t color;
     if (coins != 0) {
-        snprintf(buf, sizeof(buf), "完成奖励 +%lu 金币", (unsigned long)coins);
-        lv_obj_set_style_text_color(s_win_reward, lv_color_hex(MUSE_THEME_GOLD), 0);
+        snprintf(reward, sizeof(reward), "+%lu 金币", (unsigned long)coins);
+        color = MUSE_THEME_GOLD;
     } else if (ledger_ready) {
-        snprintf(buf, sizeof(buf), "今日数独金币已满");
-        lv_obj_set_style_text_color(s_win_reward, lv_color_hex(MUSE_THEME_DIM), 0);
+        snprintf(reward, sizeof(reward), "今日数独金币已满");
+        color = MUSE_THEME_DIM;
     } else {
         /* Snapshot unreadable: the request was not even queued, so "已满"
          * would be a lie -- the usual worker-not-ready wording applies. */
-        snprintf(buf, sizeof(buf), "互动未就绪");
-        lv_obj_set_style_text_color(s_win_reward, lv_color_hex(MUSE_THEME_DIM), 0);
+        snprintf(reward, sizeof(reward), "互动未就绪");
+        color = MUSE_THEME_DIM;
     }
-    lv_label_set_text(s_win_reward, buf);
+    char buf[64];
+    snprintf(buf, sizeof(buf), "用时 %lu:%02lu，%s",
+             (unsigned long)(secs / 60), (unsigned long)(secs % 60), reward);
+    lv_obj_set_style_text_color(s_win_line, lv_color_hex(color), 0);
+    lv_label_set_text(s_win_line, buf);
     s_win_open = true;
     lv_obj_remove_flag(s_win_card, LV_OBJ_FLAG_HIDDEN);
     refresh_overlay();
@@ -474,6 +497,15 @@ static void on_overlay(lv_event_t *e)
 static void on_hint(lv_event_t *e)
 {
     (void)e;
+    /* A band/pill tap while the win card is up steps back to the board,
+     * like any other tap outside the card -- hinting a completed board
+     * would only re-show the card. */
+    if (s_win_open) {
+        hide_win();
+        return;
+    }
+    /* The hinted cell is filled, so its pad must not linger over it. */
+    close_pad();
     /* The hint writes into the board, so it needs the day's entry to be paid
      * just like a cell tap: a puzzle refused on entry must not become
      * solvable one hint at a time. */
@@ -745,12 +777,12 @@ void muse_sudoku_ui_build(lv_obj_t *page, lv_event_cb_t back_cb)
      * would otherwise have a 2px content box -- so lv_obj_center in
      * side_label() centres on the strip itself. Each band is created first so
      * the pill sits on top of it. */
-    side_band(page, 0, on_prev);
+    s_band_prev = side_band(page, 0, on_prev);
     lv_obj_t *prev = btn(page, SU_SIDE_X_L, SU_SIDE_Y0, SU_SIDE_W, SU_SIDE_H,
                          10, on_prev, NULL);
     lv_obj_set_style_pad_all(prev, 0, 0);
     side_label(prev, "上\n一\n题");
-    side_band(page, 360 - SU_BAND_W, on_next);
+    s_band_next = side_band(page, 360 - SU_BAND_W, on_next);
     lv_obj_t *next = btn(page, SU_SIDE_X_R, SU_SIDE_Y0, SU_SIDE_W, SU_SIDE_H,
                          10, on_next, NULL);
     lv_obj_set_style_pad_all(next, 0, 0);
@@ -765,7 +797,7 @@ void muse_sudoku_ui_build(lv_obj_t *page, lv_event_cb_t back_cb)
      * slot. The hit band is created first so the pill stays on top of it:
      * the band is what makes the 36px pill easy to hit, the pill itself is
      * unchanged. */
-    hit_band(page, SU_HINT_HIT_X0, SU_HINT_HIT_Y0, SU_HINT_HIT_W, SU_HINT_HIT_H, on_hint);
+    s_band_hint = hit_band(page, SU_HINT_HIT_X0, SU_HINT_HIT_Y0, SU_HINT_HIT_W, SU_HINT_HIT_H, on_hint);
     s_hint_btn = btn(page, SU_HINT_X0, SU_HINT_Y0, SU_HINT_W, SU_HINT_H,
                      10, on_hint, NULL);
     lv_obj_set_style_pad_all(s_hint_btn, 0, 0);
@@ -773,7 +805,19 @@ void muse_sudoku_ui_build(lv_obj_t *page, lv_event_cb_t back_cb)
     scale_label(hl);
     lv_obj_center(hl);
 
-    /* Dim overlay (below both modals, above the grid). */
+    /* Dim overlay (below both modals, above the grid). The three bands
+     * and their pills move above it right after (2026-11-01, user
+     * report: 提示 felt unresponsive): the overlay is created after
+     * them, so while the pad was open it used to swallow every tap
+     * outside the pad card -- including taps on the bands and pills --
+     * and only dismissed the pad, which read as a dead first tap on
+     * 提示 (the pad is open whenever a cell was just selected, which
+     * is exactly when a hint is wanted). Above the overlay, a band /
+     * pill tap stays a band / pill tap while a modal is open, and
+     * taps elsewhere still hit the overlay and dismiss. The pad and
+     * win cards are created after this, so they stay on top, and each
+     * pill stays above its band, so a pill tap still shows its
+     * pressed look. */
     s_overlay = lv_obj_create(page);
     lv_obj_set_size(s_overlay, 360, 360);
     lv_obj_set_pos(s_overlay, 0, 0);
@@ -784,6 +828,12 @@ void muse_sudoku_ui_build(lv_obj_t *page, lv_event_cb_t back_cb)
     lv_obj_remove_flag(s_overlay, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_event_cb(s_overlay, on_overlay, LV_EVENT_CLICKED, NULL);
     lv_obj_add_flag(s_overlay, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_move_foreground(s_band_prev);
+    lv_obj_move_foreground(s_band_next);
+    lv_obj_move_foreground(s_band_hint);
+    lv_obj_move_foreground(prev);
+    lv_obj_move_foreground(next);
+    lv_obj_move_foreground(s_hint_btn);
 
     /* Pad popup: 3x2 digits + 清除 / 取消. */
     s_pad_card = lv_obj_create(page);
@@ -827,8 +877,10 @@ void muse_sudoku_ui_build(lv_obj_t *page, lv_event_cb_t back_cb)
     lv_obj_center(xl);
 
     /* Win card: shares the dim overlay with the pad. pad_all = 0 for the
-     * same reason as the pad card -- its 19 / 136 button pair is measured
-     * from the card edge, not from a 16px inset. */
+     * same reason as the pad card -- its 10 / 120 button pair is measured
+     * from the card edge, not from a 16px inset. Three rows only
+     * (user-confirmed mockup v3, 2026-11-01): "完成！", one merged
+     * GOLD "用时 m:ss，+n 金币" line, then the 下一题 / 再玩一次 row. */
     s_win_card = lv_obj_create(page);
     lv_obj_set_size(s_win_card, SU_WIN_W, SU_WIN_H);
     lv_obj_set_pos(s_win_card, SU_WIN_X0, SU_WIN_Y0);
@@ -841,20 +893,18 @@ void muse_sudoku_ui_build(lv_obj_t *page, lv_event_cb_t back_cb)
     lv_obj_remove_flag(s_win_card, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_flag(s_win_card, LV_OBJ_FLAG_HIDDEN);
     lv_obj_t *wt = label(s_win_card, muse_font_cjk(), MUSE_THEME_ACCENT, "完成！");
-    lv_obj_align(wt, LV_ALIGN_TOP_MID, 0, 16);
-    s_win_time = label(s_win_card, muse_font_cjk(), MUSE_THEME_TEXT, "");
-    lv_obj_align(s_win_time, LV_ALIGN_TOP_MID, 0, 56);
-    /* Reward line (2026-11-01): 5 coins for the day's first solved puzzle,
-     * "今日数独金币已满" afterwards. Its colour is set per outcome by
-     * show_win(), so the initial GOLD here is only a placeholder. */
-    s_win_reward = label(s_win_card, muse_font_cjk(), MUSE_THEME_GOLD, "");
-    lv_obj_align(s_win_reward, LV_ALIGN_TOP_MID, 0, 80);
-    lv_obj_t *wn = btn(s_win_card, 19, 110, SU_ACT_W, SU_ACT_H,
+    lv_obj_align(wt, LV_ALIGN_TOP_MID, 0, 12);
+    /* Merged line (mockup v3): time + reward in one label, GOLD when
+     * coins are paid (the initial GOLD here is only a placeholder --
+     * show_win() sets the per-outcome colour). */
+    s_win_line = label(s_win_card, muse_font_cjk(), MUSE_THEME_GOLD, "");
+    lv_obj_align(s_win_line, LV_ALIGN_TOP_MID, 0, 48);
+    lv_obj_t *wn = btn(s_win_card, 10, 84, SU_WIN_BTN_W, SU_ACT_H,
                        10, on_win_next, NULL);
     lv_obj_set_style_bg_color(wn, lv_color_hex(MUSE_THEME_CARD_PRESSED), LV_STATE_PRESSED);
     lv_obj_t *wnl = label(wn, muse_font_cjk(), MUSE_THEME_TEXT, "下一题");
     lv_obj_center(wnl);
-    lv_obj_t *wr = btn(s_win_card, 136, 110, SU_ACT_W, SU_ACT_H,
+    lv_obj_t *wr = btn(s_win_card, 120, 84, SU_WIN_BTN_W, SU_ACT_H,
                        10, on_win_replay, NULL);
     lv_obj_set_style_bg_color(wr, lv_color_hex(MUSE_THEME_CARD_PRESSED), LV_STATE_PRESSED);
     lv_obj_t *wrl = label(wr, muse_font_cjk(), MUSE_THEME_TEXT, "再玩一次");
