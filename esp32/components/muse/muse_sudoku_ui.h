@@ -16,10 +16,11 @@
  * one ticket covers everything else the page does that day -- re-entering,
  * 上一题, 下一题 and 再玩一次 are all free. The request is idempotent in the
  * worker, so the page simply asks again on each action instead of keeping a
- * local "paid" flag that a reboot would lose. Completing a puzzle pays 5
- * coins, capped at 5 per day: only the day's first solved board pays, and
- * later ones say "今日数独金币已满". A day's sudoku can therefore at best
- * refund its own entry fee.
+ * local "paid" flag that a reboot would lose. Completing a puzzle pays 10
+ * coins for the day's first solved board only -- all-or-nothing, later ones
+ * say "今日数独金币已满", and a ledger that already holds a nonzero reward
+ * (including a 1.5f v4 blob's 5) counts as paid and is never topped up. A
+ * day's sudoku therefore nets at most +5 (ticket 5, first win 10).
  *
  * Progress lives in static RAM: leaving the tile (muse_sudoku_ui_hide) closes
  * the pad popup and the win overlay but keeps the puzzle, so re-entering the

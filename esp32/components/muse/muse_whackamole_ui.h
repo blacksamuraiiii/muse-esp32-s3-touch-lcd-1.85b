@@ -31,12 +31,16 @@
  * Score and payout: one mole is one point, and the 30 s round's score is
  * converted exactly once, at OVER, by muse_pet_round_coins() -- 1 point per
  * coin (corrected 2026-11-01 from 5, which paid a 13-point snake round only
- * 2 coins), at most 5 coins per round -- then sent as PET_PLAY_REWARD.
- * That ceiling is the entry fee, so an ordinary round breaks even and no
- * round mints coins. The conversion is printed twice: under the field, in
- * the status line ("本局 n 分 · 兑 m 金币", the same slot and copy the snake
- * page uses, 2026-11-01), and on the OVER card; leaving the page mid-round
- * pauses and settles nothing.
+ * 2 coins), at most 10 coins per round (2026-11-01, was 5) -- then sent as
+ * PET_PLAY_REWARD. The payout is gross: the 5-coin entry fee was already
+ * charged at start, so the round nets min(score,10) - 5 and no round mints
+ * more than 5 coins. The result is printed once, under the field: white and
+ * score-only plus the 30 s countdown ("本局 n 分 · 剩余 X 秒") while PLAYING
+ * or PAUSED, GOLD with the gross payout ("本局 n 分，+m 金币") at OVER (UI
+ * polish 2026-11-01, same slot as the snake page). The net is deliberately
+ * NOT printed (user: kids cannot tell net apart) and the OVER card carries
+ * no line of its own (the page title becomes "游戏结束"). Leaving the page
+ * mid-round pauses and settles nothing.
  *
  * Pause is a LONG PRESS on the field (user request 2026-11-01, "参考贪吃
  * 蛇"): the old 34 px pause button sat outside the round bezel, so only a
