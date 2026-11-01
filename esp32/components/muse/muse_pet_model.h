@@ -51,36 +51,38 @@
 #define MUSE_PET_FORTUNES 20u          /* fortune cards in muse_pet_text.c */
 
 /*
- * Score -> coin conversion (user decision 2026-11-01; corrected the same day
- * after a 13-point snake round paid out only 2 coins -- the curve was 5
- * points per coin and the integer division truncated 13/5 to 2, which read
- * as "the score was thrown away"): ONE point is ONE coin, settled once at
- * the end of a round by PET_PLAY_REWARD, with a 5-coin ceiling per round.
- * One point is one successful action (one food eaten in snake, one mole hit
- * in whack-a-mole), so the two games share one curve and there is exactly
- * one knob to retune the whole mini-game economy.
+ * Score -> coin conversion (user decision 2026-11-01, corrected the same
+ * day; retuned 2026-11-01 again after 1.5f shipped the 5-coin ceiling as
+ * "v4": the two score games follow the rock-paper-scissors rule -- a
+ * round costs the 5-coin entry fee up front (PET_FEE) and pays back
+ * 1 coin per point, so the round's NET is payout minus fee:
  *
- *   coins = min(MUSE_PET_ROUND_COIN_MAX, score / MUSE_PET_SCORE_PER_COIN)
- *         = min(5, score)    ->  1/2/3/4/5 points = 1/2/3/4/5 coins
+ *   payout = min(MUSE_PET_ROUND_COIN_MAX, score) = min(10, score)
+ *   net    = payout - 5     ->  10 points = +5, 5 points = 0 (a draw),
+ *                               0 points = -5 (a loss), exactly the
+ *                               win / draw / loss of rock-paper-scissors.
  *
- * 5 points reaches the ceiling, and an ordinary round of either game passes
- * it (a 30 s whack-a-mole run lands ~28 hits), so an ordinary round returns
- * exactly the 5-coin entry fee and never more. The CEILING is what keeps
- * games from minting coins -- not the curve, which is now 1:1. Games remain
- * a coin sink on average and a break-even at best.
+ * The conversion lives in muse_pet_round_coins() and nowhere else, so
+ * snake and whack-a-mole cannot drift apart. The 10-coin ceiling is what
+ * keeps games from minting coins -- not the curve, which is 1:1.
  */
 #define MUSE_PET_SCORE_PER_COIN 1u     /* points per coin (1:1) */
-#define MUSE_PET_ROUND_COIN_MAX 5u     /* per-round payout ceiling */
+#define MUSE_PET_ROUND_COIN_MAX 10u    /* per-round payout ceiling */
 
 /*
- * Sudoku pays in completions, not points: one solved 6x6 puzzle is worth
- * its own "perfect round" (5 coins), capped at 5 per calendar day, so only
- * the first puzzle of the day pays and the daily entry fee is at best
- * refunded. The entry fee itself is charged ONCE per day (PET_SUDOKU_ENTRY),
- * no matter how many puzzles the player flips through afterwards.
+ * Sudoku pays in completions, not points: the first puzzle solved on a
+ * calendar day pays MUSE_PET_SUDOKU_SOLVE_COINS (10), and no later puzzle
+ * that day pays anything -- the daily grant is all-or-nothing, so a
+ * sudoku_reward_coins that is nonzero for any reason already means "paid
+ * today". That includes a blob written by 1.5f's v4, which stored 5 for
+ * its first solve: under this rule it counts as paid and is NOT topped
+ * up to 10 (user decision 2026-11-01, transition edge). The entry fee
+ * itself is charged ONCE per day (PET_SUDOKU_ENTRY), no matter how many
+ * puzzles the player flips through afterwards, so a sudoku day nets at
+ * most +5 (ticket 5, first win 10).
  */
-#define MUSE_PET_SUDOKU_SOLVE_COINS 5u /* per completed puzzle */
-#define MUSE_PET_SUDOKU_DAILY_MAX 5u   /* per day: the first completion pays */
+#define MUSE_PET_SUDOKU_SOLVE_COINS 10u /* the day's first completed puzzle */
+#define MUSE_PET_SUDOKU_DAILY_MAX 10u   /* per day: the first completion pays */
 
 /*
  * "No real time yet" threshold, taken from muse_rtc.c ("Older than this means
@@ -95,10 +97,12 @@
  * decay_notice is the living-cost amount still to be announced once; phase-2
  * UI clears it with PET_DECAY_ACK after showing it (design §4.2).
  * The sudoku_* trio is the mini-game daily ledger (v4, user decision
- * 2026-11-01): sudoku_entry_paid is 1 once that day's 5-coin entry fee has
- * been settled, and sudoku_reward_coins counts the coins this day's solved
- * puzzles have paid (0..MUSE_PET_SUDOKU_DAILY_MAX). Both roll when
- * sudoku_day advances; see muse_pet_sudoku_today(). */
+ * 2026-11-01; grant retuned 2026-11-01, layout unchanged so the version
+ * stays 4): sudoku_entry_paid is 1 once that day's 5-coin entry fee has
+ * been settled, and sudoku_reward_coins is the coins this day's solved
+ * puzzles have paid (0, or 10 once the day's first completion has paid;
+ * a v4 blob's stored 5 also counts as paid, never topped up). Both roll
+ * when sudoku_day advances; see muse_pet_sudoku_today(). */
 typedef struct {
     uint32_t version;
     uint32_t coins;              /* 0..100 */
@@ -133,11 +137,15 @@ typedef struct {
  * 下一题) and 再玩一次 are all free. Under 5 coins and unpaid it returns
  * PET_POOR, again without settling.
  * PET_SUDOKU_SOLVE is the completion reward (arg unused): it pays
- * MUSE_PET_SUDOKU_SOLVE_COINS the first time that day and PET_CAP for every
- * later puzzle, so the daily sudoku ceiling is MUSE_PET_SUDOKU_DAILY_MAX.
+ * MUSE_PET_SUDOKU_SOLVE_COINS (10) for the day's first completion and
+ * PET_CAP for every later puzzle -- and for any day whose ledger already
+ * holds a nonzero reward, including a v4 blob's 5, which is treated as
+ * paid and never topped up to 10.
  * PET_PLAY_REWARD settles a finished score-based round: arg is the coin
  * amount the UI converted with muse_pet_round_coins(), clamped here to
- * 0..MUSE_PET_ROUND_COIN_MAX so a UI bug cannot mint coins. */
+ * 0..MUSE_PET_ROUND_COIN_MAX (10) so a UI bug cannot mint coins. The
+ * round's net is that payout minus the 5-coin entry fee the UI already
+ * charged with PET_FEE; the model never nets the two itself. */
 typedef enum {
     PET_TOUCH = 0,
     PET_FEED_RICE,
@@ -177,10 +185,12 @@ typedef enum {
 void muse_pet_model_init(muse_pet_model_t *s);
 bool muse_pet_model_valid(const muse_pet_model_t *s);
 
-/* Coins a finished round's score converts to: min(5, score), i.e. 1:1 with
- * the 5-coin ceiling. The only place the conversion curve lives, so snake
+/* Coins a finished round's score converts to: min(10, score), i.e. 1:1 with
+ * the 10-coin ceiling. The only place the conversion curve lives, so snake
  * and whack-a-mole cannot drift apart. Call it with the round's final score
- * at OVER, never per point. */
+ * at OVER, never per point. The entry fee (5, charged at start through
+ * PET_FEE) is NOT subtracted here: the UI shows payout and net separately,
+ * so the conversion must stay the gross payout. */
 uint32_t muse_pet_round_coins(uint32_t score);
 
 /* Day-boundary offset, in seconds, added to the UTC epoch before dividing
@@ -207,9 +217,11 @@ int32_t muse_pet_day(int64_t now, bool *calibrated);
  * Today's sudoku ledger, as a UI can read it without duplicating the day
  * rule: *entry_paid is true when the 5-coin entry fee has already been
  * settled today (so entering is free), and *reward_coins is how many coins
- * today's solved puzzles have paid (0..5, so the UI knows whether a
- * completion will pay before it asks). Both are derived from the snapshot;
- * nothing is written. Either pointer may be NULL.
+ * today's solved puzzles have paid (0, or 10 once the day's first
+ * completion has paid -- a v4 blob's stored 5 reads back as 5, which the
+ * UI must still treat as "already paid": only 0 means a completion will
+ * pay). Both are derived from the snapshot; nothing is written. Either
+ * pointer may be NULL.
  */
 void muse_pet_sudoku_today(const muse_pet_model_t *s, int64_t now,
                            bool *entry_paid, uint32_t *reward_coins);

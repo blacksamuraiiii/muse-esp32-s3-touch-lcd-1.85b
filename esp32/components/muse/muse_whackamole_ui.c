@@ -40,11 +40,13 @@
  * capsule: it charged 5 coins on a single tap in the narrowest part of the
  * bezel, and leaving is the back arrow's job (same decision as snake).
  *
- * Payout (user decision 2026-11-01): the OVER card also carries
- * "本局 n 分 · 兑 m 金币" at y=64. 30 s is one round, one point is one mole,
- * and muse_pet_round_coins() (1 point per coin since the 2026-11-01
- * correction, 5 coins per round ceiling) is the same curve the snake page
- * uses, so both games refund at most the 5-coin entry.
+ * Payout (user decision 2026-11-01, retuned the same day): the OVER card
+ * carries the round's NET at y=64. 30 s is one round, one point is one
+ * mole, and muse_pet_round_coins() (1 point per coin, 10 coins per round
+ * ceiling) is the same curve the snake page uses. The result line under
+ * the field keeps showing score and gross payout, so the card must not
+ * restate the payout as if it were the gain: it shows payout minus the
+ * 5-coin entry fee paid at start ("净 +5 / 0 / -5 金币").
  *
  * Message slot (user request 2026-11-01, "提示统一显示在游戏区域下方"): the
  * band under the field (y=308) hosts exactly one line -- the refusal note
@@ -95,7 +97,7 @@ static lv_obj_t *s_touch;
 static lv_obj_t *s_start_ov;
 static lv_obj_t *s_paused_ov;
 static lv_obj_t *s_over_ov;
-static lv_obj_t *s_over_payout;
+static lv_obj_t *s_over_net;
 static lv_obj_t *s_back;
 static lv_obj_t *s_hud;
 static lv_obj_t *s_note;
@@ -211,13 +213,19 @@ static void refresh_display(void)
     set_label(s_hud, hud);
     /* No per-game breakdown on the OVER card any more (2026-11-01, user
      * request): the result line under the field already carries the
-     * score, and the hits/missed split only crowded the overlay. The card
-     * does carry the round's coin conversion (see the file header). */
+     * score and the gross payout, and the card carries the NET --
+     * payout minus the 5-coin entry fee, from what the wallet actually
+     * accepted (s_round_coins, 0 when the request failed, so a lost
+     * payout honestly reads -5). */
     if (ph == MUSE_WHACKAMOLE_OVER) {
-        char pay[48];
-        snprintf(pay, sizeof(pay), "本局 %lu 分 · 兑 %lu 金币",
-                 (unsigned long)s_game.score, (unsigned long)s_round_coins);
-        set_label(s_over_payout, pay);
+        char net[48];
+        int net_coins = (int)s_round_coins - (int)MUSE_PET_GAME_STAKE;
+        if (net_coins == 0) {
+            snprintf(net, sizeof(net), "净 0 金币");
+        } else {
+            snprintf(net, sizeof(net), "净 %+d 金币", net_coins);
+        }
+        set_label(s_over_net, net);
     }
     if (ph == MUSE_WHACKAMOLE_START) {
         lv_obj_clear_flag(s_start_ov, LV_OBJ_FLAG_HIDDEN);
@@ -347,11 +355,12 @@ static void on_touch_hold(lv_event_t *e)
     on_pause(e);
 }
 
-/* Score -> coins, once per round, at OVER (user decision 2026-11-01).
+/* Score -> coins, once per round, at OVER (user decision 2026-11-01,
+ * ceiling retuned to 10 the same day).
  * muse_pet_round_coins() is the only conversion curve -- 1 point (one mole)
- * per coin since the 2026-11-01 correction, 5 coins per round ceiling -- and
- * 30 s is one round, so an ordinary round (~28 hits) refunds the 5-coin
- * entry and no round can mint coins. A refused request (worker not ready /
+ * per coin, 10 coins per round ceiling -- and the 5-coin entry fee was
+ * already charged at start through PET_FEE, so the round's net is payout
+ * minus 5, shown on the OVER card. A refused request (worker not ready /
  * queue full) leaves s_round_coins at 0 so the card never claims coins the
  * wallet did not get. */
 static void settle_round(void)
@@ -525,14 +534,14 @@ void muse_whackamole_ui_build(lv_obj_t *page, lv_event_cb_t back_cb)
     lv_obj_align(resume_lb, LV_ALIGN_TOP_MID, 0, 59);
     lv_obj_add_event_cb(resume_btn, on_resume, LV_EVENT_CLICKED, NULL);
 
-    /* OVER overlay: dim, payout line, ACCENT title, 再玩一次 circle with the
+    /* OVER overlay: dim, net line, ACCENT title, 再玩一次 circle with the
      * price on its own line under the label (snake's card). No hits/missed
-     * split here any more: the result line under the field carries the score,
-     * and s_over_payout carries the round's coin conversion (written by
-     * refresh_display() while OVER is up). */
+     * split here any more: the result line under the field carries the score
+     * and the gross payout, and s_over_net carries the round's NET
+     * (written by refresh_display() while OVER is up). */
     s_over_ov = overlay(page, true);
-    s_over_payout = label(s_over_ov, muse_font_cjk(), MUSE_THEME_GOLD);
-    lv_obj_align(s_over_payout, LV_ALIGN_TOP_MID, 0, MUSE_WHACKAMOLE_PAYOUT_Y);
+    s_over_net = label(s_over_ov, muse_font_cjk(), MUSE_THEME_GOLD);
+    lv_obj_align(s_over_net, LV_ALIGN_TOP_MID, 0, MUSE_WHACKAMOLE_PAYOUT_Y);
     lv_obj_t *over_lb = label(s_over_ov, muse_font_cjk(), MUSE_THEME_ACCENT);
     lv_label_set_text(over_lb, "游戏结束");
     lv_obj_align(over_lb, LV_ALIGN_TOP_MID, 0, 100);
