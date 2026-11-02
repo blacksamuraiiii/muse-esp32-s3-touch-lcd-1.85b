@@ -134,9 +134,10 @@
 /* Optical lift of the card's content group (user report 2026-11-01,
  * measured on a photo of the real page): dead centring left 38 px above
  * the grade's ink against 26 px under the body, which reads as "the text
- * sits low". The whole group moves up by this many px, so a 2-line body
- * ends up 14 px from the card's top edge and 38 px from its bottom. */
-#define IC_FORTUNE_GROUP_BIAS 12
+ * sits low". The whole group moves up by this many px; 12 was the first
+ * step and the user asked for 4 px more the same day, so a 2-line body
+ * now ends up 10 px from the card's top edge and 42 px from its bottom. */
+#define IC_FORTUNE_GROUP_BIAS 16
 /* Grade size: the firmware carries exactly one CJK face (16 px, see
  * muse_font.h). 512 = 2.0x, i.e. the 大吉 line draws 32 px tall. The
  * glyphs are the 16 px face upscaled, so the edges are a touch soft --
@@ -856,8 +857,9 @@ static void game_tick(void)
  * Optical lift (user report 2026-11-01, from a photo of the real page):
  * dead centring left 38 px of air above the grade's ink and 26 px under
  * the body, which reads as the text sitting low. The group therefore
- * sits IC_FORTUNE_GROUP_BIAS px above the geometric centre -- a 2-line
- * body groups to top 14, i.e. 14 px above and 38 px below. */
+ * sits IC_FORTUNE_GROUP_BIAS px above the geometric centre -- with the
+ * bias at 16 a 2-line body groups to top 10, i.e. 10 px above and 42 px
+ * below. */
 static void fortune_layout(void)
 {
     if (!s_fortune_card || !s_fortune_grade || !s_fortune_rule ||
