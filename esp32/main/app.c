@@ -114,6 +114,12 @@ static void apply_muse_proxy_endpoints(void) {
     muse_hatch_config_changed();
 }
 
+/* From the glue, right after muse_app_run() has loaded the settings: that is
+ * the first moment the relay switch can be read. boot_task() used to depend on
+ * the heartbeat to notice (up to 5 s late), which on a relay-only network meant
+ * the first VM lookup went direct and failed with "Can't reach Muse's server". */
+void app_muse_endpoints_apply(void) { apply_muse_proxy_endpoints(); }
+
 #define WIFI_CONNECT_TIMEOUT_MS 60000
 #define WIFI_CHANNEL_KEY        "wifi_channel"
 #define WIFI_CHANNEL_VALUE_BYTES 4
@@ -2846,9 +2852,10 @@ void app_run(void) {
         config_erase_key("noise_host");
     }
 
-    // The relay switch decides the endpoints last: a paired device that was
-    // put behind the proxy must not keep the direct host from its NVS.
-    apply_muse_proxy_endpoints();
+    // The relay switch cannot be honoured here: muse_settings_init() runs later
+    // (muse_glue's boot task, ~2 s after this point), so the switch would read
+    // its default and every boot would start direct even with the relay on.
+    // app_muse_endpoints_apply() re-runs this once Muse's settings are loaded.
 
     bool skip_boot_scan = false;
     if (setup_complete && !CONFIG_HOMEHUB_WIFI_SSID[0]) {

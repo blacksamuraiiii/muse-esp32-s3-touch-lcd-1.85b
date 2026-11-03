@@ -22,6 +22,10 @@
 
 void app_run(void);
 
+// Muse's settings are loaded (muse_glue's boot task): reconcile the account API
+// base and the VM host with the on-device relay switch.
+void app_muse_endpoints_apply(void);
+
 // How joining one of the saved Wi-Fi networks went.
 typedef enum {
     APP_WIFI_JOINED,

@@ -162,9 +162,10 @@ esp_err_t muse_settings_init(void)
     s.alarm_h = clampi(s.alarm_h, 0, 23);
     s.alarm_m = clampi(s.alarm_m, 0, 59);
     s.alarm_days &= 0x7F;
-    ESP_LOGI(TAG, "vol %d%s, mic %d dB, bright %d, sleep %ds, wifi %s (%s), ble %s, alarm %02d:%02d %s days 0x%02x, muse %s",
+    ESP_LOGI(TAG, "vol %d%s, mic %d dB, bright %d, sleep %ds, wifi %s (%s), ble %s, proxy %s, alarm %02d:%02d %s days 0x%02x, muse %s",
              s.volume, s.speaker_on ? "" : " (speaker off)", s.mic_gain, s.brightness, s.sleep_s, s.wifi_on ? "on" : "off",
-             "network saved by Link", s.ble_on ? "on" : "off", s.alarm_h, s.alarm_m, s.alarm_on ? "on" : "off",
+             "network saved by Link", s.ble_on ? "on" : "off", s.proxy ? "on" : "off",
+             s.alarm_h, s.alarm_m, s.alarm_on ? "on" : "off",
              s.alarm_days, s.token[0] ? "token set" : "no token");
     return ESP_OK;
 }
