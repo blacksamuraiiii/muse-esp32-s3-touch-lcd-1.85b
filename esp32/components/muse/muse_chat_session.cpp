@@ -524,17 +524,29 @@ static void query_escape(const char *in, char *out, size_t cap)
 }
 
 /* Returns the HTTP status of the upgrade (101 on success), or 0. */
+/* The relay gates on k=<token>; a direct edge host ignores query extras, but we
+ * only send the token when the host really is the relay, so nothing leaves the
+ * device towards a host that did not ask for it. */
+static const char *relay_token_for(const char *host)
+{
+    if (!CONFIG_MUSE_PROXY_TOKEN[0] || !CONFIG_MUSE_PROXY_VM_HOST[0]) {
+        return "";
+    }
+    return host && strcmp(host, CONFIG_MUSE_PROXY_VM_HOST) == 0 ? CONFIG_MUSE_PROXY_TOKEN : "";
+}
+
 static int ws_upgrade(esp_tls_t *tls, const char *vm_id, const char *token)
 {
     char id[3 * 128 + 1];
     query_escape(vm_id, id, sizeof(id));
-    size_t cap = 512 + strlen(id) + strlen(token) + strlen(s_host);
+    const char *relay_token = relay_token_for(s_host);
+    size_t cap = 512 + strlen(id) + strlen(token) + strlen(s_host) + strlen(relay_token);
     char *req = static_cast<char *>(malloc(cap));
     if (!req) {
         return 0;
     }
     int len = snprintf(req, cap,
-                       "GET " NOISE_PATH "?vm_id=%s HTTP/1.1\r\n"
+                       "GET " NOISE_PATH "?vm_id=%s%s%s HTTP/1.1\r\n"
                        "Host: %s\r\n"
                        "Authorization: Bearer %s\r\n"
                        "Upgrade: websocket\r\n"
@@ -542,7 +554,8 @@ static int ws_upgrade(esp_tls_t *tls, const char *vm_id, const char *token)
                        "Sec-WebSocket-Version: 13\r\n"
                        "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n"
                        "\r\n",
-                       id, s_host, token);
+                       id, relay_token[0] ? "&k=" : "", relay_token,
+                       s_host, token);
     bool sent = write_all(tls, req, len);
     free(req);
     if (!sent) {

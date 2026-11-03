@@ -103,6 +103,8 @@ static esp_err_t http_event_handler(esp_http_client_event_t *evt) {
     return ESP_OK;
 }
 
+static char s_relay_token[96];
+
 void vm_api_set_base_url(const char *url) {
     snprintf(s_api_base, sizeof(s_api_base), "%s",
              url && *url ? url : VM_API_DEFAULT_BASE_URL);
@@ -157,8 +159,28 @@ static void log_connect_diag(const char *url)
              (long long)ms, dns);
 }
 
+void vm_api_set_relay_token(const char *token) {
+    snprintf(s_relay_token, sizeof(s_relay_token), "%s", token ? token : "");
+}
+
+void vm_api_relay_token(char *out, size_t out_cap) {
+    snprintf(out, out_cap, "%s", s_relay_token);
+}
+
+/* The relay can gate on k=<token>; a direct host ignores the parameter. */
 static void make_api_url(char *out, size_t out_cap, const char *path) {
-    snprintf(out, out_cap, "%s%s", s_api_base, path);
+    char token[VM_API_TOKEN_MAX] = {0};
+    vm_api_relay_token(token, sizeof(token));
+    if (!token[0]) {
+        snprintf(out, out_cap, "%s%s", s_api_base, path);
+        return;
+    }
+    snprintf(out, out_cap, "%s%s%ck=%s", s_api_base, path,
+             strchr(path, '?') ? '&' : '?', token);
+}
+
+void vm_api_set_relay_token_from_build(void) {
+    vm_api_set_relay_token(CONFIG_MUSE_PROXY_TOKEN);
 }
 
 static char *str_dup(const cJSON *item) {

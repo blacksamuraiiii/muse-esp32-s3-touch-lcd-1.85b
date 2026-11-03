@@ -83,10 +83,14 @@ static inline int noise_upgrade_query_escape(const char *in, char *out,
 //
 // Returns the request length, or -1 if anything is missing, contains CR/LF, or
 // will not fit. Never writes a partial request.
+// relay_token is appended as &k= when the host is a relay that gates on it;
+// pass "" for a direct host. Only [A-Za-z0-9._~-] is accepted, so it can go
+// into the request target without escaping.
 static inline int noise_upgrade_build_request(const char *path,
                                               const char *vm_id,
                                               const char *host,
                                               const char *token,
+                                              const char *relay_token,
                                               char *out, size_t out_cap) {
     if (!path || !vm_id || !host || !token || !out) return -1;
     if (!*vm_id || !*token) return -1;
@@ -98,8 +102,18 @@ static inline int noise_upgrade_build_request(const char *path,
         return -1;
     }
 
+    if (relay_token && *relay_token) {
+        for (const char *t = relay_token; *t; t++) {
+            const char c = *t;
+            const bool ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+                            || (c >= '0' && c <= '9') || c == '-' || c == '_'
+                            || c == '.' || c == '~';
+            if (!ok) return -1;
+        }
+    }
+
     int n = snprintf(out, out_cap,
-        "GET %s?vm_id=%s HTTP/1.1\r\n"
+        "GET %s?vm_id=%s%s%s HTTP/1.1\r\n"
         "Host: %s\r\n"
         "Authorization: Bearer %s\r\n"
         "Upgrade: websocket\r\n"
@@ -107,7 +121,10 @@ static inline int noise_upgrade_build_request(const char *path,
         "Sec-WebSocket-Version: 13\r\n"
         "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n"
         "\r\n",
-        path, vm_id_enc, host, token);
+        path, vm_id_enc,
+        (relay_token && *relay_token) ? "&k=" : "",
+        (relay_token && *relay_token) ? relay_token : "",
+        host, token);
     if (n < 0 || (size_t)n >= out_cap) return -1;
     return n;
 }

@@ -119,6 +119,9 @@ static void apply_muse_endpoints(bool on)
     }
     vm_api_set_base_url(on ? CONFIG_MUSE_PROXY_API_URL : NULL);
     noise_ctrl_set_host(on ? CONFIG_MUSE_PROXY_VM_HOST : NULL);
+    /* Both relays can gate on k=<token>; the direct hosts ignore it. */
+    vm_api_set_relay_token(on ? CONFIG_MUSE_PROXY_TOKEN : NULL);
+    noise_ctrl_set_relay_token(on ? CONFIG_MUSE_PROXY_TOKEN : NULL);
     s_proxy_endpoints_on = on;
     ESP_LOGI(TAG, "muse endpoints: %s", on ? "relay" : "direct");
     muse_hatch_config_changed();

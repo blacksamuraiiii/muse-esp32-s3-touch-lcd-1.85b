@@ -17,6 +17,7 @@
 #pragma once
 
 #include <stdbool.h>
+#include <stddef.h>
 
 #define VM_API_MAX_VMS 8
 #define VM_API_ERR_FAILED -1
@@ -45,6 +46,11 @@ typedef enum {
 // Override the API base, provisioned as api_url_v2. API paths are appended
 // as-is. NULL or empty restores the compiled default.
 void vm_api_set_base_url(const char *url);
+/* Token the relay expects as k=; empty means send none (direct hosts ignore it). */
+#define VM_API_TOKEN_MAX 96
+void vm_api_set_relay_token(const char *token);
+void vm_api_relay_token(char *out, size_t out_cap);
+void vm_api_set_relay_token_from_build(void);
 
 // SDK token sent with device-token mint and refresh. NULL or empty sends none.
 void vm_api_set_sdk_token(const char *sdk_token);
