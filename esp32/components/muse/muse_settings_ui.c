@@ -94,6 +94,8 @@ static char s_join_ssid[MUSE_SSID_MAX + 1];
 
 /* Hatch page. */
 static lv_obj_t *s_hatch_status, *s_hatch_host, *s_hatch_vm, *s_hatch_token, *s_hatch_sdk_token;
+/* Speech service rows: the values live in NVS, this is the display side. */
+static lv_obj_t *s_sp_url, *s_sp_voice, *s_sp_key, *s_sp_rate;
 static lv_obj_t *s_proxy_sw;
 static lv_obj_t *s_link_status, *s_link_reset_lbl;
 static int64_t s_link_reset_armed_us;
@@ -868,6 +870,77 @@ static void on_proxy_sw(lv_event_t *e)
     muse_settings_set_proxy(lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED));
 }
 
+/* One save path for the four speech fields: whichever row was edited, the
+ * other three are read back from settings and stored with it. */
+static void speech_save(const char *url, const char *voice, const char *key, const char *rate)
+{
+    char u[MUSE_SPEECH_URL_MAX + 1] = {0}, v[MUSE_SPEECH_VOICE_MAX + 1] = {0};
+    char k[MUSE_SPEECH_KEY_MAX + 1] = {0}, r[MUSE_SPEECH_RATE_MAX + 1] = {0};
+    muse_settings_speech(u, sizeof(u), v, sizeof(v), k, sizeof(k), r, sizeof(r));
+    muse_settings_set_speech(url ? url : u, voice ? voice : v, key ? key : k, rate ? rate : r);
+}
+
+static void on_sp_url_done(const char *text) { speech_save(text, NULL, NULL, NULL); }
+static void on_sp_voice_done(const char *text) { speech_save(NULL, text, NULL, NULL); }
+static void on_sp_key_done(const char *text) { speech_save(NULL, NULL, text, NULL); }
+static void on_sp_rate_done(const char *text) { speech_save(NULL, NULL, NULL, text); }
+
+/* Each row opens the text editor on the current value; the key is masked. */
+static void speech_fields(char *u, size_t uc, char *v, size_t vc, char *k, size_t kc, char *r, size_t rc)
+{
+    muse_settings_speech(u, uc, v, vc, k, kc, r, rc);
+}
+
+static void on_sp_url(lv_event_t *e)
+{
+    (void)e;
+    char u[MUSE_SPEECH_URL_MAX + 1] = {0}, v[MUSE_SPEECH_VOICE_MAX + 1] = {0};
+    char k[MUSE_SPEECH_KEY_MAX + 1] = {0}, r[MUSE_SPEECH_RATE_MAX + 1] = {0};
+    speech_fields(u, sizeof(u), v, sizeof(v), k, sizeof(k), r, sizeof(r));
+    open_text("Speech server", u, false, MUSE_SPEECH_URL_MAX,
+              "Empty uses the endpoint compiled into this build", on_sp_url_done, s_hatch);
+}
+
+static void on_sp_voice(lv_event_t *e)
+{
+    (void)e;
+    char u[MUSE_SPEECH_URL_MAX + 1] = {0}, v[MUSE_SPEECH_VOICE_MAX + 1] = {0};
+    char k[MUSE_SPEECH_KEY_MAX + 1] = {0}, r[MUSE_SPEECH_RATE_MAX + 1] = {0};
+    speech_fields(u, sizeof(u), v, sizeof(v), k, sizeof(k), r, sizeof(r));
+    open_text("Voice", v, false, MUSE_SPEECH_VOICE_MAX, "e.g. zh-CN-XiaoyiNeural", on_sp_voice_done, s_hatch);
+}
+
+static void on_sp_key(lv_event_t *e)
+{
+    (void)e;
+    char u[MUSE_SPEECH_URL_MAX + 1] = {0}, v[MUSE_SPEECH_VOICE_MAX + 1] = {0};
+    char k[MUSE_SPEECH_KEY_MAX + 1] = {0}, r[MUSE_SPEECH_RATE_MAX + 1] = {0};
+    speech_fields(u, sizeof(u), v, sizeof(v), k, sizeof(k), r, sizeof(r));
+    open_text("Speech key", "", true, MUSE_SPEECH_KEY_MAX, "Shared secret, sent as k=...; empty for none", on_sp_key_done, s_hatch);
+}
+
+static void on_sp_rate(lv_event_t *e)
+{
+    (void)e;
+    char u[MUSE_SPEECH_URL_MAX + 1] = {0}, v[MUSE_SPEECH_VOICE_MAX + 1] = {0};
+    char k[MUSE_SPEECH_KEY_MAX + 1] = {0}, r[MUSE_SPEECH_RATE_MAX + 1] = {0};
+    speech_fields(u, sizeof(u), v, sizeof(v), k, sizeof(k), r, sizeof(r));
+    open_text("Rate", r, false, MUSE_SPEECH_RATE_MAX, "Speech service units, e.g. +8% or +4Hz", on_sp_rate_done, s_hatch);
+}
+
+/* Called with the settings page is shown and when the speech rows change. */
+static void refresh_speech_rows(void)
+{
+    char u[MUSE_SPEECH_URL_MAX + 1] = {0}, v[MUSE_SPEECH_VOICE_MAX + 1] = {0};
+    char k[MUSE_SPEECH_KEY_MAX + 1] = {0}, r[MUSE_SPEECH_RATE_MAX + 1] = {0};
+    muse_settings_speech(u, sizeof(u), v, sizeof(v), k, sizeof(k), r, sizeof(r));
+    if (s_sp_url) set_text(s_sp_url, u[0] ? u : "from build");
+    if (s_sp_voice) set_text(s_sp_voice, v[0] ? v : "-");
+    /* Never print the shared secret: say only that one is stored. */
+    if (s_sp_key) set_text(s_sp_key, k[0] ? "set (tap to change)" : "-");
+    if (s_sp_rate) set_text(s_sp_rate, r[0] ? r : "-");
+}
+
 static void on_hatch_token_done(const char *text)
 {
     if (text[0]) {
@@ -941,6 +1014,11 @@ static void build_hatch_page(lv_obj_t *tile)
     button(list, "Reset pairing", MUSE_THEME_DANGER, on_link_reset, &s_link_reset_lbl);
     s_hatch_status = note(list, "");
     s_proxy_sw = switch_row(list, "Muse proxy", muse_settings_proxy(), on_proxy_sw);
+    row(list, NULL, "Speech server", &s_sp_url, on_sp_url, NULL);
+    row(list, NULL, "Speech voice", &s_sp_voice, on_sp_voice, NULL);
+    row(list, NULL, "Speech key", &s_sp_key, on_sp_key, NULL);
+    row(list, NULL, "Speech rate", &s_sp_rate, on_sp_rate, NULL);
+    refresh_speech_rows();
     row(list, NULL, "Server", &s_hatch_host, on_hatch_host, NULL);
     row(list, NULL, "VM ID", &s_hatch_vm, on_hatch_vm, NULL);
     row(list, NULL, "Device token", &s_hatch_token, on_hatch_token, NULL);
@@ -955,6 +1033,7 @@ static void build_hatch_page(lv_obj_t *tile)
 
 static void tick_hatch(void)
 {
+    refresh_speech_rows();
     char link[96];
     const char *paired = !muse_link_hatch_linked()    ? "not paired"
                          : muse_link_sdk_token_changed() ? "paired with another SDK token, pair again to use this one"

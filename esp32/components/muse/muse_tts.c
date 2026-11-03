@@ -21,6 +21,7 @@
 #include <string.h>
 
 #include "muse_sentence.h"
+#include "muse_settings.h"
 
 #include "esp_app_desc.h"
 #include "esp_crt_bundle.h"
@@ -321,9 +322,52 @@ static bool fetch(const char *url, int timeout_ms)
     return false;
 }
 
+
+/* The endpoint template. Empty fields fall back to the build, which is how the
+ * public tree ships (no service, so replies stay silent). A field the user set
+ * on the settings page wins: the query is assembled here, so neither the shared
+ * secret nor the voice has to be compiled in.
+ *
+ *   <url>[?|&]k=<key>&voice=<voice>&rate=<rate>&text={text}
+ *
+ * The {text} placeholder is what fetch_reply() splits on, so both paths share
+ * one expansion. */
+static const char *tts_template(void)
+{
+    static char buf[MUSE_SPEECH_URL_MAX + MUSE_SPEECH_KEY_MAX + MUSE_SPEECH_VOICE_MAX +
+                     MUSE_SPEECH_RATE_MAX + 24];
+    char url[MUSE_SPEECH_URL_MAX + 1] = {0}, voice[MUSE_SPEECH_VOICE_MAX + 1] = {0};
+    char key[MUSE_SPEECH_KEY_MAX + 1] = {0}, rate[MUSE_SPEECH_RATE_MAX + 1] = {0};
+    muse_settings_speech(url, sizeof(url), voice, sizeof(voice), key, sizeof(key), rate, sizeof(rate));
+    if (!url[0]) {
+        return CONFIG_MUSE_TTS_URL;
+    }
+    /* strlcat keeps every append bounded, which is also what keeps GCC
+     * quiet about format-truncation on the query fields. */
+    strlcpy(buf, url, sizeof(buf));
+    bool have_query = strchr(buf, '?') != NULL;
+    if (key[0]) {
+        strlcat(buf, have_query ? "&k=" : "?k=", sizeof(buf));
+        strlcat(buf, key, sizeof(buf));
+        have_query = true;
+    }
+    if (voice[0]) {
+        strlcat(buf, have_query ? "&voice=" : "?voice=", sizeof(buf));
+        strlcat(buf, voice, sizeof(buf));
+        have_query = true;
+    }
+    if (rate[0]) {
+        strlcat(buf, have_query ? "&rate=" : "?rate=", sizeof(buf));
+        strlcat(buf, rate, sizeof(buf));
+        have_query = true;
+    }
+    strlcat(buf, have_query ? "&text={text}" : "?text={text}", sizeof(buf));
+    return buf;
+}
+
 static void fetch_reply(char *text)
 {
-    const char *url = CONFIG_MUSE_TTS_URL;
+    const char *url = tts_template();
     const char *ph = strstr(url, "{text}");
     size_t prefix_len = ph ? (size_t)(ph - url) : strlen(url);
     const char *suffix = ph ? ph + 6 : "";
@@ -340,10 +384,16 @@ static void fetch_reply(char *text)
             ESP_LOGW(TAG, "TTS text chunk does not fit the URL");
             break;
         }
-        size_t need = prefix_len + strlen(encoded) + strlen(suffix) + 1;
+        const size_t enc_len = strlen(encoded);
+        const size_t suf_len = strlen(suffix);
+        size_t need = prefix_len + enc_len + suf_len + 1;
         char *u = (char *)malloc(need);
         if (!u) break;
-        snprintf(u, need, "%.*s%s%s", (int)prefix_len, url, encoded, suffix);
+        /* Assembled by hand: the template is a runtime string now (it can come
+         * from the settings page), so snprintf would trip format-truncation. */
+        memcpy(u, url, prefix_len);
+        memcpy(u + prefix_len, encoded, enc_len);
+        memcpy(u + prefix_len + enc_len, suffix, suf_len + 1);
         bool ok = fetch(u, timeout_ms);
         timeout_ms = TTS_HTTP_TIMEOUT_MS;
         free(u);
@@ -397,7 +447,7 @@ static void tts_task(void *arg)
 
 bool muse_tts_speak(const char *text)
 {
-    if (!CONFIG_MUSE_TTS_URL[0] || s_busy || !text || !text[0]) {
+    if (!tts_template()[0] || s_busy || !text || !text[0]) {
         return false;
     }
     if (!s_ring) {
@@ -446,7 +496,7 @@ bool muse_tts_speak(const char *text)
  * deliberately not reset - the bytes of the sentence playing are in it. */
 bool muse_tts_enqueue(const char *text)
 {
-    if (!CONFIG_MUSE_TTS_URL[0] || s_busy || !s_ring || !s_task || !text || !text[0]) {
+    if (!tts_template()[0] || s_busy || !s_ring || !s_task || !text || !text[0]) {
         return false;
     }
     char *copy = strdup(text);

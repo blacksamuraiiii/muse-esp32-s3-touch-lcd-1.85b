@@ -42,6 +42,11 @@ static struct {
     /* Off (the default): api.muse.ai and hatch.metaaivm.com direct. On: the
      * CONFIG_MUSE_PROXY_* relay, for a network that cannot reach either. */
     bool proxy;
+    /* Speech service overrides; empty means "use CONFIG_MUSE_TTS_URL". */
+    char sp_url[MUSE_SPEECH_URL_MAX + 1];
+    char sp_voice[MUSE_SPEECH_VOICE_MAX + 1];
+    char sp_key[MUSE_SPEECH_KEY_MAX + 1];
+    char sp_rate[MUSE_SPEECH_RATE_MAX + 1];
     /* The alarm, local time. Off arms no wake source at all.
      * alarm_days repeats it: bit0 = Sunday .. bit6 = Saturday, 0 = once (rings
      * once, then turns itself off), 0x7F = every day. The default is every day
@@ -155,6 +160,10 @@ esp_err_t muse_settings_init(void)
     load_str("host", s.host, sizeof(s.host));
     load_str("vm", s.vm, sizeof(s.vm));
     load_str("token", s.token, sizeof(s.token));
+    load_str("sp_url", s.sp_url, sizeof(s.sp_url));
+    load_str("sp_voice", s.sp_voice, sizeof(s.sp_voice));
+    load_str("sp_key", s.sp_key, sizeof(s.sp_key));
+    load_str("sp_rate", s.sp_rate, sizeof(s.sp_rate));
 
     s.volume = clampi(s.volume, 0, 100);
     s.mic_gain = clampi(s.mic_gain, 0, MUSE_MIC_GAIN_MAX);
@@ -167,6 +176,9 @@ esp_err_t muse_settings_init(void)
              "network saved by Link", s.ble_on ? "on" : "off", s.proxy ? "on" : "off",
              s.alarm_h, s.alarm_m, s.alarm_on ? "on" : "off",
              s.alarm_days, s.token[0] ? "token set" : "no token");
+    ESP_LOGI(TAG, "speech: %s, voice %s, key %s, rate %s",
+             s.sp_url[0] ? "set" : "from build", s.sp_voice[0] ? "set" : "-",
+             s.sp_key[0] ? "set" : "-", s.sp_rate[0] ? s.sp_rate : "-");
     return ESP_OK;
 }
 
@@ -319,6 +331,32 @@ void muse_settings_set_proxy(bool on)
     s.proxy = on;
     save_u8("proxy", on);
     notify(MUSE_SETTING_PROXY);
+}
+
+void muse_settings_speech(char url[], size_t url_cap, char voice[], size_t voice_cap,
+                          char key[], size_t key_cap, char rate[], size_t rate_cap)
+{
+    LOCKED({
+        strlcpy(url, s.sp_url, url_cap);
+        strlcpy(voice, s.sp_voice, voice_cap);
+        strlcpy(key, s.sp_key, key_cap);
+        strlcpy(rate, s.sp_rate, rate_cap);
+    });
+}
+
+void muse_settings_set_speech(const char *url, const char *voice, const char *key, const char *rate)
+{
+    LOCKED({
+        strlcpy(s.sp_url, url ? url : "", sizeof(s.sp_url));
+        strlcpy(s.sp_voice, voice ? voice : "", sizeof(s.sp_voice));
+        strlcpy(s.sp_key, key ? key : "", sizeof(s.sp_key));
+        strlcpy(s.sp_rate, rate ? rate : "", sizeof(s.sp_rate));
+        save_str("sp_url", s.sp_url);
+        save_str("sp_voice", s.sp_voice);
+        save_str("sp_key", s.sp_key);
+        save_str("sp_rate", s.sp_rate);
+    });
+    notify(MUSE_SETTING_SPEECH);
 }
 
 void muse_settings_set_wifi(const char *ssid, const char *pass)

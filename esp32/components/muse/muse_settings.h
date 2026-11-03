@@ -47,6 +47,7 @@ typedef enum {
     MUSE_SETTING_HATCH,
     MUSE_SETTING_ALARM,         /* hour/minute/on: the input task re-arms on it */
     MUSE_SETTING_PROXY,         /* on: account API and VM host point at the relay */
+    MUSE_SETTING_SPEECH,        /* TTS endpoint, voice, key and rate changed */
 } muse_setting_t;
 
 typedef void (*muse_setting_cb_t)(muse_setting_t what);
@@ -88,6 +89,18 @@ void muse_settings_set_alarm_days(int days);
 void muse_settings_set_wifi_on(bool on);
 void muse_settings_set_ble_on(bool on);
 void muse_settings_set_proxy(bool on);
+
+/* Speech service. Empty url = use the endpoint compiled in from
+ * CONFIG_MUSE_TTS_URL (which is empty in a public build). key and rate are
+ * carried in the query string exactly as the service expects them, so a
+ * shared secret does not have to be compiled into the firmware. */
+#define MUSE_SPEECH_URL_MAX   127
+#define MUSE_SPEECH_VOICE_MAX 47
+#define MUSE_SPEECH_KEY_MAX   63
+#define MUSE_SPEECH_RATE_MAX  7
+void muse_settings_speech(char url[], size_t url_cap, char voice[], size_t voice_cap,
+                          char key[], size_t key_cap, char rate[], size_t rate_cap);
+void muse_settings_set_speech(const char *url, const char *voice, const char *key, const char *rate);
 /* A network name is remembered first among the saved ones and joined now;
  * an empty ssid forgets every saved network. */
 void muse_settings_set_wifi(const char *ssid, const char *pass);
