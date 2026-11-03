@@ -723,6 +723,9 @@ static void boot_task(void *arg) {
     xEventGroupWaitBits(s_ready, BIT_STORAGE, pdFALSE, pdTRUE, portMAX_DELAY);
     load_creds();
     muse_app_run(muse_board_get());
+    /* Settings are in memory now, so the relay switch can be honoured before
+     * the first account lookup instead of on the next heartbeat. */
+    app_muse_endpoints_apply();
     xEventGroupSetBits(s_ready, BIT_MUSE);
     stack_monitor_record(NULL);
     vTaskDelete(NULL);
