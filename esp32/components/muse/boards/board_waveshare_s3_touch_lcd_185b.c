@@ -206,7 +206,12 @@ const muse_ptest_state_t *muse_ptest_board_matrix(const char *name, size_t *coun
  * detected" the moment Wi-Fi and BLE are up. Bands draw in PSRAM but send
  * through two fixed internal buffers instead. Same as the 1.75C and 2.16. */
 #define DRAW_BUF_LINES (LCD_V_RES / 4)
-#define LCD_CHUNK_BYTES (LCD_H_RES * 8 * 2)
+/* Two of these live in internal DMA RAM for the whole boot, and they are
+ * allocated before audio init asks for its I2S rings (17.3 KB): at 8 rows a
+ * pair cost 11.5 KB and left the pool with an 84-byte largest block, so the
+ * Muse VM lookup could not get its 8 KB internal stack. 4 rows halves it to
+ * 5.8 KB. The cost is twice as many SPI transactions per band, each ~0.3 ms. */
+#define LCD_CHUNK_BYTES (LCD_H_RES * 4 * 2)
 
 #define TP_ADDR 0x15           /* CST816S, 7-bit */
 #define TP_RST GPIO_NUM_1
@@ -1177,6 +1182,14 @@ static esp_err_t audio_init(esp_codec_dev_handle_t *spk, esp_codec_dev_handle_t 
     const audio_codec_if_t *dac = NULL, *adc = NULL;
     i2s_chan_config_t chan_cfg = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_0, I2S_ROLE_MASTER);
     chan_cfg.auto_clear = true;
+    /* Ring budget, measured against this board's boot log. The default
+     * 6 x 240 frames costs 17.3 KB of internal DMA RAM (tx 6 x 960 B stereo,
+     * rx 6 x 1920 B TDM 4 slots) and left the pool with nothing to give the
+     * Muse VM lookup its 8 KB internal stack right after audio init
+     * (E link.app: muse_vm task create failed: internal free 8931 largest
+     * 5376). 6 x 120 frames costs 8.6 KB and keeps 45 ms of slack per
+     * direction (120 frames = 7.5 ms per DMA buffer, six deep). */
+    chan_cfg.dma_frame_num = 120;
     ret = i2s_new_channel(&chan_cfg, &tx, &rx);
     ESP_GOTO_ON_ERROR(ret, fail, TAG, "i2s channel");
 #if CONFIG_MUSE_POWER_TEST

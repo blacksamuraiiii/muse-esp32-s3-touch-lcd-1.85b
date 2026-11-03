@@ -24,6 +24,9 @@
 #include "esp_http_client.h"
 #include "esp_crt_bundle.h"
 #include "esp_log.h"
+#include "esp_netif.h"
+#include "esp_timer.h"
+#include "lwip/netdb.h"
 #include "cJSON.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -113,6 +116,47 @@ void vm_api_set_sdk_token(const char *sdk_token) {
     snprintf(s_sdk_token, sizeof(s_sdk_token), "%s", sdk_token ? sdk_token : "");
 }
 
+
+/* A failed connect has two very different causes and neither leaves a trace on
+ * the server: a name that never resolved, or a SYN/TLS that went out and got no
+ * answer (nginx logs only completed requests). Split them here, on the failure
+ * path only: the resolved address, how long getaddrinfo took, and the DNS
+ * server the netif holds. */
+static void log_connect_diag(const char *url)
+{
+    const char *host = strstr(url, "://");
+    host = host ? host + 3 : url;
+    size_t n = strcspn(host, ":/");
+    if (n == 0 || n >= 96) return;
+    char name[96];
+    memcpy(name, host, n);
+    name[n] = '\0';
+
+    char dns[24] = "?";
+    esp_netif_t *sta = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+    if (sta) {
+        esp_netif_dns_info_t d = { 0 };
+        if (esp_netif_get_dns_info(sta, ESP_NETIF_DNS_MAIN, &d) == ESP_OK) {
+            snprintf(dns, sizeof(dns), IPSTR, IP2STR(&d.ip.u_addr.ip4));
+        }
+    }
+
+    struct addrinfo hints = { .ai_family = AF_INET, .ai_socktype = SOCK_STREAM };
+    struct addrinfo *res = NULL;
+    int64_t t0 = esp_timer_get_time();
+    int rc = getaddrinfo(name, "443", &hints, &res);
+    int64_t ms = (esp_timer_get_time() - t0) / 1000;
+    char ip[24] = "-";
+    if (rc == 0 && res && res->ai_addr) {
+        const struct sockaddr_in *sin = (const struct sockaddr_in *)res->ai_addr;
+        esp_ip4_addr_t a = { .addr = sin->sin_addr.s_addr };
+        snprintf(ip, sizeof(ip), IPSTR, IP2STR(&a));
+        freeaddrinfo(res);
+    }
+    ESP_LOGW(TAG, "connect diag: %s -> %s (gai=%d, %lld ms), dns=%s", name, ip, rc,
+             (long long)ms, dns);
+}
+
 static void make_api_url(char *out, size_t out_cap, const char *path) {
     snprintf(out, out_cap, "%s%s", s_api_base, path);
 }
@@ -164,6 +208,7 @@ static int http_json(const char *url, esp_http_client_method_t method,
         return VM_API_ERR_AUTH;
     }
     if (err != ESP_OK) {
+        log_connect_diag(url);
         ESP_LOGW(TAG, "HTTP request failed: %s", esp_err_to_name(err));
         *status_out = 0;
         return VM_API_ERR_FAILED;
@@ -180,7 +225,7 @@ static bool http_status_retryable(int status) {
            (status >= 500 && status < 600);
 }
 
-static int http_json_with_retries(const char *url, esp_http_client_method_t method,
+static int http_json_with_retries(const char *path, esp_http_client_method_t method,
                                   const char *auth_header, const char *body,
                                   resp_buf_t *resp, int *status_out) {
     int backoff_ms = INITIAL_BACKOFF_MS;
@@ -193,6 +238,13 @@ static int http_json_with_retries(const char *url, esp_http_client_method_t meth
         resp->len = 0;
         resp->cap = 0;
 
+        /* Rebuilt per attempt: the account API base can change while this loop
+         * is retrying (the on-device relay switch is applied a few seconds into
+         * the boot). A URL captured before the loop pinned all four attempts to
+         * the direct host, three of them 15 s each.
+         */
+        char url[320];
+        make_api_url(url, sizeof(url), path);
         int rc = http_json(url, method, auth_header, body, resp, &status);
         if (status_out) *status_out = status;
         if (rc == 0) {
@@ -274,11 +326,9 @@ int vm_api_fetch_vms(const char *access_token, vm_info_t *out, int max) {
         return VM_API_ERR_FAILED;
     }
 
-    char url[320];
-    make_api_url(url, sizeof(url), FETCH_PATH);
 
     resp_buf_t resp = {0};
-    int rc = http_json_with_retries(url, HTTP_METHOD_GET, auth_header, NULL,
+    int rc = http_json_with_retries(FETCH_PATH, HTTP_METHOD_GET, auth_header, NULL,
                                     &resp, NULL);
     if (rc != 0) return rc;
 
@@ -400,11 +450,9 @@ int vm_api_mint_device_token(const char *access_token, const char *device_id,
         ESP_LOGE(TAG, "device_id body allocation failed");
         return VM_API_ERR_FAILED;
     }
-    char url[320];
-    make_api_url(url, sizeof(url), MINT_TOKEN_PATH);
 
     resp_buf_t resp = {0};
-    int rc = http_json_with_retries(url, HTTP_METHOD_POST, auth_header, body,
+    int rc = http_json_with_retries(MINT_TOKEN_PATH, HTTP_METHOD_POST, auth_header, body,
                                     &resp, NULL);
     cJSON_free(body);
     if (rc != 0) return rc;
@@ -420,12 +468,10 @@ static int do_refresh(const char *auth_header, const char *device_id,
         ESP_LOGE(TAG, "device_id body allocation failed");
         return VM_API_ERR_FAILED;
     }
-    char url[320];
-    make_api_url(url, sizeof(url), REFRESH_TOKEN_PATH);
     if (s_sdk_token[0]) ESP_LOGI(TAG, "refresh carries SDK token %.12s", s_sdk_token);
 
     resp_buf_t resp = {0};
-    int rc = http_json_with_retries(url, HTTP_METHOD_POST, auth_header, body,
+    int rc = http_json_with_retries(REFRESH_TOKEN_PATH, HTTP_METHOD_POST, auth_header, body,
                                     &resp, status_out);
     cJSON_free(body);
     if (rc != 0) return rc;
