@@ -106,7 +106,15 @@ static const char *HEARTBEAT_TAG = "link.heartbeat";
 static bool s_proxy_endpoints_on;
 
 static void apply_muse_proxy_endpoints(void) {
-    bool on = muse_settings_proxy();
+    /* The relay host is personal infrastructure, so it is not compiled in from
+     * Kconfig any more: it comes from devices/sdkconfig.local (git-ignored).
+     * A build without it keeps the switch inert rather than pointing the device
+     * at a host this firmware does not own. */
+    const bool configured = CONFIG_MUSE_PROXY_API_URL[0] != '\0';
+    bool on = muse_settings_proxy() && configured;
+    if (muse_settings_proxy() && !configured) {
+        ESP_LOGW(TAG, "relay switch is on but no relay base is configured; staying direct");
+    }
     vm_api_set_base_url(on ? CONFIG_MUSE_PROXY_API_URL : NULL);
     noise_ctrl_set_host(on ? CONFIG_MUSE_PROXY_VM_HOST : NULL);
     s_proxy_endpoints_on = on;

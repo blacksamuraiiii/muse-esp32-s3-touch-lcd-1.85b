@@ -25,7 +25,9 @@ import time
 
 import paramiko
 
-HOST = sys.argv[1] if len(sys.argv) > 1 else "192.0.2.10"
+# No default host: the machine that runs the speech service is personal
+# infrastructure and must not be baked into the public tree.
+HOST = sys.argv[1] if len(sys.argv) > 1 else os.environ.get("TTS_DEPLOY_HOST", "")
 USER = os.environ.get("MUSE_HOST_USER", "root")
 PASSWORD = os.environ.get("MUSE_HOST_PASSWORD", "")
 KEY = os.environ.get("MUSE_SSH_KEY", os.path.expanduser("~/.ssh/muse-16827_rsa"))

@@ -1,0 +1,42 @@
+# Machine-local sdkconfig overlay — EXAMPLE
+#
+# Copy to `sdkconfig.local` in this directory and fill in your own values:
+#
+#     cp esp32/devices/sdkconfig.local.example esp32/devices/sdkconfig.local
+#
+# `sdkconfig.local` is git-ignored on purpose: it is the only place this tree
+# expects personal infrastructure (relay hosts, speech endpoint and its token,
+# Wi-Fi credentials, a pinned address, an SDK token). Nothing below belongs in a
+# tracked file, a commit message, a screenshot or an issue report.
+#
+# The build script loads it last, so its values win over every other defaults
+# file:
+#   build_15b_test.ps1: -DSDKCONFIG_DEFAULTS=sdkconfig.defaults;devices/sdkconfig.muse;
+#       devices/sdkconfig.muse-waveshare-s3-touch-lcd-185b;devices/sdkconfig.muse-test;
+#       devices/sdkconfig.local
+
+# --- Speech -------------------------------------------------------------------
+# Empty keeps replies silent. `{text}` is replaced with the percent-encoded
+# reply text; any endpoint that answers with MP3 works. If the service checks a
+# shared secret, put it in the query string here — the device sends the URL as
+# written.
+CONFIG_MUSE_TTS_URL=""
+
+# --- On-device relay ("Muse proxy" switch on the MUSE settings page) ----------
+# A relay in front of api.muse.ai and hatch.metaaivm.com, for a network that
+# cannot reach them. Both empty (the shipped default) leaves the switch inert.
+CONFIG_MUSE_PROXY_API_URL=""
+CONFIG_MUSE_PROXY_VM_HOST=""
+
+# --- Attach to a specific network instead of provisioning ----------------------
+CONFIG_HOMEHUB_WIFI_SSID=""
+CONFIG_HOMEHUB_WIFI_PASSWORD=""
+
+# Pinned address; applied only on the SSID above, DHCP elsewhere.
+CONFIG_HOMEHUB_STATIC_IP=""
+CONFIG_HOMEHUB_STATIC_NETMASK=""
+CONFIG_HOMEHUB_STATIC_GATEWAY=""
+CONFIG_HOMEHUB_STATIC_DNS=""
+
+# --- Muse SDK token (gadgets.muse.ai); empty uses the one from pairing --------
+CONFIG_GADGET_SDK_TOKEN=""
