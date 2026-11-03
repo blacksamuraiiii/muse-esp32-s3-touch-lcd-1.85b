@@ -24,14 +24,18 @@ chain lives in `muse_font.c` (`muse_font_cjk()` / `muse_font_mont16_cjk()`
   the caption band 72 px and pushed Muse up into the READY label).
   Re-running upstream's generator must re-apply this pin.
 - `muse_font_sym_16.c` — the symbol tail of the chain, cut from DejaVu
-  Sans 16 px 4bpp with lv_font_conv@1.5.3 (114 glyphs, ~3.4 KB of bitmap
+  Sans 16 px 4bpp with lv_font_conv@1.5.3 (30 glyphs, ~1 KB of bitmap
   data; the generation command is in the file's header comment). Noto
   covers CJK + fullwidth only and Montserrat 16 covers ASCII + the
-  private-use LVGL icons, so neither has the Latin-1 symbols, general
-  punctuation, degree-C/F, arrows or geometric shapes the UI prints
-  (weather 25℃, hints, reply text). Those live here, as the last link of
-  the chain. The face is a fallback only, so its own 21/5 line metrics
-  never govern a layout.
+  private-use LVGL icons, so neither has the Latin-1 symbols, degree-C/F,
+  quotes, arrows or geometric shapes the UI prints (weather 25℃, hints,
+  reply text). Those live here, as the last link of the chain. The face is
+  a fallback only, so its own 21/5 line metrics never govern a layout.
+  Spelled out glyph by glyph, not as the 0x2000-0x205F block: that block
+  brought in the invisible format characters (U+200B-U+200F, U+202A-U+202E,
+  U+2028/9), and since lv_font_conv writes each code point into a comment,
+  GCC 15's `-Werror=bidi-chars` refused the file outright. None of them can
+  be drawn; leaving them out is the fix.
 - Montserrat 16/14/20 and unscii-16/8 come from LVGL itself. Montserrat's
   private-use range is what the LV_SYMBOL_* icons draw with, which is why
   icon labels can keep bare Montserrat while text labels cannot.
