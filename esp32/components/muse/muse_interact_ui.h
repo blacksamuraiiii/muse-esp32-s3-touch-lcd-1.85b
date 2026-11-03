@@ -52,14 +52,16 @@ void muse_interact_ui_tick(bool active);
  * 3-second rule. */
 void muse_interact_ui_on_hidden(void);
 
-/* True while one of the three game subpages is open (小游戏 / 贪吃蛇 / 数独).
- * muse_ui.c reads this every chrome tick and turns the tile swipe off there:
- * on those pages the buttons sit on the margin of a 360px circle, and the
- * default 10px scroll limit (1.3mm on this panel) meant a slightly drifting
- * press became a tile scroll -- the button lost its LV_EVENT_CLICKED and the
- * round was abandoned mid-play. They are focus pages with a "<" back arrow,
- * and the minigame hub is one press away, so nothing is lost; settings
- * subpages have been locked the same way since 1.4d. */
+/* True while any interaction subpage is open (feed, fortune, the minigame
+ * list, or one of the four game boards); false on the main page.
+ * muse_ui.c reads this every chrome tick and turns the tile swipe off (and
+ * hides the page dots) there: a subpage leaves only through its "<" back
+ * arrow, one level up. The lock started with the game boards (their buttons
+ * sit on the margin of a 360px circle, and the default 10px scroll limit
+ * (1.3mm on this panel) meant a slightly drifting press became a tile
+ * scroll -- the button lost its LV_EVENT_CLICKED and the round was
+ * abandoned mid-play); settings subpages have been locked the same way
+ * since 1.4d. */
 bool muse_interact_ui_swipe_locked(void);
 
 /* Called by muse_ui.c's on_canvas_clicked() when a face tap could not
