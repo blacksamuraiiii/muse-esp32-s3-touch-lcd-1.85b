@@ -468,6 +468,7 @@ static bool hatch_reply(bool *delivered)
     int64_t t0 = esp_timer_get_time();
     *delivered = false;
     for (;;) {
+        muse_state_poke();   /* an active turn is activity: don't auto-sleep mid-reply */
         muse_hatch_ev_t ev;
         while ((ev = muse_hatch_turn_event(text, sizeof(text))) != MUSE_HATCH_EV_NONE) {
             switch (ev) {
@@ -558,10 +559,8 @@ static void go_idle(const char *caption)
 {
     muse_state_set_progress(0);
     muse_state_set_mode(MUSE_MODE_IDLE);
-    /* The turn just ended: the idle clock must start here, not halfway
-     * through the turn. Nothing pokes it while a reply is playing, so
-     * without this a turn longer than the sleep setting sleeps the
-     * screen the moment the reply ends, mid-conversation. */
+    /* The turn just ended: pin the idle clock here, at the turn end
+     * rather than at the last loop poke mid-reply. */
     muse_state_poke();
     muse_state_set_caption("%s", caption);
 }
