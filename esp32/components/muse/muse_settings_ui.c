@@ -873,6 +873,8 @@ static void on_proxy_sw(lv_event_t *e)
 
 /* One save path for the four speech fields: whichever row was edited, the
  * other three are read back from settings and stored with it. */
+static void speech_host(const char *url, char *out, size_t cap);   /* defined with the rows below */
+
 static void speech_save(const char *url, const char *voice, const char *key, const char *rate)
 {
     char u[MUSE_SPEECH_URL_MAX + 1] = {0}, v[MUSE_SPEECH_VOICE_MAX + 1] = {0};
@@ -898,8 +900,10 @@ static void on_sp_url(lv_event_t *e)
     char u[MUSE_SPEECH_URL_MAX + 1] = {0}, v[MUSE_SPEECH_VOICE_MAX + 1] = {0};
     char k[MUSE_SPEECH_KEY_MAX + 1] = {0}, r[MUSE_SPEECH_RATE_MAX + 1] = {0};
     speech_fields(u, sizeof(u), v, sizeof(v), k, sizeof(k), r, sizeof(r));
-    open_text("Speech server", u, false, MUSE_SPEECH_URL_MAX,
-              "Empty uses the endpoint compiled into this build", on_sp_url_done, s_hatch);
+    char host[MUSE_SPEECH_URL_MAX + 1] = {0};
+    speech_host(u, host, sizeof(host));
+    open_text("TTS server", host, false, MUSE_SPEECH_URL_MAX,
+              "Host only, e.g. tts.example.com; empty uses the build", on_sp_url_done, s_speech);
 }
 
 static void on_sp_voice(lv_event_t *e)
@@ -908,7 +912,7 @@ static void on_sp_voice(lv_event_t *e)
     char u[MUSE_SPEECH_URL_MAX + 1] = {0}, v[MUSE_SPEECH_VOICE_MAX + 1] = {0};
     char k[MUSE_SPEECH_KEY_MAX + 1] = {0}, r[MUSE_SPEECH_RATE_MAX + 1] = {0};
     speech_fields(u, sizeof(u), v, sizeof(v), k, sizeof(k), r, sizeof(r));
-    open_text("Voice", v, false, MUSE_SPEECH_VOICE_MAX, "e.g. zh-CN-XiaoyiNeural", on_sp_voice_done, s_hatch);
+    open_text("Voice", v, false, MUSE_SPEECH_VOICE_MAX, "e.g. zh-CN-XiaoyiNeural", on_sp_voice_done, s_speech);
 }
 
 static void on_sp_key(lv_event_t *e)
@@ -917,7 +921,7 @@ static void on_sp_key(lv_event_t *e)
     char u[MUSE_SPEECH_URL_MAX + 1] = {0}, v[MUSE_SPEECH_VOICE_MAX + 1] = {0};
     char k[MUSE_SPEECH_KEY_MAX + 1] = {0}, r[MUSE_SPEECH_RATE_MAX + 1] = {0};
     speech_fields(u, sizeof(u), v, sizeof(v), k, sizeof(k), r, sizeof(r));
-    open_text("Speech key", "", true, MUSE_SPEECH_KEY_MAX, "Shared secret, sent as k=...; empty for none", on_sp_key_done, s_hatch);
+    open_text("Speech key", "", true, MUSE_SPEECH_KEY_MAX, "Shared secret, sent as k=...; empty for none", on_sp_key_done, s_speech);
 }
 
 static void on_sp_rate(lv_event_t *e)
@@ -926,20 +930,93 @@ static void on_sp_rate(lv_event_t *e)
     char u[MUSE_SPEECH_URL_MAX + 1] = {0}, v[MUSE_SPEECH_VOICE_MAX + 1] = {0};
     char k[MUSE_SPEECH_KEY_MAX + 1] = {0}, r[MUSE_SPEECH_RATE_MAX + 1] = {0};
     speech_fields(u, sizeof(u), v, sizeof(v), k, sizeof(k), r, sizeof(r));
-    open_text("Rate", r, false, MUSE_SPEECH_RATE_MAX, "Speech service units, e.g. +8% or +4Hz", on_sp_rate_done, s_hatch);
+    open_text("Rate", r, false, MUSE_SPEECH_RATE_MAX, "Speech service units, e.g. +8% or +4Hz", on_sp_rate_done, s_speech);
 }
 
 /* Called with the settings page is shown and when the speech rows change. */
+/* What the device will actually use. Empty settings fall back to the endpoint
+ * compiled into this build, whose query already carries the key/voice/rate, so
+ * the page can show real values instead of "from build". */
+static void speech_effective(char *url, size_t url_cap, char *voice, size_t voice_cap,
+                            char *key, size_t key_cap, char *rate, size_t rate_cap)
+{
+    url[0] = voice[0] = key[0] = rate[0] = '\0';
+    muse_settings_speech(url, url_cap, voice, voice_cap, key, key_cap, rate, rate_cap);
+    if (url[0]) {
+        return;   /* the settings page wins */
+    }
+    const char *build = CONFIG_MUSE_TTS_URL;
+    if (!build[0]) {
+        return;
+    }
+    const char *q = strchr(build, '?');
+    size_t base_len = q ? (size_t)(q - build) : strlen(build);
+    if (base_len >= url_cap) base_len = url_cap - 1;
+    memcpy(url, build, base_len);
+    url[base_len] = '\0';
+    if (!q) {
+        return;
+    }
+    /* Pull k= / voice= / rate= out of the compiled query. */
+    const struct { const char *name; char *out; size_t cap; } F[] = {
+        { "k=", key, key_cap }, { "voice=", voice, voice_cap }, { "rate=", rate, rate_cap },
+    };
+    for (size_t f = 0; f < sizeof(F) / sizeof(F[0]); f++) {
+        const char *at = strstr(q, F[f].name);
+        if (!at) continue;
+        at += strlen(F[f].name);
+        size_t len = strcspn(at, "&");
+        if (len >= F[f].cap) len = F[f].cap - 1;
+        memcpy(F[f].out, at, len);
+        F[f].out[len] = '\0';
+    }
+}
+
+/* Muse's "Server" row shows a bare host, no scheme and no path. Same here: the
+ * service answers on the host root now (nginx maps / to /tts), so the field the
+ * user edits is a host, exactly like the Muse server row. */
+static void speech_host(const char *url, char *out, size_t cap)
+{
+    const char *p = strstr(url, "://");
+    if (p) {
+        p += 3;
+    } else {
+        p = url;
+    }
+    size_t n = strcspn(p, "/?#");
+    if (n >= cap) {
+        n = cap - 1;
+    }
+    memcpy(out, p, n);
+    out[n] = '\0';
+}
+
 static void refresh_speech_rows(void)
 {
+    /* The page is built on entry and freed on the way back; ticking must not
+     * touch labels that no longer exist. */
+    if (!s_speech) {
+        return;
+    }
     char u[MUSE_SPEECH_URL_MAX + 1] = {0}, v[MUSE_SPEECH_VOICE_MAX + 1] = {0};
     char k[MUSE_SPEECH_KEY_MAX + 1] = {0}, r[MUSE_SPEECH_RATE_MAX + 1] = {0};
-    muse_settings_speech(u, sizeof(u), v, sizeof(v), k, sizeof(k), r, sizeof(r));
-    if (s_sp_url) set_text(s_sp_url, u[0] ? u : "from build");
-    if (s_sp_voice) set_text(s_sp_voice, v[0] ? v : "-");
-    /* Never print the shared secret: say only that one is stored. */
-    if (s_sp_key) set_text(s_sp_key, k[0] ? "set (tap to change)" : "-");
-    if (s_sp_rate) set_text(s_sp_rate, r[0] ? r : "-");
+    speech_effective(u, sizeof(u), v, sizeof(v), k, sizeof(k), r, sizeof(r));
+    char host[MUSE_SPEECH_URL_MAX + 1] = {0};
+    speech_host(u, host, sizeof(host));
+    if (s_sp_url) set_text(s_sp_url, host[0] ? host : "Not set");
+    if (s_sp_voice) set_text(s_sp_voice, v[0] ? v : "Not set");
+    /* Same shape as the Muse SDK token row: a recognisable prefix, never
+     * the whole secret. */
+    if (s_sp_key) {
+        if (k[0]) {
+            char preview[MUSE_SPEECH_KEY_MAX + 8];
+            snprintf(preview, sizeof(preview), "%.12s...", k);
+            set_text(s_sp_key, preview);
+        } else {
+            set_text(s_sp_key, "Not set");
+        }
+    }
+    if (s_sp_rate) set_text(s_sp_rate, r[0] ? r : "Not set");
 }
 
 static void on_hatch_token_done(const char *text)
@@ -1098,11 +1175,10 @@ static void build_speech_page(lv_obj_t *tile)
     row(list, NULL, "Voice", &s_sp_voice, on_sp_voice, NULL);
     row(list, NULL, "Auth key", &s_sp_key, on_sp_key, NULL);
     row(list, NULL, "Rate", &s_sp_rate, on_sp_rate, NULL);
-    note(list, "Replies are spoken by this service. Every field empty means " 
-               "the endpoint compiled into this build is used; filling the " 
-               "server here overrides it, so a public build can ship without " 
-               "one. The key is sent as k=... in the query and is stored on " 
-               "the device only.");
+    note(list, "Replies are spoken by this service. Server is a host only, the "
+               "key is sent as k=..., and the rate uses the service's own unit "
+               "(+8% by default, not a multiplier). Empty fields fall back to "
+               "what this build was compiled with.");
     refresh_speech_rows();
 }
 
@@ -1634,8 +1710,8 @@ static void tick_home(void)
     {
         char u[MUSE_SPEECH_URL_MAX + 1] = {0}, v[MUSE_SPEECH_VOICE_MAX + 1] = {0};
         char k[MUSE_SPEECH_KEY_MAX + 1] = {0}, r[MUSE_SPEECH_RATE_MAX + 1] = {0};
-        muse_settings_speech(u, sizeof(u), v, sizeof(v), k, sizeof(k), r, sizeof(r));
-        set_text(s_home_speech, u[0] ? (k[0] ? "Set, key stored" : "Set") : "From build");
+        speech_effective(u, sizeof(u), v, sizeof(v), k, sizeof(k), r, sizeof(r));
+        set_text(s_home_speech, u[0] ? "Connected" : "Not set");
     }
 
     muse_ble_status_t b;
