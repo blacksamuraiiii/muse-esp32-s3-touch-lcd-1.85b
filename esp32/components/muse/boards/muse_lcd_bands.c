@@ -357,6 +357,7 @@ lv_display_t *muse_lcd_bands_register(esp_lv_adapter_display_config_t cfg, int l
     if (xTaskGetCoreID(xTaskGetCurrentTaskHandle()) != MUSE_UI_CORE) {
         ESP_LOGE(TAG, "not pinned to core %d: the panel's SPI interrupt can strand the send task", MUSE_UI_CORE);
     }
+    TaskHandle_t send_task = NULL;
     s_bands = xQueueCreate(2, sizeof(band_t));
     s_call_lock = xSemaphoreCreateMutex();
     s_call_done = xSemaphoreCreateBinary();
@@ -366,8 +367,9 @@ lv_display_t *muse_lcd_bands_register(esp_lv_adapter_display_config_t cfg, int l
     s_chunk[0] = heap_caps_aligned_alloc(16, chunk_bytes, MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
     s_chunk[1] = heap_caps_aligned_alloc(16, chunk_bytes, MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
     if (!s_bands || !s_call_lock || !s_call_done || !s_chunk_free || !s_band_done || !s_chunk[0] || !s_chunk[1] ||
-        xTaskCreatePinnedToCore(send_bands, "lcd_send", 2560, NULL, MUSE_UI_PRIORITY + 1, NULL, MUSE_UI_CORE) != pdPASS) {
-        return NULL;
+        xTaskCreatePinnedToCore(send_bands, "lcd_send", 2560, NULL, MUSE_UI_PRIORITY + 1, &send_task,
+                                MUSE_UI_CORE) != pdPASS) {
+        goto fail;
     }
     const esp_lcd_panel_io_callbacks_t io_cbs = { .on_color_trans_done = on_chunk_sent };
     esp_lcd_panel_io_register_event_callbacks(cfg.panel_io, &io_cbs, NULL);
@@ -378,7 +380,7 @@ lv_display_t *muse_lcd_bands_register(esp_lv_adapter_display_config_t cfg, int l
     cfg.profile.require_double_buffer = true;
     s_disp = esp_lv_adapter_register_display(&cfg);
     if (!s_disp) {
-        return NULL;
+        goto fail;
     }
     s_rows = cfg.profile.ver_res;
     lv_display_set_color_format(s_disp, LV_COLOR_FORMAT_RGB565_SWAPPED);
@@ -386,6 +388,23 @@ lv_display_t *muse_lcd_bands_register(esp_lv_adapter_display_config_t cfg, int l
     const esp_lv_adapter_draw_bitmap_callbacks_t draw_cbs = { .custom_draw_bitmap = queue_band };
     esp_lv_adapter_set_draw_bitmap_callbacks(s_disp, &draw_cbs, NULL);
     return s_disp;
+
+fail:
+    /* Called once per boot, but a half-registered display used to be left
+     * behind here: the band queue, three semaphores, two DMA chunks and the
+     * send task all stayed allocated while the caller fell back to another
+     * display path. Nothing can reuse them, so release everything. */
+    if (send_task) vTaskDelete(send_task);
+    if (s_bands) { vQueueDelete(s_bands); s_bands = NULL; }
+    if (s_call_lock) { vSemaphoreDelete(s_call_lock); s_call_lock = NULL; }
+    if (s_call_done) { vSemaphoreDelete(s_call_done); s_call_done = NULL; }
+    if (s_chunk_free) { vSemaphoreDelete(s_chunk_free); s_chunk_free = NULL; }
+    if (s_band_done) { vSemaphoreDelete(s_band_done); s_band_done = NULL; }
+    heap_caps_free(s_chunk[0]);
+    heap_caps_free(s_chunk[1]);
+    s_chunk[0] = s_chunk[1] = NULL;
+    s_disp = NULL;
+    return NULL;
 }
 
 void muse_lcd_bands_run(void (*fn)(void *arg), void *arg)
