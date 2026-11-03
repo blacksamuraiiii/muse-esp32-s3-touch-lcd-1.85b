@@ -59,6 +59,13 @@ static void on_setting(muse_setting_t what)
     case MUSE_SETTING_HATCH:
         muse_hatch_config_changed();
         break;
+    case MUSE_SETTING_PROXY:
+        /* The chat session re-reads the host on its next connect; Link applies
+         * the account API base from its own loop. Dropping the session now
+         * makes that reconnect happen at once rather than on the next idle
+         * timeout. */
+        muse_hatch_config_changed();
+        break;
     case MUSE_SETTING_ALARM:
         /* The input task owns the RTC arm: a new time needs a new arm, and a
          * switch-off has to clear the chip's flag. */

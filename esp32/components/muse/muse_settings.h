@@ -46,6 +46,7 @@ typedef enum {
     MUSE_SETTING_BLE,
     MUSE_SETTING_HATCH,
     MUSE_SETTING_ALARM,         /* hour/minute/on: the input task re-arms on it */
+    MUSE_SETTING_PROXY,         /* on: account API and VM host point at the relay */
 } muse_setting_t;
 
 typedef void (*muse_setting_cb_t)(muse_setting_t what);
@@ -65,6 +66,9 @@ int muse_settings_alarm_min(void);      /* 0..59 */
 int muse_settings_alarm_days(void);     /* bit0 Sun .. bit6 Sat; 0 once, 0x7F daily */
 bool muse_settings_wifi_on(void);
 bool muse_settings_ble_on(void);
+/* On: the account API and the VM host use CONFIG_MUSE_PROXY_* instead of
+ * api.muse.ai and hatch.metaaivm.com. Off (the default) is a direct link. */
+bool muse_settings_proxy(void);
 
 void muse_settings_wifi(char ssid[MUSE_SSID_MAX + 1], char pass[MUSE_PASS_MAX + 1]);
 void muse_settings_hatch_host(char out[MUSE_HOST_MAX + 1]);
@@ -83,6 +87,7 @@ void muse_settings_set_alarm_min(int min);
 void muse_settings_set_alarm_days(int days);
 void muse_settings_set_wifi_on(bool on);
 void muse_settings_set_ble_on(bool on);
+void muse_settings_set_proxy(bool on);
 /* A network name is remembered first among the saved ones and joined now;
  * an empty ssid forgets every saved network. */
 void muse_settings_set_wifi(const char *ssid, const char *pass);

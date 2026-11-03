@@ -337,7 +337,14 @@ static void scan_task(void *arg) {
 }
 
 static esp_err_t op_wifi_scan(void) {
-    if (!(xEventGroupGetBits(s_ready) & BIT_LINK) || s_joining) return ESP_ERR_INVALID_STATE;
+    EventBits_t bits = xEventGroupGetBits(s_ready);
+    if (!(bits & BIT_LINK) || s_joining) {
+        // A silent refusal costs an hour of guessing: the settings page shows
+        // nothing when the request never reaches the radio.
+        ESP_LOGW(TAG, "scan refused: boot done=%d joining=%d",
+                 (bits & BIT_LINK) != 0, s_joining);
+        return ESP_ERR_INVALID_STATE;
+    }
     if (s_scanning) return ESP_OK;
     s_scanning = true;
     if (xTaskCreate(scan_task, "muse_scan", 4096, NULL, 4, NULL) != pdPASS) {

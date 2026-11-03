@@ -239,11 +239,44 @@ bool wifi_mgr_netcfg_clear(void) {
     return ok;
 }
 
+/* A pinned address belongs to the network it was picked for. Taken out of the
+ * house, the gadget has to take a DHCP lease or it never gets an address. The
+ * build's SSID override names that network; no override keeps the old
+ * behaviour and pins everywhere. */
+static bool static_ip_applies(const char *ssid) {
+    if (!CONFIG_HOMEHUB_STATIC_IP[0]) return false;
+    if (!CONFIG_HOMEHUB_WIFI_SSID[0]) return true;
+    return ssid && ssid[0] && strcmp(ssid, CONFIG_HOMEHUB_WIFI_SSID) == 0;
+}
+
+/* The network the boot flow joins: the build override first, else the one Link
+ * saved from provisioning. */
+static const char *boot_ssid(void) {
+    static char saved[33];
+    if (CONFIG_HOMEHUB_WIFI_SSID[0]) return CONFIG_HOMEHUB_WIFI_SSID;
+    saved[0] = '\0';
+    config_get_str("ssid", saved, sizeof(saved));
+    return saved;
+}
+
+/* Hand the netif back to DHCP after a pinned address was applied. */
+static void revert_to_dhcp(void) {
+    esp_netif_ip_info_t zero = { 0 };
+    esp_netif_dhcpc_stop(s_sta_netif);
+    esp_netif_set_ip_info(s_sta_netif, &zero);
+    esp_netif_dhcpc_start(s_sta_netif);
+    ESP_LOGW(TAG, "static IP dropped: joining a network it was not picked for");
+}
+
 static void apply_static_ip(void) {
     if (!s_netcfg_ready) netcfg_cache_reload();   // only if STA_START beats init
     const wifi_mgr_netcfg_t *cfg = &s_netcfg_cache;
     if (!cfg->ip[0]) {
         return;    // DHCP, the usual case
+    }
+    if (!static_ip_applies(boot_ssid())) {
+        ESP_LOGI(TAG, "static IP %s skipped: not the network it was picked for", cfg->ip);
+        return;
     }
     esp_netif_ip_info_t ip = { 0 };
     if (esp_netif_str_to_ip4(cfg->ip, &ip.ip) != ESP_OK
@@ -409,6 +442,12 @@ bool wifi_mgr_connect(const char *ssid, const char *password, int timeout_ms) {
     }
 
     wifi_config_t wc = {0};
+    // A static address from the home LAN must not follow the gadget onto
+    // another network: joining one it was not picked for means DHCP.
+    if (!s_netcfg_ready) netcfg_cache_reload();
+    if (s_netcfg_cache.ip[0] && !static_ip_applies(ssid)) {
+        revert_to_dhcp();
+    }
     // The driver reads these arrays without a terminator, so a 32-byte SSID
     // (the 802.11 maximum, which wifi_known and the scan picker accept) or a
     // 64-char PSK fills the whole field. wc is zeroed, so shorter values stay

@@ -57,6 +57,8 @@
 #include "vm_api.h"
 #include "vm_connect.h"
 #include "noise_control.h"
+#include "muse_settings.h"
+#include "muse_chat.h"
 #include "image_fetch.h"
 #include "noise_tunnel.h"
 #include "led_status.h"
@@ -95,6 +97,22 @@
 
 static const char *TAG = "link.app";
 static const char *HEARTBEAT_TAG = "link.heartbeat";
+
+// Muse's endpoints move together when the relay switch is on: the account API
+// base and the noise host both point at the proxy. Re-applied at boot, after a
+// pairing that carries its own endpoints, and (from the heartbeat) whenever the
+// settings switch flips. muse_hatch_config_changed() drops the live session so
+// the next connect uses the host that was just set.
+static bool s_proxy_endpoints_on;
+
+static void apply_muse_proxy_endpoints(void) {
+    bool on = muse_settings_proxy();
+    vm_api_set_base_url(on ? CONFIG_MUSE_PROXY_API_URL : NULL);
+    noise_ctrl_set_host(on ? CONFIG_MUSE_PROXY_VM_HOST : NULL);
+    s_proxy_endpoints_on = on;
+    ESP_LOGI(TAG, "muse endpoints: %s", on ? "relay" : "direct");
+    muse_hatch_config_changed();
+}
 
 #define WIFI_CONNECT_TIMEOUT_MS 60000
 #define WIFI_CHANNEL_KEY        "wifi_channel"
@@ -1214,6 +1232,7 @@ static void on_provision(const char *ssid, const char *password,
     }
     vm_api_set_base_url(api_url_v2);
     noise_ctrl_set_host(noise_host);
+    apply_muse_proxy_endpoints();   // the relay switch outranks the pair's own
 
     if (!require_provisioning_pairing_session(session_generation)) goto done;
     setup_stage_set("auth");
@@ -2827,6 +2846,10 @@ void app_run(void) {
         config_erase_key("noise_host");
     }
 
+    // The relay switch decides the endpoints last: a paired device that was
+    // put behind the proxy must not keep the direct host from its NVS.
+    apply_muse_proxy_endpoints();
+
     bool skip_boot_scan = false;
     if (setup_complete && !CONFIG_HOMEHUB_WIFI_SSID[0]) {
         char hint_ssid[33] = {0};
@@ -3051,6 +3074,9 @@ void app_run(void) {
                  (unsigned)(heap_caps_get_largest_free_block(MALLOC_CAP_RETENTION) / 1024),
                  muse_input_cpu_pd() ? "on" : "off");
 #endif
+        if (muse_settings_proxy() != s_proxy_endpoints_on) {
+            apply_muse_proxy_endpoints();
+        }
         size_t free_dma = heap_caps_get_free_size(MALLOC_CAP_DMA);
         size_t largest_dma = heap_caps_get_largest_free_block(MALLOC_CAP_DMA);
         size_t free_psram = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);

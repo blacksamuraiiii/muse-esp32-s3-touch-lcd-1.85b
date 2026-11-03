@@ -280,6 +280,32 @@ menu "Muse"
             order. Off restores the 1.5c behaviour: speak only once a message
             is done, whole message at a time.
 
+    config MUSE_PROXY_API_URL
+        string "Account API base used when the on-device proxy switch is on"
+        default "https://relay.example.invalid"
+        help
+            The Muse account API (device token mint/refresh, fetch_vms) is
+            https://api.muse.ai. On a network that cannot reach it, the switch
+            on the device's MUSE settings page points this base instead, and
+            MUSE_PROXY_VM_HOST for the VM and chat session.
+
+            The default is the domestic relay (nginx on the VPS) in front of a
+            Cloudflare worker: a Chinese network reaches the VPS directly, and
+            the VPS reaches the worker. Point it at the worker itself
+            (https://api-relay.example.invalid) when Cloudflare is reachable.
+
+    config MUSE_PROXY_VM_HOST
+        string "VM host used when the on-device proxy switch is on"
+        default "vm.example.invalid"
+        help
+            Host that fronts the Muse VM edge (hatch.metaaivm.com, also served
+            as vm.muse.ai). The chat session and the Noise control channel
+            connect here on 443 when the proxy switch is on. Empty leaves the
+            compiled default.
+
+            The default is the domestic relay; the Cloudflare worker itself is
+            vm-relay.example.invalid.
+
     config MUSE_POWER_TEST
         bool "Isolated board BSP power-characterization firmware"
         # Test only: this replaces app_main, so it can never sit beside the

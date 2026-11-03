@@ -39,6 +39,9 @@ static struct {
     uint16_t sleep_s;
     bool wifi_on;
     bool ble_on;
+    /* Off (the default): api.muse.ai and hatch.metaaivm.com direct. On: the
+     * CONFIG_MUSE_PROXY_* relay, for a network that cannot reach either. */
+    bool proxy;
     /* The alarm, local time. Off arms no wake source at all.
      * alarm_days repeats it: bit0 = Sunday .. bit6 = Saturday, 0 = once (rings
      * once, then turns itself off), 0x7F = every day. The default is every day
@@ -138,6 +141,9 @@ esp_err_t muse_settings_init(void)
     if (nvs_get_u8(s_nvs, "ble_on", &b) == ESP_OK) {
         s.ble_on = b;
     }
+    if (nvs_get_u8(s_nvs, "proxy", &b) == ESP_OK) {
+        s.proxy = b;
+    }
     load_u8("alarm_h", &s.alarm_h);
     load_u8("alarm_m", &s.alarm_m);
     load_u8("alarm_days", &s.alarm_days);
@@ -179,6 +185,7 @@ int muse_settings_alarm_min(void) { return s.alarm_m; }
 int muse_settings_alarm_days(void) { return s.alarm_days; }
 bool muse_settings_wifi_on(void) { return s.wifi_on; }
 bool muse_settings_ble_on(void) { return s.ble_on; }
+bool muse_settings_proxy(void) { return s.proxy; }
 
 /* Home Link owns the saved networks (this is the first); the local copy is only a fallback. */
 void muse_settings_wifi(char ssid[MUSE_SSID_MAX + 1], char pass[MUSE_PASS_MAX + 1])
@@ -196,7 +203,15 @@ void muse_settings_wifi(char ssid[MUSE_SSID_MAX + 1], char pass[MUSE_PASS_MAX + 
 
 void muse_settings_hatch_host(char out[MUSE_HOST_MAX + 1])
 {
-    LOCKED(strlcpy(out, s.host, MUSE_HOST_MAX + 1));
+    LOCKED({
+        /* The proxy wins while it is on: the stored host is the direct one,
+         * kept for the moment the switch goes back off. */
+        if (s.proxy && CONFIG_MUSE_PROXY_VM_HOST[0]) {
+            strlcpy(out, CONFIG_MUSE_PROXY_VM_HOST, MUSE_HOST_MAX + 1);
+        } else {
+            strlcpy(out, s.host, MUSE_HOST_MAX + 1);
+        }
+    });
 }
 
 void muse_settings_hatch_vm(char out[MUSE_VM_MAX + 1])
@@ -296,6 +311,13 @@ void muse_settings_set_ble_on(bool on)
     s.ble_on = on;
     save_u8("ble_on", on);
     notify(MUSE_SETTING_BLE);
+}
+
+void muse_settings_set_proxy(bool on)
+{
+    s.proxy = on;
+    save_u8("proxy", on);
+    notify(MUSE_SETTING_PROXY);
 }
 
 void muse_settings_set_wifi(const char *ssid, const char *pass)
