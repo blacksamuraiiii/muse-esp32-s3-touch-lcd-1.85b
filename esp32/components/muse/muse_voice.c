@@ -1017,11 +1017,45 @@ static void voice_task(void *arg)
     }
 }
 
+/* Audio init needs ~17 KB of internal DMA RAM: two I2S rings (tx 6 x 960 B,
+ * rx TDM 6 x 1920 B) plus the codec objects. A boot that has Wi-Fi up can
+ * leave a few hundred bytes of largest internal block for a moment - the
+ * boot animation, Wi-Fi's buffers and the first TLS handshake peak together
+ * at ~6 s - and one failed attempt used to mean AUDIO INIT FAILED for the
+ * whole boot, i.e. no TTS and no PTT. The peak passes within a second. */
+#define VOICE_INIT_ATTEMPTS 3
+#define VOICE_INIT_RETRY_MS 500
+
 esp_err_t muse_voice_start(QueueHandle_t queue)
 {
     s_queue = queue;
-    s_pre = heap_caps_malloc(PRE_CHUNKS * sizeof(pre_chunk_t), MUSE_BIG_CAPS);
-    if (!s_pre || muse_audio_init(muse_settings_volume(), muse_settings_mic_gain()) != ESP_OK) {
+    if (!s_pre) {
+        s_pre = heap_caps_malloc(PRE_CHUNKS * sizeof(pre_chunk_t), MUSE_BIG_CAPS);
+    }
+    esp_err_t err = ESP_ERR_NO_MEM;
+    for (int attempt = 1; attempt <= VOICE_INIT_ATTEMPTS; attempt++) {
+        size_t free_int = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+        size_t largest = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL);
+        if (s_pre) {
+            err = muse_audio_init(muse_settings_volume(), muse_settings_mic_gain());
+            if (err == ESP_OK) {
+                ESP_LOGI(TAG, "audio init ok: attempt %d, internal free %u, largest %u",
+                         attempt, (unsigned)free_int, (unsigned)largest);
+                break;
+            }
+        }
+        ESP_LOGW(TAG, "audio init failed: attempt %d/%d (%s), internal free %u, largest %u",
+                 attempt, VOICE_INIT_ATTEMPTS, esp_err_to_name(err),
+                 (unsigned)free_int, (unsigned)largest);
+        if (attempt < VOICE_INIT_ATTEMPTS) {
+            vTaskDelay(pdMS_TO_TICKS(VOICE_INIT_RETRY_MS));
+        }
+    }
+    if (!s_pre) {
+        ESP_LOGE(TAG, "pre-chunk ring");
+        err = ESP_ERR_NO_MEM;
+    }
+    if (err != ESP_OK) {
         muse_state_set_mode(MUSE_MODE_ERROR);
         muse_state_set_caption("AUDIO INIT FAILED");
         return ESP_FAIL;

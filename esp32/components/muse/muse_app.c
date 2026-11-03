@@ -78,6 +78,19 @@ static void on_setting(muse_setting_t what)
 
 const muse_board_t *muse_board;
 
+/* One line per boot stage. The audio init failure is a heap-shape problem, not
+ * a codec one: what decides it is the largest internal block at ~6 s, and that
+ * number changes with Wi-Fi state. Without these lines the only way to see it
+ * is to reproduce a failed boot. */
+static void log_heap(const char *stage)
+{
+    ESP_LOGI(TAG, "heap after %-10s internal free %6u largest %6u, dma largest %6u",
+             stage,
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_DMA));
+}
+
 void muse_app_run(const muse_board_t *board)
 {
     muse_board = board;
@@ -102,23 +115,28 @@ void muse_app_run(const muse_board_t *board)
      * muse_pet_start() never blocks and never aborts the app: on failure it
      * only logs, and muse_pet_request() then returns false. */
     muse_pet_start();
+    log_heap("pet");
 #if CONFIG_MUSE_TELEMETRY
     /* Test only: mounts the FAT partition and starts the night recorder.
      * After the clock (every line carries a timestamp) and before the input
      * task, which writes the boot event. */
     muse_telemetry_start();
+    log_heap("telemetry");
 #endif
     muse_state_set_caption("WAKING UP...");
     /* Before the UI: the touch boards' settings show Phone camera only when
      * a transport is there as they're built. Its server waits for Wi-Fi. */
 #if CONFIG_MUSE_VIDEO_WIFI
     muse_video_wifi_start();
+    log_heap("video_wifi");
 #endif
     ESP_ERROR_CHECK(muse_ui_start());
     ESP_LOGI(TAG, "UI built: free internal %u", (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
+    log_heap("ui");
 
     QueueHandle_t q = xQueueCreate(16, sizeof(muse_input_event_t));
     ESP_ERROR_CHECK(muse_input_start(q));
+    log_heap("input");
 
     /* Let the boot animation (flame ignites, eyes open) play out. */
     vTaskDelay(pdMS_TO_TICKS(1400));
@@ -132,6 +150,7 @@ void muse_app_run(const muse_board_t *board)
         muse_state_set_mode(MUSE_MODE_IDLE);
         muse_state_set_caption("%s", "");   /* the button icons say how to talk */
     }
+    log_heap("voice");
 
     muse_hatch_start();
     /* Home Link owns the radios; these just hand it the saved settings. */

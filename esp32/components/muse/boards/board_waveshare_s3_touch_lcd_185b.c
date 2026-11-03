@@ -1164,10 +1164,21 @@ static const audio_codec_if_t *s_ptest_dac_if, *s_ptest_adc_if;
  */
 static esp_err_t audio_init(esp_codec_dev_handle_t *spk, esp_codec_dev_handle_t *mic)
 {
-    i2s_chan_handle_t tx, rx;
+    /* Every failure below jumps to one label that puts the bus back to
+     * nothing. muse_voice_start retries while the boot heap settles, and a
+     * channel left registered keeps I2S_NUM_0 busy, so the second attempt
+     * would fail for a new reason (see the log: i2s_alloc_dma_desc runs out
+     * of internal DMA RAM at ~6 s after a Wi-Fi-up boot). */
+    esp_err_t ret = ESP_OK;
+    i2s_chan_handle_t tx = NULL, rx = NULL;
+    const audio_codec_data_if_t *data_if = NULL;
+    const audio_codec_ctrl_if_t *dac_ctrl = NULL, *adc_ctrl = NULL;
+    const audio_codec_gpio_if_t *gpio_if = NULL;
+    const audio_codec_if_t *dac = NULL, *adc = NULL;
     i2s_chan_config_t chan_cfg = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_0, I2S_ROLE_MASTER);
     chan_cfg.auto_clear = true;
-    ESP_RETURN_ON_ERROR(i2s_new_channel(&chan_cfg, &tx, &rx), TAG, "i2s channel");
+    ret = i2s_new_channel(&chan_cfg, &tx, &rx);
+    ESP_GOTO_ON_ERROR(ret, fail, TAG, "i2s channel");
 #if CONFIG_MUSE_POWER_TEST
     /* Publish ownership BEFORE init/enable: partial TX/RX failures must still
      * be tracked and stopped by the standalone diagnostic cleanup path. */
@@ -1205,19 +1216,27 @@ static esp_err_t audio_init(esp_codec_dev_handle_t *spk, esp_codec_dev_handle_t 
             .din = I2S_DIN,
         },
     };
-    ESP_RETURN_ON_ERROR(i2s_channel_init_std_mode(tx, &std_cfg), TAG, "i2s tx");
-    ESP_RETURN_ON_ERROR(i2s_channel_init_tdm_mode(rx, &tdm_cfg), TAG, "i2s rx");
-    ESP_RETURN_ON_ERROR(i2s_channel_enable(tx), TAG, "i2s tx on");
-    ESP_RETURN_ON_ERROR(i2s_channel_enable(rx), TAG, "i2s rx on");
+    ret = i2s_channel_init_std_mode(tx, &std_cfg);
+    ESP_GOTO_ON_ERROR(ret, fail, TAG, "i2s tx");
+    ret = i2s_channel_init_tdm_mode(rx, &tdm_cfg);
+    ESP_GOTO_ON_ERROR(ret, fail, TAG, "i2s rx");
+    ret = i2s_channel_enable(tx);
+    ESP_GOTO_ON_ERROR(ret, fail, TAG, "i2s tx on");
+    ret = i2s_channel_enable(rx);
+    ESP_GOTO_ON_ERROR(ret, fail, TAG, "i2s rx on");
 
     audio_codec_i2s_cfg_t i2s_cfg = { .port = I2S_NUM_0, .rx_handle = rx, .tx_handle = tx };
-    const audio_codec_data_if_t *data_if = audio_codec_new_i2s_data(&i2s_cfg);
+    data_if = audio_codec_new_i2s_data(&i2s_cfg);
     audio_codec_i2c_cfg_t dac_i2c = { .port = I2C_NUM_0, .addr = ES8311_CODEC_DEFAULT_ADDR, .bus_handle = s_i2c };
     audio_codec_i2c_cfg_t adc_i2c = { .port = I2C_NUM_0, .addr = ES7210_CODEC_DEFAULT_ADDR, .bus_handle = s_i2c };
-    const audio_codec_ctrl_if_t *dac_ctrl = audio_codec_new_i2c_ctrl(&dac_i2c);
-    const audio_codec_ctrl_if_t *adc_ctrl = audio_codec_new_i2c_ctrl(&adc_i2c);
-    const audio_codec_gpio_if_t *gpio_if = audio_codec_new_gpio();
-    ESP_RETURN_ON_FALSE(data_if && dac_ctrl && adc_ctrl && gpio_if, ESP_ERR_NO_MEM, TAG, "codec interfaces");
+    dac_ctrl = audio_codec_new_i2c_ctrl(&dac_i2c);
+    adc_ctrl = audio_codec_new_i2c_ctrl(&adc_i2c);
+    gpio_if = audio_codec_new_gpio();
+    if (!data_if || !dac_ctrl || !adc_ctrl || !gpio_if) {
+        ESP_LOGE(TAG, "codec interfaces");
+        ret = ESP_ERR_NO_MEM;
+        goto fail;
+    }
 
     es8311_codec_cfg_t dac_cfg = {
         .ctrl_if = dac_ctrl,
@@ -1233,11 +1252,15 @@ static esp_err_t audio_init(esp_codec_dev_handle_t *spk, esp_codec_dev_handle_t 
         .use_mclk = true,
         .hw_gain = { .pa_voltage = 5.0, .codec_dac_voltage = 3.3 },
     };
-    const audio_codec_if_t *dac = es8311_codec_new(&dac_cfg);
+    dac = es8311_codec_new(&dac_cfg);
 #if CONFIG_MUSE_POWER_TEST
     s_ptest_dac_if = dac; /* own low-level disable even if wrapper allocation fails */
 #endif
-    ESP_RETURN_ON_FALSE(dac, ESP_FAIL, TAG, "ES8311 not responding");
+    if (!dac) {
+        ESP_LOGE(TAG, "ES8311 not responding");
+        ret = ESP_FAIL;
+        goto fail;
+    }
     es7210_codec_cfg_t adc_cfg = {
         .ctrl_if = adc_ctrl,
         /* Three inputs, not two: MIC3 is the speaker/DAC reference the echo
@@ -1245,11 +1268,15 @@ static esp_err_t audio_init(esp_codec_dev_handle_t *spk, esp_codec_dev_handle_t 
          * slots) - the rx channel above is configured to match. */
         .mic_selected = ES7210_SEL_MIC1 | ES7210_SEL_MIC2 | ES7210_SEL_MIC3,
     };
-    const audio_codec_if_t *adc = es7210_codec_new(&adc_cfg);
+    adc = es7210_codec_new(&adc_cfg);
 #if CONFIG_MUSE_POWER_TEST
     s_ptest_adc_if = adc;
 #endif
-    ESP_RETURN_ON_FALSE(adc, ESP_FAIL, TAG, "ES7210 not responding");
+    if (!adc) {
+        ESP_LOGE(TAG, "ES7210 not responding");
+        ret = ESP_FAIL;
+        goto fail;
+    }
 
     esp_codec_dev_cfg_t out_cfg = { .dev_type = ESP_CODEC_DEV_TYPE_OUT, .codec_if = dac, .data_if = data_if };
     esp_codec_dev_cfg_t in_cfg = { .dev_type = ESP_CODEC_DEV_TYPE_IN, .codec_if = adc, .data_if = data_if };
@@ -1262,7 +1289,30 @@ static esp_err_t audio_init(esp_codec_dev_handle_t *spk, esp_codec_dev_handle_t 
                   "rx TDM 4 slots, mclk=external GPIO%d, pa=GPIO%d, hw_gain=%.1f/%.1f V, "
                   "voice slot 0, reference slot 1",
              (int)I2S_NUM_0, (int)MUSE_AUDIO_RATE, (int)I2S_MCLK, (int)PA_EN, 5.0f, 3.3f);
-    return *spk && *mic ? ESP_OK : ESP_FAIL;
+    if (!*spk || !*mic) {
+        ESP_LOGE(TAG, "codec wrapper");
+        ret = ESP_FAIL;
+        goto fail;
+    }
+    return ESP_OK;
+
+fail:
+#if !CONFIG_MUSE_POWER_TEST
+    /* Standalone ptest firmware keeps its own lifecycle: it never retries and
+     * its cleanup path still owns these handles, so it must see them here. */
+    if (dac) audio_codec_delete_codec_if(dac);
+    if (adc) audio_codec_delete_codec_if(adc);
+    if (dac_ctrl) audio_codec_delete_ctrl_if(dac_ctrl);
+    if (adc_ctrl) audio_codec_delete_ctrl_if(adc_ctrl);
+    if (data_if) audio_codec_delete_data_if(data_if);
+    if (gpio_if) audio_codec_delete_gpio_if(gpio_if);
+    if (tx) i2s_del_channel(tx);
+    if (rx) i2s_del_channel(rx);
+    ESP_LOGW(TAG, "audio init failed (%s), bus released for a retry", esp_err_to_name(ret));
+#else
+    ESP_LOGW(TAG, "audio init failed (%s), ptest keeps the handles", esp_err_to_name(ret));
+#endif
+    return ret == ESP_OK ? ESP_FAIL : ret;
 }
 
 /* The settings page offers 3 dB steps; the ES7210's PGA moves in 3 dB steps and
