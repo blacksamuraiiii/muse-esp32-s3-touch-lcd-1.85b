@@ -33,13 +33,21 @@
 8. [已知限制与注意事项](#8-已知限制与注意事项)
 9. [恢复微雪原厂固件](#9-恢复微雪原厂固件)
 10. [TTS 服务端：Azure Speech 注册 + Docker 搭建](#10-tts-服务端azure-speech-注册--docker-搭建)
-11. [许可证](#11-许可证)
+11. [自建中继（可选，进阶）](#11-自建中继可选进阶)
+12. [许可证](#12-许可证)
 
 ---
 
 ## 更新记录
 
 只保留正式版与最新测试版；逐条改动见各版本的 Release 说明与 git 历史。
+
+### v1.5h（2026-11-04，测试版）
+
+- 开机优先走代理：端点开关直读 NVS，第一次账号查询不再白等 15 秒，「connecting / cannot connect」随之消失（实测会话建立 13–19 秒）。
+- 设置页新增独立 **TTS** 标签：服务器（只填主机）、音色、鉴权、语速，可从设备直接填，公开固件不必再编进服务地址与令牌。
+- 自建中继支持 `k=` 令牌校验（账号 API、VM 会话、TTS 三条通道共用一枚），域名泄露也挡得住；部署见第 11 节。
+- 稳定性：音频初始化失败重试、I2S 与 LCD 缓冲收紧、设置页返回路径不再重启。
 
 ### v1.5g（2026-11-01，测试版）
 
@@ -692,7 +700,76 @@ CONFIG_MUSE_TTS_URL="http://<tts-host>:5050/tts?voice=zh-CN-XiaoxiaoNeural&text=
 
 ---
 
-## 11. 许可证
+## 11. 自建中继（可选，进阶）
+
+直连 `api.muse.ai` 与 VM 主机在部分网络下会握手失败或超时。做法是拿一台有公网
+IP 的机器（VPS、家里有公网地址的服务器都行）做反向代理，设备改连你的域名。
+
+### 11.1 三条通道
+
+| 用途 | 代理到 | 说明 |
+|---|---|---|
+| 账号 API（`/fetch_vms`、令牌换取） | `api.muse.ai` | 普通 HTTPS |
+| VM 会话（`/v1/noise` WebSocket） | VM 边缘主机 | 必须转发 `Upgrade` / `Connection` |
+| TTS（可选） | 你自己的 `tts-server` | 见第 10 节 |
+
+### 11.2 必须校验令牌
+
+代理一旦上线，域名就是公开入口：**任何知道它的人都能用你的带宽和配额**，所以每个
+vhost 都要一枚共享令牌，设备以 `k=<token>` 形式带在查询串里。
+
+```
+location / {
+    # 令牌不对直接挡在门外，请求不会走到上游。
+    if ($arg_k != "<your-token>") {
+        return 403;
+    }
+    proxy_pass https://<upstream>;
+    proxy_http_version 1.1;
+    proxy_set_header Host <upstream-host>;
+    # WebSocket 通道需要这两行
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection $connection_upgrade;
+    proxy_request_buffering off;   # 音频/会话要流式
+    proxy_buffering off;
+    proxy_read_timeout 300s;
+}
+```
+
+三条通道可以共用同一枚令牌。令牌只是「不让人白用」，不是强身份认证：它不进公开
+仓库、不贴机身，抓空口也拿不到。
+
+> 用 MAC 地址做鉴权不可行：MAC 是二层地址，出公网进不了 IP 包，代理端看不到；
+> 让设备自报 MAC 再比对，安全性还不如这枚随机令牌，且换板子就要改白名单。
+
+### 11.3 固件侧
+
+三项都写进 **不入库** 的 `esp32/devices/sdkconfig.local`（模板见同目录
+`sdkconfig.local.example`）：
+
+```
+CONFIG_MUSE_PROXY_API_URL="https://api-relay.example.com"
+CONFIG_MUSE_PROXY_VM_HOST="vm-relay.example.com"
+CONFIG_MUSE_PROXY_TOKEN="<your-token>"
+```
+
+设备侧只填主机名，不带 `https://` 也可（固件自动补 scheme）；TTS 的服务器/音色/
+密钥可以在设备 **设置 → TTS** 页里填，不必编进固件。
+
+### 11.4 验收
+
+```
+# 代理端：不带令牌应当 403，带了应当走到上游（4xx/200 都算过了闸门）
+curl -o /dev/null -w '%{http_code}\n' https://api-relay.example.com/
+curl -o /dev/null -w '%{http_code}\n' "https://api-relay.example.com/?k=<your-token>"
+```
+
+板子串口应当看到：`muse endpoints: relay` → `link.vm_api: HTTP 200 … (attempt 1)`
+→ `WebSocket upgraded to /v1/noise` → `connected to VM … in N ms`，全程无 403。
+
+---
+
+## 12. 许可证
 
 本项目采用 **Apache License 2.0**（见 [`LICENSE`](LICENSE)），但以下第三方文件保留其上游许可证：
 
