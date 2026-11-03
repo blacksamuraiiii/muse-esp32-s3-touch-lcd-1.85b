@@ -16,7 +16,10 @@ cd "$(git rev-parse --show-toplevel 2>/dev/null || echo .)" || exit 1
 
 # Patterns: personal domain, relay/worker suffixes, the VPS IP, the speech token
 # prefix used in this project, the house SSID and the LAN prefix.
-PATTERNS='(blacksamurai\.(top|xyz)|239818\.xyz|124\.220\.19\.238|REDACTED-TOKEN|example-ssid|10\.168\.2\.)'
+# Personal markers, by shape rather than by value: a personal domain, a relay
+# suffix seen in this project, the VPS address, a 32-hex shared secret in a
+# query string (`k=...`), the house SSID prefix and the LAN prefix.
+PATTERNS='(blacksamurai\.(top|xyz)|239818\.xyz|124\.220\.19\.238|k=[0-9a-f]{32}|Xiaomi_[0-9]+|10\.168\.[0-9]+\.)'
 
 files=$( { git diff --cached --name-only --diff-filter=ACM; git ls-files; } | sort -u )
 hits=0
