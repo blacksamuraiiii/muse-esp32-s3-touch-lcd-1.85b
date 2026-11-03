@@ -111,6 +111,9 @@ FORCE_VOICE = os.environ.get("TTS_FORCE_VOICE", "").strip()
 # or per request via ?rate=/&pitch=. Units differ per backend, see file header.
 DEFAULT_RATE = os.environ.get("TTS_RATE", "+8%")
 DEFAULT_PITCH = os.environ.get("TTS_PITCH", "+4%")
+# Shared secret for the public relay: the board carries it in the URL as &k=...
+# Empty keeps the old open behaviour, which is right for a LAN-only service.
+TTS_TOKEN = os.environ.get("TTS_TOKEN", "").strip()
 
 _RATE_RE = re.compile(r"^[+-]\d+%$")
 _PITCH_RE = {"azure": re.compile(r"^[+-]\d+%$"), "edge": re.compile(r"^[+-]\d+Hz$")}
@@ -445,6 +448,9 @@ def _synth(backend, text, voice, rate, pitch) -> bytes:
 
 @app.route("/tts")
 def tts():
+    # Behind the public relay: no token, no speech. The board sends k=...
+    if TTS_TOKEN and request.args.get("k") != TTS_TOKEN:
+        return "forbidden", 403
     text = request.args.get("text") or request.args.get("q") or ""
     voice = FORCE_VOICE or request.args.get("voice") or DEFAULT_VOICE
     rate = request.args.get("rate") or DEFAULT_RATE
@@ -545,6 +551,8 @@ def _fallback_prosody(rate, pitch):
 
 @app.route("/health")
 def health():
+    # Not a security boundary: the container is published on 127.0.0.1 only and
+    # nginx answers 403 for /health. This just keeps the probe answer cheap.
     return Response(
         json.dumps(
             {

@@ -94,6 +94,7 @@ static char s_join_ssid[MUSE_SSID_MAX + 1];
 
 /* Hatch page. */
 static lv_obj_t *s_hatch_status, *s_hatch_host, *s_hatch_vm, *s_hatch_token, *s_hatch_sdk_token;
+static lv_obj_t *s_proxy_sw;
 static lv_obj_t *s_link_status, *s_link_reset_lbl;
 static int64_t s_link_reset_armed_us;
 static int64_t s_sdk_token_bad_us;   /* when an invalid SDK token was entered */
@@ -856,6 +857,14 @@ static void tick_wifi(void)
 static void on_hatch_host_done(const char *text) { muse_settings_set_hatch_host(text); }
 static void on_hatch_vm_done(const char *text) { muse_settings_set_hatch_vm(text); }
 
+/* Off: api.muse.ai and hatch.metaaivm.com direct. On: the relay hostnames
+ * compiled in from CONFIG_MUSE_PROXY_*. Link applies the API base, the chat
+ * session re-reads the host, so no restart is needed. */
+static void on_proxy_sw(lv_event_t *e)
+{
+    muse_settings_set_proxy(lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED));
+}
+
 static void on_hatch_token_done(const char *text)
 {
     if (text[0]) {
@@ -928,6 +937,7 @@ static void build_hatch_page(lv_obj_t *tile)
     s_link_status = note(list, "");
     button(list, "Reset pairing", MUSE_THEME_DANGER, on_link_reset, &s_link_reset_lbl);
     s_hatch_status = note(list, "");
+    s_proxy_sw = switch_row(list, "Muse proxy", muse_settings_proxy(), on_proxy_sw);
     row(list, NULL, "Server", &s_hatch_host, on_hatch_host, NULL);
     row(list, NULL, "VM ID", &s_hatch_vm, on_hatch_vm, NULL);
     row(list, NULL, "Device token", &s_hatch_token, on_hatch_token, NULL);
@@ -936,6 +946,7 @@ static void build_hatch_page(lv_obj_t *tile)
     note(list, "Pair with the Muse app to use your account; a device token here overrides it, and a long one is "
                "easier to send over Bluetooth. The VM ID picks one of your VMs. The SDK token is from "
                "gadgets.muse.ai; one set here replaces the firmware's. "
+               "Muse proxy reaches the same servers through the relay, for a network that blocks them. "
                "Reset pairing forgets Wi-Fi and the app pairing, then restarts.");
 }
 
