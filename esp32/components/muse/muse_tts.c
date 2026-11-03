@@ -342,9 +342,15 @@ static const char *tts_template(void)
     if (!url[0]) {
         return CONFIG_MUSE_TTS_URL;
     }
-    /* strlcat keeps every append bounded, which is also what keeps GCC
-     * quiet about format-truncation on the query fields. */
-    strlcpy(buf, url, sizeof(buf));
+    /* The settings page asks for a bare host, the way the Muse server row does,
+     * so a value without a scheme gets https:// here. A full URL is used as
+     * written. */
+    if (strstr(url, "://")) {
+        strlcpy(buf, url, sizeof(buf));
+    } else {
+        strlcpy(buf, "https://", sizeof(buf));
+        strlcat(buf, url, sizeof(buf));
+    }
     bool have_query = strchr(buf, '?') != NULL;
     if (key[0]) {
         strlcat(buf, have_query ? "&k=" : "?k=", sizeof(buf));
