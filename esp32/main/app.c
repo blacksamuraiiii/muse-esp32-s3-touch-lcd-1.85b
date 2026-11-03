@@ -45,6 +45,7 @@
 #include "identity.h"
 #include "sdk_token_console.h"
 #include "config_store.h"
+#include "nvs.h"
 #include "wifi_mgr.h"
 #include "wifi_known.h"
 #include "customer_product_info.h"
@@ -105,21 +106,43 @@ static const char *HEARTBEAT_TAG = "link.heartbeat";
 // the next connect uses the host that was just set.
 static bool s_proxy_endpoints_on;
 
-static void apply_muse_proxy_endpoints(void) {
-    /* The relay host is personal infrastructure, so it is not compiled in from
-     * Kconfig any more: it comes from devices/sdkconfig.local (git-ignored).
-     * A build without it keeps the switch inert rather than pointing the device
-     * at a host this firmware does not own. */
+/* Apply the endpoints for a given switch state. Split out because the boot path
+ * cannot ask muse_settings: that module is initialised later (muse_glue's boot
+ * task), so asking it early returns the default and every boot started on the
+ * direct host, burning one 15 s timeout before the relay was applied. */
+static void apply_muse_endpoints(bool on)
+{
     const bool configured = CONFIG_MUSE_PROXY_API_URL[0] != '\0';
-    bool on = muse_settings_proxy() && configured;
-    if (muse_settings_proxy() && !configured) {
+    if (on && !configured) {
         ESP_LOGW(TAG, "relay switch is on but no relay base is configured; staying direct");
+        on = false;
     }
     vm_api_set_base_url(on ? CONFIG_MUSE_PROXY_API_URL : NULL);
     noise_ctrl_set_host(on ? CONFIG_MUSE_PROXY_VM_HOST : NULL);
     s_proxy_endpoints_on = on;
     ESP_LOGI(TAG, "muse endpoints: %s", on ? "relay" : "direct");
     muse_hatch_config_changed();
+}
+
+/* One read straight from the Muse settings namespace, used at boot before that
+ * module is up. Everywhere else the loaded setting is authoritative. */
+static bool proxy_switch_stored(void)
+{
+    nvs_handle_t h;
+    uint8_t v = 0;
+    bool on = false;
+    if (nvs_open("muse", NVS_READONLY, &h) == ESP_OK) {
+        if (nvs_get_u8(h, "proxy", &v) == ESP_OK) {
+            on = v != 0;
+        }
+        nvs_close(h);
+    }
+    return on;
+}
+
+static void apply_muse_proxy_endpoints(void)
+{
+    apply_muse_endpoints(muse_settings_proxy());
 }
 
 /* From the glue, right after muse_app_run() has loaded the settings: that is
@@ -2860,10 +2883,10 @@ void app_run(void) {
         config_erase_key("noise_host");
     }
 
-    // The relay switch cannot be honoured here: muse_settings_init() runs later
-    // (muse_glue's boot task, ~2 s after this point), so the switch would read
-    // its default and every boot would start direct even with the relay on.
-    // app_muse_endpoints_apply() re-runs this once Muse's settings are loaded.
+    // The relay switch cannot be read through muse_settings yet (that module loads
+    // later), so it is read straight from NVS here: the first account lookup, a
+    // couple of seconds from now, must already go to the right host.
+    apply_muse_endpoints(proxy_switch_stored());
 
     bool skip_boot_scan = false;
     if (setup_complete && !CONFIG_HOMEHUB_WIFI_SSID[0]) {
