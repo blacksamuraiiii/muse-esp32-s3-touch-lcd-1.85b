@@ -69,6 +69,8 @@ void noise_ctrl_set_agent_name_cb(noise_ctrl_agent_name_cb cb);
 
 // Override the Noise host. NULL or empty restores the compiled default.
 void noise_ctrl_set_host(const char *host);
+/* Token sent as k= on the upgrade; empty when the host is not a relay. */
+void noise_ctrl_set_relay_token(const char *token);
 
 // Off (the default), the session checks for traffic every tick. On, once it
 // has been quiet POWER_SAVE_QUIET_MS, every POWER_SAVE_POLL_MS instead, so the

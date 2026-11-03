@@ -91,7 +91,7 @@ static void test_the_worst_case_macro_is_actually_the_worst_case(void) {
 static int build(const char *vm_id, const char *token, char *out,
                  size_t out_cap) {
     return noise_upgrade_build_request("/v1/noise", vm_id,
-                                       "muse-gadget.vm.example", token,
+                                       "muse-gadget.vm.example", token, "",
                                        out, out_cap);
 }
 
@@ -119,6 +119,20 @@ static void test_the_request_carries_the_exact_token_in_a_header(void) {
     assert(strstr(line, "auth_token") == NULL);
     assert(strstr(line, TOKEN) == NULL);
     assert(strstr(line, "Bearer") == NULL);
+}
+
+/* A relay gates on k= in the request target; a direct host must not grow the
+ * parameter at all. */
+static void test_the_request_carries_the_relay_token_only_when_set(void) {
+    char req[1024];
+    int n = noise_upgrade_build_request("/v1/noise", UUID, "muse-gadget.vm.example",
+                                       TOKEN, "abc123", req, sizeof(req));
+    assert(n > 0 && strstr(req, "vm_id=") && strstr(req, "&k=abc123"));
+    n = build(UUID, TOKEN, req, sizeof(req));
+    assert(n > 0 && !strstr(req, "&k="));
+    n = noise_upgrade_build_request("/v1/noise", UUID, "muse-gadget.vm.example",
+                                    TOKEN, "bad token", req, sizeof(req));
+    assert(n < 0);
 }
 
 static void test_a_real_uuid_produces_a_byte_identical_target(void) {

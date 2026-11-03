@@ -280,6 +280,15 @@ menu "Muse"
             order. Off restores the 1.5c behaviour: speak only once a message
             is done, whole message at a time.
 
+    config MUSE_PROXY_TOKEN
+        string "Shared token the relays require as k= (empty: send none)"
+        default ""
+        help
+            When the account API and the VM host point at a relay you run, the
+            relay can refuse requests that do not carry this token as the k=
+            query parameter. Empty by default: the public tree ships no token,
+            and a relay that does not gate ignores the parameter anyway.
+
     config MUSE_PROXY_API_URL
         string "Account API base used when the on-device proxy switch is on"
         default ""

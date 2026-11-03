@@ -63,6 +63,7 @@ static const char *TAG = "link.noise_ctrl";
 
 #define NOISE_DEFAULT_HOST "hatch.metaaivm.com"
 static char s_noise_host[256] = NOISE_DEFAULT_HOST;
+static char s_relay_token[96];   /* k= gate on the relay, empty for a direct host */
 #define NOISE_PATH       "/v1/noise"
 #define NOISE_PORT       443
 #define CTRL_STREAM_ID   1
@@ -687,7 +688,7 @@ static noise_upgrade_result_t ws_upgrade(esp_tls_t *tls) {
     // rejecting CR/LF are all decisions worth asserting on real bytes.
     // Auth tokens can be ~1-2 KB, so the buffer is heap, not the 12 KB
     // noise_ctrl task stack.
-    size_t req_cap = 512 + NOISE_UPGRADE_ESCAPED_CAP(sizeof(s_vm_id))
+    size_t req_cap = 512 + sizeof(s_relay_token) + NOISE_UPGRADE_ESCAPED_CAP(sizeof(s_vm_id))
                      + (s_auth_token ? strlen(s_auth_token) : 0);
     char *req = static_cast<char *>(malloc(req_cap));
     if (!req) {
@@ -696,7 +697,7 @@ static noise_upgrade_result_t ws_upgrade(esp_tls_t *tls) {
     }
     int req_len = noise_upgrade_build_request(
         NOISE_PATH, s_vm_id, s_noise_host,
-        s_auth_token ? s_auth_token : "", req, req_cap);
+        s_auth_token ? s_auth_token : "", s_relay_token, req, req_cap);
 
     if (req_len <= 0) {
         ESP_LOGE(TAG, "upgrade request rejected before send");
@@ -2530,6 +2531,10 @@ extern "C" void noise_ctrl_set_power_save(bool on) {
 extern "C" void noise_ctrl_set_host(const char *host) {
     snprintf(s_noise_host, sizeof(s_noise_host), "%s",
              host && *host ? host : NOISE_DEFAULT_HOST);
+}
+
+extern "C" void noise_ctrl_set_relay_token(const char *token) {
+    snprintf(s_relay_token, sizeof(s_relay_token), "%s", token ? token : "");
 }
 
 extern "C" bool noise_ctrl_connect(const char *vm_id, const char *auth_token,
