@@ -150,8 +150,12 @@ static esp_err_t open_codecs(void)
 
 esp_err_t muse_audio_init(int volume, int mic_gain_db)
 {
-    s_lock = xSemaphoreCreateMutex();
-    ESP_RETURN_ON_FALSE(s_lock, ESP_ERR_NO_MEM, TAG, "audio lock");
+    /* muse_voice_start retries this while the boot heap settles. The lock is
+     * permanent, so a retry must not leak a second copy of it. */
+    if (!s_lock && !(s_lock = xSemaphoreCreateMutex())) {
+        ESP_LOGE(TAG, "audio lock");
+        return ESP_ERR_NO_MEM;
+    }
     /* Before anything opens a codec: the capture frame width is the board's,
      * and the ES7210 has to be told the same number the rx channel carries. */
     s_in_slots = muse_board->mic_slots > 0 ? muse_board->mic_slots : 2;
@@ -474,7 +478,15 @@ float muse_audio_level(const int16_t *mono, size_t frames)
 void muse_audio_chirp(int rising)
 {
     enum { MS = 90, N = MUSE_AUDIO_RATE * MS / 1000 };
-    static int16_t buf[N];
+    /* Regenerated on every call, so it does not need to be static DRAM: a
+     * 2.9 KB internal block buys nothing here, and internal RAM is what the
+     * I2S rings need at boot. Kept between calls only to avoid a malloc per
+     * chirp. */
+    static int16_t *buf;
+    if (!buf) {
+        buf = (int16_t *)heap_caps_malloc(N * sizeof(int16_t), MALLOC_CAP_SPIRAM);
+        if (!buf) return;
+    }
     float f0 = rising ? 620.0f : 980.0f;
     float f1 = rising ? 1180.0f : 560.0f;
     float phase = 0;

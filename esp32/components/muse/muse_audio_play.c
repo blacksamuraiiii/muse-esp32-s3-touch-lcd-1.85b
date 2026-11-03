@@ -56,7 +56,10 @@ static bool s_dropped;
 
 static uint8_t *s_mp3;
 static size_t s_len;
-static mp3dec_t s_dec;
+/* Decoder state is 6.7 KB and is touched only by the decode path (no DMA,
+ * no ISR), so it lives in PSRAM and leaves that much internal RAM to the
+ * I2S rings that need it. */
+static mp3dec_t *s_dec;
 static int16_t *s_pcm;      /* MINIMP3_MAX_SAMPLES_PER_FRAME */
 static int16_t *s_pcm16;    /* resampled, worst case one output per input */
 static down_rs_t s_rs;
@@ -64,14 +67,17 @@ static int s_in_rate;
 
 static bool ensure_buffers(void)
 {
-    if (s_mp3 && s_pcm && s_pcm16) return true;
+    if (s_dec && s_mp3 && s_pcm && s_pcm16) return true;
+    s_dec = (mp3dec_t *)heap_caps_malloc(sizeof(mp3dec_t), MALLOC_CAP_SPIRAM);
     s_mp3 = (uint8_t *)heap_caps_malloc(MP3_BUF, MALLOC_CAP_SPIRAM);
     s_pcm = (int16_t *)heap_caps_malloc(MINIMP3_MAX_SAMPLES_PER_FRAME * sizeof(int16_t), MALLOC_CAP_SPIRAM);
     s_pcm16 = (int16_t *)heap_caps_malloc(MINIMP3_MAX_SAMPLES_PER_FRAME * 2 * sizeof(int16_t), MALLOC_CAP_SPIRAM);
-    if (!s_mp3 || !s_pcm || !s_pcm16) {
+    if (!s_dec || !s_mp3 || !s_pcm || !s_pcm16) {
         /* Free whatever landed. Leaving a partial set behind would pass the
          * s_mp3 sentinel on the next call with s_pcm/s_pcm16 still NULL and
          * crash the decoder on the first frame. */
+        free(s_dec);
+        s_dec = NULL;
         free(s_mp3);
         s_mp3 = NULL;
         free(s_pcm);
@@ -81,7 +87,7 @@ static bool ensure_buffers(void)
         ESP_LOGE(TAG, "no buffer for playback (need %d KB of PSRAM)", (MP3_BUF + 3 * 4096) / 1024);
         return false;
     }
-    mp3dec_init(&s_dec);
+    mp3dec_init(s_dec);
     return true;
 }
 
@@ -139,7 +145,7 @@ static void drain(bool last)
     size_t off = 0;
     mp3dec_frame_info_t info;
     while (s_len - off > hold) {
-        int samples = mp3dec_decode_frame(&s_dec, s_mp3 + off, s_len - off, s_pcm, &info);
+        int samples = mp3dec_decode_frame(s_dec, s_mp3 + off, s_len - off, s_pcm, &info);
         if (!info.frame_bytes) break;
         off += info.frame_bytes;
         if (!samples) continue;
@@ -207,7 +213,7 @@ static void play_task(void *arg)
     if (ensure_buffers()) {
         s_len = 0;
         s_in_rate = 0;
-        mp3dec_init(&s_dec);
+        mp3dec_init(s_dec);
         const esp_http_client_config_t cfg = {
             .url = req->url,
             .method = HTTP_METHOD_GET,
