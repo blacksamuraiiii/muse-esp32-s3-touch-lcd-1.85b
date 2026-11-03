@@ -74,8 +74,11 @@ if(CONFIG_MUSE_ENABLED)
     endif()
     list(APPEND srcs "muse_chat_text.c")
     if(CONFIG_MUSE_CJK_FONT)
-        list(APPEND srcs "fonts/muse_font_cjk_16.c")   # CJK fallback (Unifont 16 px 1bpp)
-        list(APPEND srcs "fonts/muse_font_ui_16.c")    # 16 px 4bpp level-1 face, the one CJK face (1.5b)
+        list(APPEND srcs "fonts/muse_font_cjk_noto_16.c")  # the one CJK face: Noto Sans SC Medium 16 px 4bpp (GB2312)
+        list(APPEND srcs "fonts/muse_font_sym_16.c")       # symbol tail neither Noto nor Montserrat has (DejaVu Sans 16 px 4bpp)
+        # NOTE: fonts/muse_font_ui_16.c (Source Han level-1) and
+        # fonts/muse_font_cjk_16.c (Unifont) stay in the tree but are no
+        # longer compiled; the flash saving comes from this exclusion.
     endif()
     # Your own character (tools/muse/AVATAR_RECIPE.md) stands in for the default
     # avatar when avatar/muse_pixel.c exists here; this avatar/ is gitignored. The

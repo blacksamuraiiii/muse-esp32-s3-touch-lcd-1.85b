@@ -32,6 +32,7 @@
 #include "h264bsd_reconstruct.h"   /* h264bsdPieState() */
 #endif
 #include "muse_board.h"
+#include "muse_font.h"
 #include "muse_mem.h"
 #include "muse_state.h"
 #include "muse_theme.h"
@@ -1151,12 +1152,12 @@ static void build(void)
     lv_obj_set_style_bg_opa(s_root, LV_OPA_COVER, 0);
     lv_obj_remove_flag(s_root, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
     s_title = lv_label_create(s_root);
-    lv_obj_set_style_text_font(s_title, &lv_font_montserrat_20, 0);
+    lv_obj_set_style_text_font(s_title, muse_font_btn(), 0);
     lv_obj_set_style_text_color(s_title, lv_color_hex(MUSE_THEME_ACCENT), 0);
     lv_label_set_text(s_title, "PHONE CAMERA");
     lv_obj_align(s_title, LV_ALIGN_CENTER, 0, -24);
     s_caption = lv_label_create(s_root);
-    lv_obj_set_style_text_font(s_caption, &lv_font_montserrat_20, 0);
+    lv_obj_set_style_text_font(s_caption, muse_font_btn(), 0);
     lv_obj_set_style_text_color(s_caption, lv_color_hex(MUSE_THEME_TEXT), 0);
     lv_obj_set_style_text_align(s_caption, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_width(s_caption, muse_board->width * 3 / 4);
