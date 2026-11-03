@@ -2392,26 +2392,38 @@ extern "C" muse_hatch_ev_t muse_hatch_turn_event(char *text, size_t cap)
 
 extern "C" bool muse_hatch_turn_caption(size_t played, char *out, size_t cap)
 {
+    /* Written by the session task, read here from the UI task: no lock, so
+     * take one snapshot of the two fields that bound the walk (the turn may be
+     * reset under us) and clamp every index and length against the arrays.
+     * The visible worst case used to be a character or two of another
+     * sentence; the bound check keeps it from ever becoming an overrun. */
+    char *const texts = s_turn.texts;
+    int nmsgs = s_turn.nmsgs;
+    if (nmsgs < 0) nmsgs = 0;
+    if (nmsgs > MAX_MSGS) nmsgs = MAX_MSGS;
     /* The message being spoken: the last one whose speech has started. */
     const msg_t *m = nullptr;
     const char *text = nullptr;
-    for (int i = 0; i < s_turn.nmsgs && s_turn.texts; i++) {
+    for (int i = 0; i < nmsgs && texts; i++) {
         const msg_t &c = s_turn.msgs[i];
-        if (c.tts >= TTS_ACTIVE && c.len && c.pcm_start <= played) {
+        if (c.len && c.len <= TEXT_MAX && c.tts >= TTS_ACTIVE && c.pcm_start <= played) {
             m = &c;
-            text = s_turn.texts + i * TEXT_MAX;
+            text = texts + i * TEXT_MAX;
         }
     }
     if (!m) {
         /* Nothing said yet: the reply's opening page, to read while the speech is on its way. */
-        for (int i = 0; i < s_turn.nmsgs && s_turn.texts; i++) {
+        for (int i = 0; i < nmsgs && texts; i++) {
             if (s_turn.msgs[i].len) {
-                return muse_hatch_caption_at(s_turn.texts + i * TEXT_MAX, 0, out, cap);
+                return muse_hatch_caption_at(texts + i * TEXT_MAX, 0, out, cap);
             }
         }
         return false;
     }
-    size_t len = strlen(text);
+    /* Bounded strlen: the buffer is TEXT_MAX and is rewritten while the turn
+     * resets, so never walk past it looking for a NUL (m->len counts bytes the
+     * caption buffer may have dropped, so it is not the same number). */
+    size_t len = strnlen(text, TEXT_MAX - 1);
     uint32_t frames = m->pcm_frames ? m->pcm_frames : (uint32_t)(len * MIC_RATE / SPEECH_CHARS_PER_S);
     size_t at = frames ? (size_t)((uint64_t)(played - m->pcm_start) * len / frames) : 0;
     if (!s_turn.silent && at > m->spoken) {
