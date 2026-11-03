@@ -58,8 +58,8 @@ typedef void (*text_done_cb_t)(const char *text);
 static int s_text_scale = 466;
 static lv_obj_t *s_tile;
 static lv_obj_t *s_current;
-static lv_obj_t *s_home, *s_wifi, *s_hatch, *s_ble, *s_sound, *s_sleep, *s_battery, *s_power, *s_text,
-    *s_alarm;
+static lv_obj_t *s_home, *s_wifi, *s_hatch, *s_speech, *s_ble, *s_sound, *s_sleep, *s_battery, *s_power,
+    *s_text, *s_alarm;
 
 /*
  * Only home is kept. A sub-page is built when it opens and deleted on the way
@@ -73,7 +73,7 @@ typedef struct {
 
 /* Home values. */
 static lv_obj_t *s_home_wifi, *s_home_hatch, *s_home_ble, *s_home_sound, *s_home_sleep, *s_home_battery, *s_about,
-    *s_home_update, *s_home_alarm;
+    *s_home_update, *s_home_alarm, *s_home_speech;
 #if CONFIG_MUSE_VIDEO
 static lv_obj_t *s_home_camera;
 #endif
@@ -376,7 +376,8 @@ static lv_obj_t *info_row(lv_obj_t *list, const char *text)
 
 static void drop(lv_obj_t *p)
 {
-    lv_obj_t **const pages[] = { &s_wifi, &s_hatch, &s_ble, &s_sound, &s_sleep, &s_battery, &s_power, &s_update, &s_text };
+    lv_obj_t **const pages[] = { &s_wifi, &s_hatch, &s_speech, &s_ble, &s_sound, &s_sleep, &s_battery,
+                                  &s_power, &s_update, &s_text };
     for (size_t i = 0; i < sizeof(pages) / sizeof(pages[0]); i++) {
         if (*pages[i] == p) {
             *pages[i] = NULL;
@@ -1014,11 +1015,6 @@ static void build_hatch_page(lv_obj_t *tile)
     button(list, "Reset pairing", MUSE_THEME_DANGER, on_link_reset, &s_link_reset_lbl);
     s_hatch_status = note(list, "");
     s_proxy_sw = switch_row(list, "Muse proxy", muse_settings_proxy(), on_proxy_sw);
-    row(list, NULL, "Speech server", &s_sp_url, on_sp_url, NULL);
-    row(list, NULL, "Speech voice", &s_sp_voice, on_sp_voice, NULL);
-    row(list, NULL, "Speech key", &s_sp_key, on_sp_key, NULL);
-    row(list, NULL, "Speech rate", &s_sp_rate, on_sp_rate, NULL);
-    refresh_speech_rows();
     row(list, NULL, "Server", &s_hatch_host, on_hatch_host, NULL);
     row(list, NULL, "VM ID", &s_hatch_vm, on_hatch_vm, NULL);
     row(list, NULL, "Device token", &s_hatch_token, on_hatch_token, NULL);
@@ -1033,7 +1029,6 @@ static void build_hatch_page(lv_obj_t *tile)
 
 static void tick_hatch(void)
 {
-    refresh_speech_rows();
     char link[96];
     const char *paired = !muse_link_hatch_linked()    ? "not paired"
                          : muse_link_sdk_token_changed() ? "paired with another SDK token, pair again to use this one"
@@ -1091,6 +1086,29 @@ static void on_ble_forget(lv_event_t *e)
 {
     (void)e;
     muse_ble_forget_all();
+}
+
+/* TTS: the speech service this build talks to. Kept off the MUSE page because
+ * it is a separate service with its own host, voice and shared secret. */
+static void build_speech_page(lv_obj_t *tile)
+{
+    lv_obj_t *list;
+    s_speech = page(tile, "TTS", true, &list);
+    row(list, NULL, "Server", &s_sp_url, on_sp_url, NULL);
+    row(list, NULL, "Voice", &s_sp_voice, on_sp_voice, NULL);
+    row(list, NULL, "Auth key", &s_sp_key, on_sp_key, NULL);
+    row(list, NULL, "Rate", &s_sp_rate, on_sp_rate, NULL);
+    note(list, "Replies are spoken by this service. Every field empty means " 
+               "the endpoint compiled into this build is used; filling the " 
+               "server here overrides it, so a public build can ship without " 
+               "one. The key is sent as k=... in the query and is stored on " 
+               "the device only.");
+    refresh_speech_rows();
+}
+
+static void tick_speech(void)
+{
+    refresh_speech_rows();
 }
 
 static void build_ble_page(lv_obj_t *tile)
@@ -1556,6 +1574,7 @@ static void tick_update(void)
 
 static const page_t WIFI = { &s_wifi, build_wifi_page };
 static const page_t HATCH = { &s_hatch, build_hatch_page };
+static const page_t SPEECH = { &s_speech, build_speech_page };
 static const page_t BLE = { &s_ble, build_ble_page };
 static const page_t SOUND = { &s_sound, build_sound_page };
 static const page_t SLEEP = { &s_sleep, build_sleep_page };
@@ -1579,6 +1598,7 @@ static void build_home(lv_obj_t *tile)
     s_home = page(tile, "SETTINGS", false, &list);
     row(list, LV_SYMBOL_WIFI, "Wi-Fi", &s_home_wifi, on_nav, (void *)&WIFI);
     row(list, LV_SYMBOL_HOME, "Muse", &s_home_hatch, on_nav, (void *)&HATCH);
+    row(list, LV_SYMBOL_AUDIO, "TTS", &s_home_speech, on_nav, (void *)&SPEECH);
     row(list, LV_SYMBOL_BLUETOOTH, "Bluetooth", &s_home_ble, on_nav, (void *)&BLE);
     row(list, LV_SYMBOL_VOLUME_MAX, "Sound", &s_home_sound, on_nav, (void *)&SOUND);
     row(list, LV_SYMBOL_EYE_CLOSE, "Sleep", &s_home_sleep, on_nav, (void *)&SLEEP);
@@ -1610,6 +1630,13 @@ static void tick_home(void)
     muse_hatch_status_t h;
     muse_hatch_status(&h);
     set_text(s_home_hatch, muse_hatch_state_name(h.state));
+
+    {
+        char u[MUSE_SPEECH_URL_MAX + 1] = {0}, v[MUSE_SPEECH_VOICE_MAX + 1] = {0};
+        char k[MUSE_SPEECH_KEY_MAX + 1] = {0}, r[MUSE_SPEECH_RATE_MAX + 1] = {0};
+        muse_settings_speech(u, sizeof(u), v, sizeof(v), k, sizeof(k), r, sizeof(r));
+        set_text(s_home_speech, u[0] ? (k[0] ? "Set, key stored" : "Set") : "From build");
+    }
 
     muse_ble_status_t b;
     muse_ble_status(&b);
@@ -1686,6 +1713,8 @@ void muse_settings_ui_tick(bool visible)
         tick_wifi();
     } else if (s_current == s_hatch) {
         tick_hatch();
+    } else if (s_current == s_speech) {
+        tick_speech();
     } else if (s_current == s_ble) {
         tick_ble();
     } else if (s_current == s_sound) {
