@@ -1467,32 +1467,31 @@ static void update_chrome(float now)
         lv_obj_t *active = lv_tileview_get_tile_active(s_tv);
         int page = active == s_interact ? 0 : (active == s_face ? 1 : 2);
         bool subpage = muse_settings_ui_in_subpage();
-        /* Two locks now. Settings subpages lock the swipe (1.4d), and so does
-         * every interaction subpage (2026-11-05): 喂饭 / 小游戏 / 今日运势 and
-         * the four game pages leave only through their top-left back button.
-         * The games added their lock on 2026-10-31 because their buttons sit on
-         * the margin of a 360px circle, where the default 10px scroll limit
-         * (1.3mm on this panel) turned a slightly drifting press into a tile
-         * scroll -- the button lost its LV_EVENT_CLICKED and the round was
-         * abandoned mid-play. The interaction main page still swipes. */
+        /* Two locks now. Settings subpages lock the swipe (1.4d), and so
+         * does every interaction subpage (2026-11-04; the lock started
+         * with the four game pages on 2026-10-31, whose buttons sit on
+         * the margin of a 360px circle, where the default 10px scroll
+         * limit (1.3mm on this panel) turned a slightly drifting press
+         * into a tile scroll -- the button lost its LV_EVENT_CLICKED
+         * and the round was abandoned mid-play). Only the interaction
+         * main page swipes, right to the face. */
         bool locked = page == 0 && muse_interact_ui_swipe_locked();
         bool swipe = !((page == 2 && subpage) || locked);
         if (swipe != lv_obj_has_flag(s_tv, LV_OBJ_FLAG_SCROLLABLE)) {
             lv_obj_set_flag(s_tv, LV_OBJ_FLAG_SCROLLABLE, swipe);
         }
         /* The dots advertise a swipe, so they go wherever the swipe goes:
-         * the settings subpages (1.4d) and, since 2026-11-05, every
-         * interaction subpage. Their left/right swipe was cancelled with the
-         * lock above, and the three 8px dots were left sitting over the
-         * subpage's own bottom controls -- on the sudoku page they landed
-         * inside the 提示 pill (126..234 x 310..346, the dots occupy
-         * 160..200 x 338..346), which read as three unexplained dots under
-         * the game. The interaction main page still swipes, so it keeps its
-         * dots. */
+         * the settings subpages (1.4d) and, since 2026-11-04, every
+         * interaction subpage. Their left/right swipe was cancelled with
+         * the lock above, and the three 8px dots were left sitting over
+         * the subpage's own bottom controls -- on the sudoku page they
+         * landed inside the 提示 pill (126..234 x 310..346, the dots
+         * occupy 160..200 x 338..346), which read as three unexplained
+         * dots under the game. */
         bool dots_hidden = (page == 2 && subpage) || locked;
-        /* The key carries the dot state as well: a game page is not a
-         * top-level tile change, so "page + subpage" alone would not re-run
-         * this block when a game opens or closes. */
+        /* The key carries the dot state as well: an interaction subpage
+         * is not a top-level tile change, so "page + subpage" alone would
+         * not re-run this block when a subpage opens or closes. */
         int shown = (page * 3 + (subpage ? 1 : 0)) * 2 + (dots_hidden ? 1 : 0);
         if (shown != s_shown_page) {
             for (int i = 0; i < 3; i++) {
