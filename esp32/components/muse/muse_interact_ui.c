@@ -46,16 +46,19 @@
  *     rule: its coin line sits at y = 300 and the "点一张手出拳，每局
  *     -5 金币" cost hint at y = 84 (swapped, 2026-11-01, user request),
  *     because the result / streak lines already own y = 240 / 272.
- *     Tile swipe stays ENABLED on the feed, fortune and minigame-list
- *     pages, so swiping away from them is legal and
- *     muse_interact_ui_on_hidden() resets the page. The four GAME pages
- *     (小游戏 / 数独 / 贪吃蛇 / 打地鼠) are the exception since
- *     2026-10-31: their buttons sit near the rim of the 360px circle
- *     and the default 10px scroll limit turned a slightly drifting
- *     press into a tile scroll, which swallowed the click and dropped
- *     the player out of the round. muse_interact_ui_swipe_locked()
+ *     Tile swipe is DISABLED on every interaction subpage (feed,
+ *     fortune, minigame list and the four game boards): a subpage
+ *     leaves only through its "<" back arrow, one level up, and the
+ *     interaction main page is the only one that swipes (right to the
+ *     face). The lock started with the four GAME pages on 2026-10-31
+ *     (their buttons sit near the rim of the 360px circle and the
+ *     default 10px scroll limit turned a slightly drifting press into
+ *     a tile scroll, which swallowed the click and dropped the player
+ *     out of the round) and was extended to the feed, fortune and
+ *     minigame-list pages on 2026-11-04. muse_interact_ui_swipe_locked()
  *     reports that state and muse_ui.c applies it with the same rule it
- *     already uses for settings subpages.
+ *     already uses for settings subpages. muse_interact_ui_on_hidden()
+ *     still resets the page when the tile is left (BOOT included).
  *
  * Colours: the shared table in muse_theme.h (1.5b), values taken from 1.4d
  *   muse_settings_ui.c / muse_ui.c, NOT invented. DANGER is the in-repo
@@ -303,11 +306,14 @@ static void show_page(int page)
 
 bool muse_interact_ui_swipe_locked(void)
 {
-    /* Every interaction subpage, not just the four games (user decision
-     * 2026-11-05): a swipe right on 喂饭 / 小游戏 / 今日运势 used to leave the
-     * interaction tile for the face, which reads as "the page closed itself
-     * mid-task". A subpage now leaves only through its own top-left back
-     * button; the interaction main page keeps the swipe to the face. */
+    /* Any interaction subpage: 喂食, 今日运势, 小游戏 (the minigame list)
+     * and the four game boards (小游戏 / 贪吃蛇 / 数独 / 打地鼠). Only the
+     * main page swipes, right to the face. A subpage leaves through its
+     * "<" back arrow, one level up; BOOT is the exception, and it does not
+     * go through here (the voice task switches to the face and starts a
+     * turn). The game boards were the original lock (2026-10-31, rim
+     * buttons); the feed, fortune and minigame-list pages joined it on
+     * 2026-11-04. */
     return s_page != IC_PAGE_MAIN;
 }
 
