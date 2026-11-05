@@ -194,11 +194,15 @@ bool muse_pet_model_valid(const muse_pet_model_t *s);
 uint32_t muse_pet_round_coins(uint32_t score);
 
 /* Day-boundary offset, in seconds, added to the UTC epoch before dividing
- * by 86400. 0 (the default, user decision 2026-10-25) means the day rolls
- * over at 00:00 UTC, i.e. 08:00 Beijing time -- NOT at local midnight.
- * To move the boundary to local midnight later, change ONLY this constant
- * to 8*3600; no call-site logic changes. */
-#define MUSE_PET_DAY_OFFSET_SECONDS 0
+ * by 86400. 8*3600 puts the boundary at local midnight in China (UTC+8),
+ * which is what the owner reads as "today" (user decision 2026-11-05: with
+ * 0 the day rolled at 08:00 Beijing time, so a feed before 8 a.m. still hit
+ * yesterday's ledger and answered "already fed today" every morning).
+ * Change ONLY this constant to move the boundary; no call-site logic
+ * changes. The day number stays TZ-independent in shape -- it is still
+ * epoch arithmetic, just shifted -- so fortune / living cost / the daily
+ * caps all roll together. */
+#define MUSE_PET_DAY_OFFSET_SECONDS (8 * 3600)
 
 /*
  * UTC calendar-day number for `now` (epoch / 86400, gmtime semantics),

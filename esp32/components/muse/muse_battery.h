@@ -62,6 +62,12 @@ void muse_battery_reset(void);
 
 void muse_battery_read(muse_battery_t *out);
 
+/* One line describing the gauge learning cycle: charge to 100%, discharge to
+ * 10%, charge again; the cycle count is appended once one is done. The CEDV
+ * model written at init is a reference cell's, so the gauge reads low until it
+ * has re-learned this pack over one full cycle. */
+void muse_battery_learn_text(char *buf, size_t cap);
+
 /* Once the gauge has moved, after at least 10 minutes: the drain in tenths of a
  * percent an hour, and how many hours a full charge lasts at that rate. */
 bool muse_battery_drain(const muse_battery_t *b, int *rate10, int *full_h);

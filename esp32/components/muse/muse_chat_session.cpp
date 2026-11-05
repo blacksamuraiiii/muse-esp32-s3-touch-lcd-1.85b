@@ -1017,6 +1017,10 @@ static void turn_done(bool complete)
     turn_finish();
 }
 
+/* Defined below the turn code; turn_start() drops a stale session before it
+ * opens a new turn. */
+static void drop_connection(const char *why);
+
 /* Ends any turn in progress and starts a fresh one. False if Hatch can't be reached. */
 static bool turn_start(uint32_t gen, bool text)
 {
@@ -1041,6 +1045,15 @@ static bool turn_start(uint32_t gen, bool text)
     s_reply_shown[0] = '\0';
     s_turn.start_us = now_us();
     resampler_init(&s_turn.up, MIC_RATE, DICT_RATE);
+    /* A session that has been silent for longer than two keepalive intervals
+     * is not worth a request: the relay or a NAT can drop the tunnel while
+     * s_connected still says "up", and then the turn's first POST is the one
+     * that finds out -- the owner sees "CAN'T REACH MUSE" and presses again.
+     * Drop it here, so the turn opens on a fresh session instead. P_IDLE was
+     * just restored above, so drop_connection() cannot fail a turn. */
+    if (s_connected && now_us() - s_conn.last_rx_us > 2 * PING_US) {
+        drop_connection("stale before turn");
+    }
     if (!ensure_connected()) {
         turn_fail(muse_hatch_configured() ? "CAN'T REACH MUSE" : "MUSE NOT SET UP");
         return false;
@@ -1214,12 +1227,29 @@ static void send_chat(const char *text, const char *modality)
     cJSON_Delete(body);
     size_t len = json ? strlen(json) : 0;
     bool whole = len <= CHAT_PART;
-    s_turn.chat_id = json ? open_stream(K_CHAT, "POST", "/chat/stream", "application/json", nullptr,
-                                        whole ? json : nullptr, whole) : 0;
-    bool ok = s_turn.chat_id != 0;
-    for (size_t off = 0; ok && !whole && off < len; off += CHAT_PART) {
-        size_t n = len - off < CHAT_PART ? len - off : CHAT_PART;
-        ok = send_body(s_turn.chat_id, reinterpret_cast<const uint8_t *>(json) + off, n, off + n == len);
+    bool ok = false;
+    /* One automatic retry on a fresh session. The long-lived connection can be
+     * dead without s_connected knowing (a relay restart, a NAT timeout), and
+     * the first POST is what finds out -- the owner then pressed again until
+     * it went through. Reconnecting here does that press for them. A turn that
+     * never got an ack cannot have reached Muse, so the retry cannot post the
+     * same message twice. */
+    for (int attempt = 0; json && attempt < 2; attempt++) {
+        s_turn.chat_id = open_stream(K_CHAT, "POST", "/chat/stream", "application/json", nullptr,
+                                     whole ? json : nullptr, whole);
+        ok = s_turn.chat_id != 0;
+        for (size_t off = 0; ok && !whole && off < len; off += CHAT_PART) {
+            size_t n = len - off < CHAT_PART ? len - off : CHAT_PART;
+            ok = send_body(s_turn.chat_id, reinterpret_cast<const uint8_t *>(json) + off, n, off + n == len);
+        }
+        if (ok || attempt > 0) {
+            break;
+        }
+        ESP_LOGW(TAG, "chat/stream failed, reconnecting once");
+        disconnect("chat/stream retry");
+        if (!ensure_connected()) {
+            break;
+        }
     }
     cJSON_free(json);
     if (!ok) {

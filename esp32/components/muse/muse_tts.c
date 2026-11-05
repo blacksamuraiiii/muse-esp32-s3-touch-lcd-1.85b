@@ -513,6 +513,14 @@ bool muse_tts_enqueue(const char *text)
     s_pending = copy;
     s_fetch_done = false;
     s_busy = true;
+    /* Every queued sentence is its own request, so an abort raised while the
+     * previous one was fetched must not outlive it. s_abort is set by a full
+     * ring, a payload that is not MP3, or a stalled socket -- all per-request
+     * failures. Only muse_tts_speak() used to clear it, which is once per
+     * reply: after one failed sentence the streaming path queued the rest
+     * with s_abort still true, fetch_reply() skipped its loop, and the whole
+     * reply after the first sentence played silent. */
+    s_abort = false;
     taskEXIT_CRITICAL(&s_lock);
     free(stale);
     xTaskNotifyGive(s_task);

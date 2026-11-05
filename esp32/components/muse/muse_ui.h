@@ -43,6 +43,10 @@ bool muse_ui_face_control_at(int x, int y);
 
 /* Slide back to the face (e.g. when a talk starts). */
 void muse_ui_show_face(void);
+/* Ask the LVGL task to slide back to the face on its next frame. Safe from any
+ * task; used by the talk key (BOOT), which must leave any page and start the
+ * turn on the face. */
+void muse_ui_request_face(void);
 /* Settings sub-pages turn off the tile swipe so they can use horizontal gestures. */
 void muse_ui_set_swipe_enabled(bool enabled);
 /* Temporarily applies a brightness while a slider is dragged. */

@@ -116,7 +116,7 @@ static int s_sleep_shown = -1;
 
 /* Battery page. */
 static lv_obj_t *s_batt_status, *s_batt_level, *s_batt_drain, *s_batt_full, *s_batt_off, *s_batt_slept, *s_batt_wakes,
-    *s_batt_busy, *s_batt_awake;
+    *s_batt_busy, *s_batt_awake, *s_batt_learn;
 static int64_t s_batt_shown_us;
 
 /* Update page (over the air, from Link's own release channel). */
@@ -1487,6 +1487,7 @@ static void build_battery_page(lv_obj_t *tile)
     s_batt_shown_us = 0;
     s_batt_status = note(list, "");
     s_batt_level = info_row(list, "Battery");
+    s_batt_learn = info_row(list, "Gauge learn");
     s_batt_drain = info_row(list, "Used");
     s_batt_full = info_row(list, "A full charge");
     s_batt_off = info_row(list, "Screen off");
@@ -1543,6 +1544,10 @@ static void tick_battery(void)
         snprintf(buf, sizeof(buf), "%s%d%%", p.charging ? LV_SYMBOL_CHARGE " " : "", p.battery_pct);
     }
     set_text(s_batt_level, buf);
+
+    char learn[64];
+    muse_battery_learn_text(learn, sizeof(learn));
+    set_text(s_batt_learn, learn);
 
     int used = b.pct_start - b.pct_now, rate10, full_h;
     if (!b.started) {
