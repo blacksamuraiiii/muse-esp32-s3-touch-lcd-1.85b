@@ -121,6 +121,17 @@ static size_t s_rest_free_min;   /* lowest free internal RAM seen resting this r
 static bool s_cpu_pd;            /* the CPU powers down in light sleep (muse_input_power_init) */
 static muse_power_t s_power = { .battery_pct = -1 };
 
+/* Gauge learning cycle (user decision 2026-11-05). The CEDV model written at
+ * init is a reference cell's, not this pack's, so the gauge's SOC drifts low --
+ * it read 0% at 3.76 V while the board still ran. A full -> empty -> full
+ * cycle is what lets the gauge re-learn capacity; this only records how far
+ * the owner has got, so the Battery page and ">batt" can say what to do next.
+ * States: idle (nothing seen), full seen (charge to 100% was seen), empty
+ * seen (then discharged to 10%: one more full charge completes the cycle). */
+enum { LEARN_IDLE = 0, LEARN_FULL_SEEN = 1, LEARN_EMPTY_SEEN = 2 };
+static uint8_t s_learn;
+static uint16_t s_learn_done;   /* completed full -> empty -> full cycles */
+
 #if CONFIG_PM_LIGHT_SLEEP_CALLBACKS
 static portMUX_TYPE s_sleep_lock = portMUX_INITIALIZER_UNLOCKED;
 static int64_t s_slept_us;
@@ -400,6 +411,14 @@ void muse_battery_init(void)
         s_nvs = 0;
     } else {
         nvs_get_u16(s_nvs, "boots", &s_boots);
+        uint8_t learn = 0;
+        uint16_t done = 0;
+        if (nvs_get_u8(s_nvs, "learn", &learn) == ESP_OK && learn <= LEARN_EMPTY_SEEN) {
+            s_learn = learn;
+        }
+        if (nvs_get_u16(s_nvs, "learn_done", &done) == ESP_OK) {
+            s_learn_done = done;
+        }
     }
     size_t n = SAVED_MAX;
     if (s_saved.magic == SAVED_MAGIC && s_saved.len < SAVED_MAX && s_saved.sum == checksum(s_saved.json, s_saved.len)) {
@@ -429,10 +448,45 @@ void muse_battery_init(void)
 #endif
 }
 
+/* Records one battery reading into the learning-cycle state machine. Runs
+ * inside note_power()'s lock, so s_learn/s_learn_done are not shared. NVS is
+ * written only when the state changes, which happens a handful of times per
+ * cycle. */
+static void learn_note(const muse_power_t *p)
+{
+    if (p->battery_pct < 0) {
+        return;
+    }
+    uint8_t before = s_learn;
+    uint16_t done_before = s_learn_done;
+    if (p->charging && p->battery_pct >= 99) {
+        if (s_learn == LEARN_EMPTY_SEEN) {
+            s_learn = LEARN_IDLE;      /* full -> empty -> full: cycle complete */
+            if (s_learn_done != 0xFFFF) {
+                s_learn_done++;
+            }
+        } else if (s_learn == LEARN_IDLE) {
+            s_learn = LEARN_FULL_SEEN;
+        }
+    } else if (!p->charging && s_learn == LEARN_FULL_SEEN && p->battery_pct <= 10) {
+        s_learn = LEARN_EMPTY_SEEN;
+    }
+    if (s_learn != before || s_learn_done != done_before) {
+        if (s_nvs) {
+            nvs_set_u8(s_nvs, "learn", s_learn);
+            nvs_set_u16(s_nvs, "learn_done", s_learn_done);
+            nvs_commit(s_nvs);
+        }
+        ESP_LOGI(TAG, "gauge learn: state %u -> %u, done %u", (unsigned)before,
+                 (unsigned)s_learn, (unsigned)s_learn_done);
+    }
+}
+
 void muse_battery_note_power(const muse_power_t *p, bool on_battery)
 {
     xSemaphoreTake(s_lock, portMAX_DELAY);
     s_power = *p;
+    learn_note(p);
     if (p->usb && !s_seen_usb) {
         s_seen_usb = true;
         if (s_boots) {
@@ -459,6 +513,27 @@ void muse_battery_note_power(const muse_power_t *p, bool on_battery)
         }
     }
     xSemaphoreGive(s_lock);
+}
+
+/* One line for the Battery page and ">batt": what to do next in the learning
+ * cycle, plus how many cycles are done. Reads the state without the lock --
+ * it is one byte, and a torn read only ever shows the previous instruction. */
+void muse_battery_learn_text(char *buf, size_t cap)
+{
+    if (!buf || cap == 0) {
+        return;
+    }
+    const char *what = "Charge to 100%";
+    if (s_learn == LEARN_FULL_SEEN) {
+        what = "Discharge to 10%";
+    } else if (s_learn == LEARN_EMPTY_SEEN) {
+        what = "Charge to 100% again";
+    }
+    if (s_learn_done) {
+        snprintf(buf, cap, "%s (%u done)", what, (unsigned)s_learn_done);
+    } else {
+        snprintf(buf, cap, "%s", what);
+    }
 }
 
 void muse_battery_note_state(bool screen_off, bool resting)

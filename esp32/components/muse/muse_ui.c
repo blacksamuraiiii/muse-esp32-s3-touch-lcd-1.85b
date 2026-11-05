@@ -1467,27 +1467,29 @@ static void update_chrome(float now)
         lv_obj_t *active = lv_tileview_get_tile_active(s_tv);
         int page = active == s_interact ? 0 : (active == s_face ? 1 : 2);
         bool subpage = muse_settings_ui_in_subpage();
-        /* Two locks now. Settings subpages lock the swipe (1.4d), and so do
-         * the four game pages (2026-10-31): their buttons sit on the margin
-         * of a 360px circle, where the default 10px scroll limit (1.3mm on
-         * this panel) turned a slightly drifting press into a tile scroll --
-         * the button lost its LV_EVENT_CLICKED and the round was abandoned
-         * mid-play. Feed / fortune / minigame-list still swipe. */
-        bool game = page == 0 && muse_interact_ui_swipe_locked();
-        bool swipe = !((page == 2 && subpage) || game);
+        /* Two locks now. Settings subpages lock the swipe (1.4d), and so does
+         * every interaction subpage (2026-11-05): 喂饭 / 小游戏 / 今日运势 and
+         * the four game pages leave only through their top-left back button.
+         * The games added their lock on 2026-10-31 because their buttons sit on
+         * the margin of a 360px circle, where the default 10px scroll limit
+         * (1.3mm on this panel) turned a slightly drifting press into a tile
+         * scroll -- the button lost its LV_EVENT_CLICKED and the round was
+         * abandoned mid-play. The interaction main page still swipes. */
+        bool locked = page == 0 && muse_interact_ui_swipe_locked();
+        bool swipe = !((page == 2 && subpage) || locked);
         if (swipe != lv_obj_has_flag(s_tv, LV_OBJ_FLAG_SCROLLABLE)) {
             lv_obj_set_flag(s_tv, LV_OBJ_FLAG_SCROLLABLE, swipe);
         }
         /* The dots advertise a swipe, so they go wherever the swipe goes:
-         * the settings subpages (1.4d) and, since 2026-11-01, the four game
-         * pages. Their left/right swipe was cancelled with the lock above,
-         * and the three 8px dots were left sitting over the game's own
-         * bottom controls -- on the sudoku page they landed inside the
-         * 提示 pill (126..234 x 310..346, the dots occupy 160..200 x
-         * 338..346), which read as three unexplained dots under the game.
-         * The minigame LIST still swipes (it is a four-row list, not a
-         * board), so it keeps its dots. */
-        bool dots_hidden = (page == 2 && subpage) || game;
+         * the settings subpages (1.4d) and, since 2026-11-05, every
+         * interaction subpage. Their left/right swipe was cancelled with the
+         * lock above, and the three 8px dots were left sitting over the
+         * subpage's own bottom controls -- on the sudoku page they landed
+         * inside the 提示 pill (126..234 x 310..346, the dots occupy
+         * 160..200 x 338..346), which read as three unexplained dots under
+         * the game. The interaction main page still swipes, so it keeps its
+         * dots. */
+        bool dots_hidden = (page == 2 && subpage) || locked;
         /* The key carries the dot state as well: a game page is not a
          * top-level tile change, so "page + subpage" alone would not re-run
          * this block when a game opens or closes. */
@@ -1776,6 +1778,9 @@ static void update_status(muse_mode_t mode, float now)
 }
 
 static volatile bool s_snapshot;
+/* Set by the talk key from the input task, applied on the next frame: LVGL is
+ * not thread-safe, so the input task cannot call lv_tileview_set_tile itself. */
+static volatile bool s_face_request;
 #if LV_USE_SNAPSHOT
 static volatile int s_bench_page = -1;
 void muse_ui_bench_page(bool settings)
@@ -1849,6 +1854,11 @@ static void frame_tick(lv_timer_t *timer)
     }
 #endif
     update_control_hints(muse_state_mode(NULL));
+    if (s_face_request) {
+        s_face_request = false;
+        image_hide_locked();
+        muse_ui_show_face();
+    }
     if (s_snapshot) {
         s_snapshot = false;
         send_snapshot();
@@ -1981,6 +1991,14 @@ void muse_ui_show_face(void)
     }
     lv_obj_add_flag(s_tv, LV_OBJ_FLAG_SCROLLABLE);
     lv_tileview_set_tile(s_tv, s_face, muse_board->epaper ? LV_ANIM_OFF : LV_ANIM_ON);
+}
+
+/* BOOT is the talk key: a press on any page starts the turn on the face.
+ * Called from the input task, so it only raises a flag -- frame_tick() does
+ * the LVGL work. */
+void muse_ui_request_face(void)
+{
+    s_face_request = true;
 }
 
 void muse_ui_set_swipe_enabled(bool enabled)

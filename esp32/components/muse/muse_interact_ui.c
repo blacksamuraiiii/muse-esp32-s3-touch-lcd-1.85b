@@ -303,11 +303,12 @@ static void show_page(int page)
 
 bool muse_interact_ui_swipe_locked(void)
 {
-    /* The four games: 小游戏 (rock/paper/scissors), 贪吃蛇, 数独 and 打地鼠.
-     * They are played with buttons that sit close to the rim, so a drag of a
-     * few pixels must not be read as a tile swipe. */
-    return s_page == IC_PAGE_GAME || s_page == IC_PAGE_SUDOKU ||
-           s_page == IC_PAGE_SNAKE || s_page == IC_PAGE_WHACKAMOLE;
+    /* Every interaction subpage, not just the four games (user decision
+     * 2026-11-05): a swipe right on 喂饭 / 小游戏 / 今日运势 used to leave the
+     * interaction tile for the face, which reads as "the page closed itself
+     * mid-task". A subpage now leaves only through its own top-left back
+     * button; the interaction main page keeps the swipe to the face. */
+    return s_page != IC_PAGE_MAIN;
 }
 
 static void on_back(lv_event_t *e)

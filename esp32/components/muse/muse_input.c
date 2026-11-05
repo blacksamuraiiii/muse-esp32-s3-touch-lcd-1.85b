@@ -580,6 +580,11 @@ static void talk_button(unsigned ev)
             if (!muse_board->keyboard) muse_menu_key(MUSE_MENU_SELECT);
             swallow = true;
         } else {
+            /* BOOT is the talk key on this board (user decision 2026-11-05):
+             * a press on any page goes back to the face and starts the turn
+             * there, so a subpage never hides the conversation it opens. The
+             * flag is applied by the LVGL task, not here. */
+            muse_ui_request_face();
             post(MUSE_PTT_DOWN, false);
             talk_down = true;
         }
@@ -1435,6 +1440,9 @@ static bool console_command(char *line, bool whole)
         } else {
             ESP_LOGI(TAG, "this board has no fuel gauge to dump");
         }
+        char learn[64];
+        muse_battery_learn_text(learn, sizeof(learn));
+        ESP_LOGI(TAG, "  GaugeLearn           %s", learn);
         return true;
     }
     if (!strcmp(line, "tp")) {
