@@ -1217,12 +1217,18 @@ static bool record_note(void)
  * Posts `text` to the chat and waits for the reply. A long message goes up in
  * parts, since each frame has to fit SCRATCH.
  */
-static void send_chat(const char *text, const char *modality)
+static void send_chat(const char *text, const char *modality, bool spoken)
 {
     s_turn.chat_posted = true;
     cJSON *body = cJSON_CreateObject();
     cJSON_AddStringToObject(body, "message", text);
     cJSON_AddStringToObject(body, "output_modality", modality);
+    if (spoken) {
+        /* A spoken turn names the device, so Muse answers in short plain
+         * sentences without Markdown -- which is what the sentence-by-sentence
+         * TTS wants (upstream 314). A typed turn keeps full replies. */
+        cJSON_AddStringToObject(body, "device", MUSE_CHAT_SPOKEN_DEVICE);
+    }
     char *json = cJSON_PrintUnformatted(body);
     cJSON_Delete(body);
     size_t len = json ? strlen(json) : 0;
@@ -1279,7 +1285,7 @@ static void post_chat(const char *text)
     }
     ESP_LOGI(TAG, "heard: \"%s\"", text);
     emit(MUSE_HATCH_EV_HEARD, text);
-    send_chat(text, "text");
+    send_chat(text, "text", true);
 }
 
 /* A typed turn: the text goes straight to the chat. */
@@ -1289,7 +1295,7 @@ static void text_begin(const char *text)
         return;
     }
     ESP_LOGI(TAG, "typed turn: %u bytes", (unsigned)strlen(text));
-    send_chat(text, "text");
+    send_chat(text, "text", false);
     if (s_turn.phase == P_WAIT_REPLY) {
         mark(M_SENT);
         muse_hatch_console("sent", nullptr, "\"bytes\":%u", (unsigned)strlen(text));
@@ -2310,7 +2316,11 @@ extern "C" void muse_hatch_start(void)
     if (!s_events) {
         s_events = xQueueCreate(16, sizeof(ev_t));
     }
-    s_in = xStreamBufferCreateWithCaps(IN_BYTES, 1, MALLOC_CAP_SPIRAM);
+    /* A byte over: a stream buffer made with caps keeps one back (FreeRTOS's
+     * static buffers do), so an even IN_BYTES would leave an odd number of
+     * bytes of room and a send that fills it would stop halfway through a
+     * 16-bit sample (upstream 300, 2026-11-03). */
+    s_in = xStreamBufferCreateWithCaps(IN_BYTES + 1, 1, MALLOC_CAP_SPIRAM);
     s_out = xStreamBufferCreateWithCaps(OUT_BYTES, 1, MALLOC_CAP_SPIRAM);
     s_turn.chunk = static_cast<uint8_t *>(psram_alloc(DICT_CHUNK_BYTES + sizeof(MUSE_HATCH_NOTE_TAIL)));
     s_turn.mp3 = static_cast<uint8_t *>(psram_alloc(MP3_BUF));
