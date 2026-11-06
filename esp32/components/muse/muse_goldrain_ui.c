@@ -42,7 +42,10 @@
  * once, at OVER). The net is deliberately NOT printed: the user said
  * kids cannot tell net apart, so the result shows what was added, not
  * what was gained after the 5-coin entry fee. 30 s is one round, one
- * point is one coin.
+ * point is one coin. Scoring (user rule 2026-11-06): a coin is +1, a
+ * bomb is -5, so the score can go below zero mid-round; the settlement
+ * floors it at zero (muse_goldrain_settle_score), so a round pays at
+ * most 10 coins and at least 0 -- never a negative amount.
  *
  * Message slot: the band under the field (y=308) hosts exactly one
  * line -- the refusal note wins it, otherwise the score line does.
@@ -229,13 +232,13 @@ static void refresh_display(void)
      * leaves s_round_coins at 0, so the line honestly reads +0. */
     char hud[48];
     if (ph == MUSE_GOLDRAIN_OVER) {
-        snprintf(hud, sizeof(hud), "本局 %lu 分，+%lu 金币",
-                 (unsigned long)s_game.score, (unsigned long)s_round_coins);
+        snprintf(hud, sizeof(hud), "本局 %ld 分，+%lu 金币",
+                 (long)s_game.score, (unsigned long)s_round_coins);
         lv_obj_set_style_text_color(s_hud, lv_color_hex(MUSE_THEME_GOLD),
                                     LV_PART_MAIN);
     } else {
-        snprintf(hud, sizeof(hud), "本局 %lu 分 · 剩余 %lu 秒",
-                 (unsigned long)s_game.score,
+        snprintf(hud, sizeof(hud), "本局 %ld 分 · 剩余 %lu 秒",
+                 (long)s_game.score,
                  (unsigned long)muse_goldrain_remaining_s(&s_game));
         lv_obj_set_style_text_color(s_hud, lv_color_hex(MUSE_THEME_TEXT),
                                     LV_PART_MAIN);
@@ -362,20 +365,25 @@ static void on_pause(lv_event_t *e)
 }
 
 /* Score -> coins, once per round, at OVER (user decision 2026-11-01,
- * ceiling retuned to 10 the same day).
- * muse_pet_round_coins() is the only conversion curve -- 1 point (one coin)
- * per coin, 10 coins per round ceiling -- and the 5-coin entry fee was
- * already charged at start through PET_FEE, so the round's net is payout
- * minus 5, shown on the OVER card. A refused request (worker not ready /
- * queue full) leaves s_round_coins at 0 so the card never claims coins the
- * wallet did not get. */
+ * ceiling retuned to 10 the same day; floor added 2026-11-06).
+ * muse_pet_round_coins() is the only conversion curve -- 1 point (one
+ * coin) per coin, 10 coins per round ceiling -- and the 5-coin entry
+ * fee was already charged at start through PET_FEE, so the round's net
+ * is payout minus 5, shown on the OVER card. The score is floored at
+ * zero first (muse_goldrain_settle_score): a bomb is -5, so a round
+ * can end below zero, and that pays 0 coins, never a negative amount
+ * -- round_coins() takes an unsigned score, so an unfloored negative
+ * would wrap into a huge payout. A refused request (worker not ready /
+ * queue full) leaves s_round_coins at 0 so the card never claims coins
+ * the wallet did not get. */
 static void settle_round(void)
 {
     if (s_settled) {
         return;
     }
     s_settled = true;
-    uint32_t coins = muse_pet_round_coins(s_game.score);
+    uint32_t coins =
+        muse_pet_round_coins(muse_goldrain_settle_score(s_game.score));
     s_round_coins = 0;
     if (coins != 0 && muse_pet_request_play_reward(coins)) {
         s_round_coins = coins;

@@ -4,18 +4,23 @@
  *
  * Coins (and the occasional bomb) fall from the top of the 240x240 field
  * at (60,60); the player moves Buttercup along the bottom to catch them.
- * A game lasts 30 seconds, 3 lives: catching a coin scores one point,
- * catching a bomb costs one life, and the game ends early at 0 lives.
+ * A game lasts 30 seconds, no lives: catching a coin scores one point,
+ * catching a bomb costs five points, and the game never ends early.
  * A coin or bomb that falls past the bottom is simply gone -- no penalty
- * for letting a bomb drop (only catching one hurts).
+ * for letting a bomb drop (only catching one hurts). The score can go
+ * below zero mid-round (a bomb at 2 points leaves -3); at OVER the
+ * settlement floors it at zero -- a round pays at most 10 coins and at
+ * least 0 -- and the 5-coin entry fee was already charged at start.
  *
  * Fall speed is deliberately slow (user request 2026-11-06, "金币下降的
  * 速度不要太快"): 90 px/s at the start, +4 px/s per second of play,
  * capped at 150 px/s. The spawn gap starts at 950 ms and tightens 10 ms
  * per second to a 600 ms floor; at most 6 items fall at once. The score
- * is the coin count (1 point per coin); the coin conversion lives in
- * muse_pet_round_coins() (1 point per coin, 10 coins per round ceiling),
- * never here.
+ * is +1 per coin caught and -5 per bomb caught, so it can go negative;
+ * the coin conversion lives in muse_pet_round_coins() (1 point per coin,
+ * 10 coins per round ceiling), never here, and the UI floors the score
+ * at 0 before calling it (muse_goldrain_settle_score(), below), so a
+ * round that ends below zero pays 0 coins, never a negative amount.
  *
  * Timing is in milliseconds and advances only through
  * muse_goldrain_tick(), so the host test drives it deterministically
@@ -32,7 +37,8 @@
 
 #define MUSE_GOLDRAIN_GAME_MS 30000u
 #define MUSE_GOLDRAIN_TICK_MS 50u
-#define MUSE_GOLDRAIN_LIVES 3u
+/* Points a caught bomb costs (user rule 2026-11-06). */
+#define MUSE_GOLDRAIN_BOMB_PENALTY 5
 #define MUSE_GOLDRAIN_MAX_ITEMS 8
 #define MUSE_GOLDRAIN_MAX_FALLING 6
 /* Field geometry, same 240x240 square the other games use. */
@@ -84,10 +90,9 @@ typedef struct {
     muse_goldrain_phase_t phase;
     muse_goldrain_item_t items[MUSE_GOLDRAIN_MAX_ITEMS];
     float catcher_cx; /* sprite centre x, screen coordinates */
-    uint32_t score;   /* == coins caught: 1 point per coin */
+    int32_t score;    /* +1 per coin, -5 per bomb; may go negative */
     uint32_t caught;
     uint32_t missed;  /* coins that fell past the bottom */
-    uint32_t lives;
     uint32_t elapsed_ms;
     uint32_t spawn_ms; /* ms since the last spawn */
 } muse_goldrain_t;
@@ -111,7 +116,7 @@ void muse_goldrain_restart(muse_goldrain_t *g);
 
 /* Advance the game by `ms` milliseconds. No-op unless PLAYING.
  * Spawns, falls the items, catches and misses, and ends the game at
- * 30 seconds or at 0 lives (items cleared, phase OVER). */
+ * 30 seconds (items cleared, phase OVER). Bombs never end the game. */
 void muse_goldrain_tick(muse_goldrain_t *g, uint32_t ms);
 
 /* Move the catcher: `cx` is the sprite centre x in screen coordinates,
@@ -131,3 +136,12 @@ int muse_goldrain_falling_count(const muse_goldrain_t *g);
 
 /* Remaining whole seconds, rounded up (30 at start, 0 at the end). */
 uint32_t muse_goldrain_remaining_s(const muse_goldrain_t *g);
+
+/* Final score -> the value handed to muse_pet_round_coins(): a round
+ * that ends below zero pays 0 coins (user rule 2026-11-06: at most 10
+ * coins, at least 0). The 10-coin ceiling stays in round_coins(); this
+ * only floors at zero, so it never subtracts from the wallet. */
+static inline uint32_t muse_goldrain_settle_score(int32_t score)
+{
+    return score < 0 ? 0u : (uint32_t)score;
+}

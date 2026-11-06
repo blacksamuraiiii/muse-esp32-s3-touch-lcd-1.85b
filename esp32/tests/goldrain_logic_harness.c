@@ -49,7 +49,6 @@ int main(void)
     muse_goldrain_init(&g);
     assert(g.phase == MUSE_GOLDRAIN_START);
     assert(g.score == 0 && g.caught == 0 && g.missed == 0);
-    assert(g.lives == MUSE_GOLDRAIN_LIVES);
     assert(g.elapsed_ms == 0);
     assert(muse_goldrain_falling_count(&g) == 0);
     assert(muse_goldrain_remaining_s(&g) == 30);
@@ -116,33 +115,39 @@ int main(void)
     assert(g.missed == 2 && g.score == 1);
     assert(muse_goldrain_falling_count(&g) == 0);
 
-    /* Bomb caught: -1 life. Bomb dropped past the bottom: no penalty. */
+    /* Bomb caught: -5 points, and the score can go below zero. Bombs
+     * never end the round early: the game only ends at 30 s. Bomb
+     * dropped past the bottom: no penalty. */
     clear_all(&g);
     muse_goldrain_set_catcher(&g, 180.0f);
     place_item(&g, MUSE_GOLDRAIN_BOMB, 180.0f,
                (float)CATCH_LINE - (float)MUSE_GOLDRAIN_COIN_PX - 2.0f);
     muse_goldrain_tick(&g, MUSE_GOLDRAIN_TICK_MS);
-    assert(g.lives == 2 && g.score == 1);
+    assert(g.score == -4 && g.phase == MUSE_GOLDRAIN_PLAYING);
     clear_all(&g);
     place_item(&g, MUSE_GOLDRAIN_BOMB, 80.0f, (float)FIELD_BOTTOM - 20.0f);
     muse_goldrain_tick(&g, MUSE_GOLDRAIN_TICK_MS);
-    assert(g.lives == 2);
+    assert(g.score == -4);
 
-    /* Third bomb ends the game early. */
+    /* A second bomb: still playing, score keeps dropping. */
     clear_all(&g);
-    g.lives = 1;
     muse_goldrain_set_catcher(&g, 180.0f);
     place_item(&g, MUSE_GOLDRAIN_BOMB, 180.0f,
                (float)CATCH_LINE - (float)MUSE_GOLDRAIN_COIN_PX - 2.0f);
     muse_goldrain_tick(&g, MUSE_GOLDRAIN_TICK_MS);
-    assert(g.phase == MUSE_GOLDRAIN_OVER);
-    assert(g.lives == 0);
-    assert(muse_goldrain_falling_count(&g) == 0);
+    assert(g.score == -9 && g.phase == MUSE_GOLDRAIN_PLAYING);
+
+    /* Settlement floor: a negative final score pays 0 coins (the
+     * 10-coin ceiling is muse_pet_round_coins()' job, not this one). */
+    assert(muse_goldrain_settle_score(-5) == 0u);
+    assert(muse_goldrain_settle_score(0) == 0u);
+    assert(muse_goldrain_settle_score(7) == 7u);
+    assert(muse_goldrain_settle_score(12) == 12u);
 
     /* Restart after OVER: fresh game, fee is the UI's job. */
     muse_goldrain_restart(&g);
     assert(g.phase == MUSE_GOLDRAIN_PLAYING);
-    assert(g.score == 0 && g.lives == MUSE_GOLDRAIN_LIVES);
+    assert(g.score == 0);
     assert(muse_goldrain_falling_count(&g) == 1);
 
     /* Catcher clamps to the field. */
@@ -172,11 +177,11 @@ int main(void)
     assert(muse_goldrain_spawn_gap_ms(&g) == 600);
     assert(muse_goldrain_remaining_s(&g) == 0);
 
-    /* The 30 s timer ends the round. Bombs cannot end it early here:
-     * lives are set high so a random bomb catch does not cut the run. */
+    /* The 30 s timer ends the round. Bombs cannot end it early: there
+     * is no lives mechanic any more, the game always runs the full
+     * 30 seconds. */
     muse_goldrain_init(&g);
     muse_goldrain_start(&g);
-    g.lives = 99;
     tick_n(&g, 599); /* 29.95 s, still playing */
     assert(g.phase == MUSE_GOLDRAIN_PLAYING);
     assert(muse_goldrain_remaining_s(&g) == 1);
