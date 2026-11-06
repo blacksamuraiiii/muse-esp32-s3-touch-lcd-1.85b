@@ -79,6 +79,7 @@
 #include "muse_goldrain.h"
 #include "muse_goldrain_art.h"
 #include "muse_imu.h"
+#include "muse_state.h"     /* poke: no auto-sleep while a round runs */
 
 /* Tilt calibration (user decision 2026-11-06: accelerometer, official
  * module, coins not too fast). The board is held screen-up, facing
@@ -87,13 +88,18 @@
  * axis and should move her nearly across the 240 px field
  * (40 px per m/s^2 * 5.6 = 224 px). Dead zone: ~3 degrees, so a
  * hand-held board that is not perfectly level does not drift her.
- * Sign: +1 means positive ax runs her right; flip to -1 if the
- * on-device check shows her running the wrong way (the chip's
- * mounting orientation decides this, not the datasheet). */
+ * Sign: -1 since the 1.6b on-device check -- the user reported that
+ * left-edge-down (right side up) ran her right, so the chip's X axis
+ * on this board points the other way than the mockup assumed. Flip
+ * back to +1 only if a future board mounts the chip rotated.
+ * Speed: she eases toward the tilt target at MUSE_GOLDRAIN_TILT_MAX_PX_S
+ * (1.6a jumped straight there in one 50 ms tick, which read as a
+ * teleport); a finger drag is still 1:1 under the finger. */
 #define MUSE_GOLDRAIN_TILT_GAIN_PX_PER_MS2 40.0f
 #define MUSE_GOLDRAIN_TILT_DEADZONE_MS2 0.5f
 #define MUSE_GOLDRAIN_TILT_SMOOTH 0.35f
-#define MUSE_GOLDRAIN_TILT_SIGN 1.0f
+#define MUSE_GOLDRAIN_TILT_SIGN -1.0f
+#define MUSE_GOLDRAIN_TILT_MAX_PX_S 130.0f
 /* Hold to pause: the finger stays within this radius for this long. */
 #define MUSE_GOLDRAIN_HOLD_MS 500u
 #define MUSE_GOLDRAIN_HOLD_MOVE_PX 12
@@ -411,7 +417,17 @@ static void update_tilt(void)
         s_tilt_cx = (float)(MUSE_GOLDRAIN_FIELD_X + MUSE_GOLDRAIN_FIELD_SIZE / 2) +
                     MUSE_GOLDRAIN_TILT_SIGN * MUSE_GOLDRAIN_TILT_GAIN_PX_PER_MS2 *
                         s_ax_filt;
-        muse_goldrain_set_catcher(&s_game, s_tilt_cx);
+        /* Glide, don't teleport (1.6b): one tick is 50 ms, so a raw jump
+         * to the target crosses the whole field between two frames. */
+        const float step = MUSE_GOLDRAIN_TILT_MAX_PX_S *
+                           (float)MUSE_GOLDRAIN_TICK_MS / 1000.0f;
+        float next = s_tilt_cx;
+        if (next > s_game.catcher_cx + step) {
+            next = s_game.catcher_cx + step;
+        } else if (next < s_game.catcher_cx - step) {
+            next = s_game.catcher_cx - step;
+        }
+        muse_goldrain_set_catcher(&s_game, next);
     }
 }
 
@@ -421,6 +437,10 @@ static void on_tick(lv_timer_t *timer)
     if (s_game.phase != MUSE_GOLDRAIN_PLAYING) {
         return;
     }
+    /* A running round is activity: playing by tilt alone never touches
+     * the screen, so without this the idle timer slept the screen
+     * mid-round (1.6b; same idiom as video playback and a voice turn). */
+    muse_state_poke();
     /* Hold to pause: the finger stayed within ~12 px for 500 ms. A
      * drag that lingers never reaches this branch (s_press_moved). */
     if (s_press_active && !s_press_moved &&
