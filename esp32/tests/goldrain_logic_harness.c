@@ -52,7 +52,7 @@ int main(void)
     assert(g.elapsed_ms == 0);
     assert(muse_goldrain_falling_count(&g) == 0);
     assert(muse_goldrain_remaining_s(&g) == 30);
-    assert(fabsf(muse_goldrain_speed_px_s(&g) - 90.0f) < 0.01f);
+    assert(fabsf(muse_goldrain_speed_px_s(&g) - 65.0f) < 0.01f);
     assert(muse_goldrain_spawn_gap_ms(&g) == 950);
 
     /* Phase guards before start. */
@@ -74,10 +74,10 @@ int main(void)
     muse_goldrain_start(&g); /* no-op from PLAYING */
     assert(muse_goldrain_falling_count(&g) == 1);
 
-    /* Fall speed: 90 px/s at the start, 4.5 px per 50 ms tick. */
+    /* Fall speed: 65 px/s at the start, 3.25 px per 50 ms tick. */
     float y0 = g.items[0].y;
     muse_goldrain_tick(&g, MUSE_GOLDRAIN_TICK_MS);
-    assert(fabsf(g.items[0].y - (y0 + 4.5f)) < 0.01f);
+    assert(fabsf(g.items[0].y - (y0 + 3.25f)) < 0.01f);
 
     /* Spawn gap: no second item before 950 ms. */
     tick_n(&g, 17); /* 18 ticks total = 900 ms */
@@ -170,10 +170,10 @@ int main(void)
     /* Speed and gap curves (pure functions, so the floor/cap are
      * checked with elapsed set directly). */
     g.elapsed_ms = 10000;
-    assert(fabsf(muse_goldrain_speed_px_s(&g) - 130.0f) < 0.01f);
+    assert(fabsf(muse_goldrain_speed_px_s(&g) - 95.0f) < 0.01f);
     assert(muse_goldrain_spawn_gap_ms(&g) == 850);
     g.elapsed_ms = 60000;
-    assert(fabsf(muse_goldrain_speed_px_s(&g) - 150.0f) < 0.01f);
+    assert(fabsf(muse_goldrain_speed_px_s(&g) - 110.0f) < 0.01f);
     assert(muse_goldrain_spawn_gap_ms(&g) == 600);
     assert(muse_goldrain_remaining_s(&g) == 0);
 

@@ -54,14 +54,15 @@
  * it. */
 #define MUSE_GOLDRAIN_CATCH_Y \
     (MUSE_GOLDRAIN_FIELD_Y + MUSE_GOLDRAIN_FIELD_SIZE - MUSE_GOLDRAIN_SPRITE_H)
-/* Fall speed curve (user: not too fast): 90 px/s at the start, +4 px/s
- * per second, capped at 150 px/s. Spawn gap: 950 ms at the start, -10 ms
+/* Fall speed curve (user: not too fast; slowed again 2026-11-06 after
+ * the 1.6a try-out): 65 px/s at the start, +3 px/s per second, capped at
+ * 110 px/s. Spawn gap: 950 ms at the start, -10 ms
  * per second, floored at 600 ms. Bomb chance per spawn: 15%. These are
  * the only knobs for game speed; the host harness derives its
  * expectations from them. */
-#define MUSE_GOLDRAIN_SPEED_START_PX_S 90.0f
-#define MUSE_GOLDRAIN_SPEED_STEP_PX_S 4.0f
-#define MUSE_GOLDRAIN_SPEED_MAX_PX_S 150.0f
+#define MUSE_GOLDRAIN_SPEED_START_PX_S 65.0f
+#define MUSE_GOLDRAIN_SPEED_STEP_PX_S 3.0f
+#define MUSE_GOLDRAIN_SPEED_MAX_PX_S 110.0f
 #define MUSE_GOLDRAIN_SPAWN_START_MS 950u
 #define MUSE_GOLDRAIN_SPAWN_STEP_MS 10u
 #define MUSE_GOLDRAIN_SPAWN_MIN_MS 600u
