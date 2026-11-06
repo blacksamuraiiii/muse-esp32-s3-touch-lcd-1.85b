@@ -54,6 +54,11 @@ if(CONFIG_MUSE_ENABLED)
         "muse_whackamole.c"
         "muse_whackamole_art.c"
         "muse_whackamole_ui.c"
+        "muse_goldrain.c"
+        "muse_goldrain_ui.c"
+        "muse_goldrain_coin.c"
+        "muse_goldrain_sprite.c"
+        "muse_imu.c"  # QMI8658 tilt for 金币雨 (waveshare/qmi8658)
         "muse_interact_hand_rock.c"
         "muse_interact_hand_paper.c"
         "muse_interact_hand_scissors.c"
@@ -183,6 +188,9 @@ set(muse_priv_requires
     noise_core minimp3 muse_vstream tinyh264 libvpx_vp8
     esp_lcd esp_adc esp_driver_i2s esp_driver_ledc esp_driver_spi esp_driver_uart esp_wifi
     esp_driver_pcnt efuse
+    # The QMI8658 tilt sensor (waveshare/qmi8658, registry component):
+    # only muse_imu.c uses it, and only the 1.85B board initialises it.
+    qmi8658
     # The Sticky's microSD (CONFIG_MUSE_STICKY_SD). Requirements are resolved
     # before Kconfig values exist, so these can't depend on it; only the code does.
     fatfs esp_driver_sdspi sdmmc)
