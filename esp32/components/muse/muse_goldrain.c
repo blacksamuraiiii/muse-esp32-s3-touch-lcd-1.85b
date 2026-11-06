@@ -5,9 +5,11 @@
  * Items fall straight down at the speed curve in the header. The
  * catcher stands on the field's bottom edge; a coin whose bottom edge
  * reaches the catch line while its centre is inside the sprite's span
- * is caught (1 point), a bomb caught the same way costs a life.
- * Anything that falls past the field's bottom edge is gone, coin or
- * bomb -- no penalty for letting a bomb drop.
+ * is caught (+1 point), a bomb caught the same way costs five points
+ * (and the score may go negative). The game never ends early: it
+ * always runs the full 30 seconds. Anything that falls past the
+ * field's bottom edge is gone, coin or bomb -- no penalty for letting
+ * a bomb drop.
  */
 #include "muse_goldrain.h"
 
@@ -41,7 +43,6 @@ static void reset_game(muse_goldrain_t *g)
     g->score = 0;
     g->caught = 0;
     g->missed = 0;
-    g->lives = MUSE_GOLDRAIN_LIVES;
     g->elapsed_ms = 0;
     g->spawn_ms = 0;
 }
@@ -202,20 +203,16 @@ void muse_goldrain_tick(muse_goldrain_t *g, uint32_t ms)
         if (prev_bottom < (float)MUSE_GOLDRAIN_CATCH_Y &&
             bottom >= (float)MUSE_GOLDRAIN_CATCH_Y &&
             centre >= left - 2.0f && centre <= right + 2.0f) {
-            /* Caught: a coin scores, a bomb costs a life. */
+            /* Caught: a coin scores one point, a bomb costs five.
+             * The score may go negative; the settlement floors it at
+             * zero (muse_goldrain_settle_score). Bombs never end the
+             * game -- only the 30 s timer does. */
             it->active = false;
             if (it->kind == MUSE_GOLDRAIN_COIN) {
                 g->score++;
                 g->caught++;
             } else {
-                if (g->lives > 0) {
-                    g->lives--;
-                }
-                if (g->lives == 0) {
-                    g->phase = MUSE_GOLDRAIN_OVER;
-                    clear_items(g);
-                    return;
-                }
+                g->score -= MUSE_GOLDRAIN_BOMB_PENALTY;
             }
             continue;
         }
