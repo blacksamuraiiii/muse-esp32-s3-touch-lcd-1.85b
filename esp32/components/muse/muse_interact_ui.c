@@ -104,6 +104,7 @@
 #include "muse_snake_ui.h"
 #include "muse_ui.h"
 #include "muse_whackamole_ui.h"
+#include "muse_goldrain_ui.h"
 #include "muse_widgets.h" /* the shared back arrow / card / title (1.5g) */
 
 /* --- colours: muse_theme.h (see file header for the DANGER note) --- */
@@ -172,6 +173,7 @@ enum {
     IC_PAGE_MINIGAME,
     IC_PAGE_SNAKE,
     IC_PAGE_WHACKAMOLE,
+    IC_PAGE_GOLDRAIN,
 };
 
 enum {
@@ -183,11 +185,13 @@ enum {
 
 static lv_obj_t *s_tile;
 static lv_obj_t *s_main_page, *s_feed_page, *s_game_page, *s_fortune_page, *s_sudoku_page;
-static lv_obj_t *s_minigame_page, *s_snake_page, *s_whackamole_page;
+static lv_obj_t *s_minigame_page, *s_snake_page, *s_whackamole_page,
+    *s_goldrain_page;
 static lv_obj_t *s_btn_feed, *s_btn_game, *s_btn_fortune;
 static lv_obj_t *s_btn_feed_lbl, *s_btn_game_lbl, *s_btn_fortune_lbl;
 static lv_obj_t *s_minigame_coins;
-static lv_obj_t *s_mg_rps_lbl, *s_mg_sudoku_lbl, *s_mg_snake_lbl, *s_mg_whack_lbl;
+static lv_obj_t *s_mg_rps_lbl, *s_mg_sudoku_lbl, *s_mg_snake_lbl, *s_mg_whack_lbl,
+    *s_mg_goldrain_lbl;
 static int s_last_feed_idx;
 static uint32_t s_last_feed_before;
 /* 1.5b: one feed at a time. A second tap while the first request is still
@@ -293,6 +297,7 @@ static void show_page(int page)
     lv_obj_add_flag(s_minigame_page, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(s_snake_page, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(s_whackamole_page, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(s_goldrain_page, LV_OBJ_FLAG_HIDDEN);
     lv_obj_t *show = s_main_page;
     if (page == IC_PAGE_FEED) show = s_feed_page;
     if (page == IC_PAGE_GAME) show = s_game_page;
@@ -301,14 +306,15 @@ static void show_page(int page)
     if (page == IC_PAGE_MINIGAME) show = s_minigame_page;
     if (page == IC_PAGE_SNAKE) show = s_snake_page;
     if (page == IC_PAGE_WHACKAMOLE) show = s_whackamole_page;
+    if (page == IC_PAGE_GOLDRAIN) show = s_goldrain_page;
     lv_obj_remove_flag(show, LV_OBJ_FLAG_HIDDEN);
 }
 
 bool muse_interact_ui_swipe_locked(void)
 {
     /* Any interaction subpage: 喂食, 今日运势, 小游戏 (the minigame list)
-     * and the four game boards (小游戏 / 贪吃蛇 / 数独 / 打地鼠). Only the
-     * main page swipes, right to the face. A subpage leaves through its
+     * and the five game boards (小游戏 / 贪吃蛇 / 数独 / 打地鼠 / 金币雨).
+     * Only the main page swipes, right to the face. A subpage leaves through its
      * "<" back arrow, one level up; BOOT is the exception, and it does not
      * go through here (the voice task switches to the face and starts a
      * turn). The game boards were the original lock (2026-10-31, rim
@@ -324,8 +330,8 @@ static void on_back(lv_event_t *e)
      * menu) to the menu, from the menu and the other subpages to the
      * main page, and from the main page to the face. A subpage back that
      * skipped a level would break the "left < = one level up" rule. The
-     * four menu games (game, sudoku, snake, whack-a-mole) all land on the
-     * menu; feed and fortune are main-page rows, so they still land on
+     * five menu games (game, sudoku, snake, whack-a-mole, goldrain) all land
+     * on the menu; feed and fortune are main-page rows, so they still land on
      * the main page. Leaving a game page pauses a running game through
      * its hide hook (snake keeps its board, whack-a-mole shows the pause
      * overlay), so neither plays on off-screen; the other subpages keep
@@ -336,10 +342,14 @@ static void on_back(lv_event_t *e)
     if (s_page == IC_PAGE_WHACKAMOLE) {
         muse_whackamole_ui_hide();
     }
+    if (s_page == IC_PAGE_GOLDRAIN) {
+        muse_goldrain_ui_hide();
+    }
     if (s_page == IC_PAGE_MAIN) {
         muse_ui_show_face();
     } else if (s_page == IC_PAGE_GAME || s_page == IC_PAGE_SUDOKU ||
-               s_page == IC_PAGE_SNAKE || s_page == IC_PAGE_WHACKAMOLE) {
+               s_page == IC_PAGE_SNAKE || s_page == IC_PAGE_WHACKAMOLE ||
+               s_page == IC_PAGE_GOLDRAIN) {
         show_page(IC_PAGE_MINIGAME);
     } else {
         show_page(IC_PAGE_MAIN);
@@ -441,6 +451,7 @@ static void refresh_status(void)
                                                                  : MUSE_THEME_TEXT), 0);
     lv_obj_set_style_text_color(s_mg_snake_lbl, lv_color_hex(mg_color), 0);
     lv_obj_set_style_text_color(s_mg_whack_lbl, lv_color_hex(mg_color), 0);
+    lv_obj_set_style_text_color(s_mg_goldrain_lbl, lv_color_hex(mg_color), 0);
 }
 
 /* One list row: full-width button with a single centred label, at the
@@ -1024,6 +1035,8 @@ static void drain_feedback(void)
                     muse_whackamole_ui_fee_refused();
                 } else if (s_page == IC_PAGE_SNAKE) {
                     muse_snake_ui_fee_refused();
+                } else if (s_page == IC_PAGE_GOLDRAIN) {
+                    muse_goldrain_ui_fee_refused();
                 }
                 write_pet_caption("金币不够，先摸摸 / 喂饭 / 抽运势");
             } else if (fb.result == PET_STORAGE) {
@@ -1031,6 +1044,8 @@ static void drain_feedback(void)
                     muse_whackamole_ui_fee_refused();
                 } else if (s_page == IC_PAGE_SNAKE) {
                     muse_snake_ui_fee_refused();
+                } else if (s_page == IC_PAGE_GOLDRAIN) {
+                    muse_goldrain_ui_fee_refused();
                 }
                 write_pet_caption("互动数据损坏");
             }
@@ -1115,6 +1130,13 @@ static void on_open_whackamole(lv_event_t *e)
     muse_whackamole_ui_show();
 }
 
+static void on_open_goldrain(lv_event_t *e)
+{
+    (void)e;
+    show_page(IC_PAGE_GOLDRAIN);
+    muse_goldrain_ui_show();
+}
+
 static void on_open_sudoku(lv_event_t *e)
 {
     (void)e;
@@ -1196,6 +1218,7 @@ static void build_minigame(void)
     list_row(list, "数独", on_open_sudoku, &s_mg_sudoku_lbl);
     list_row(list, "贪吃蛇", on_open_snake, &s_mg_snake_lbl);
     list_row(list, "打地鼠", on_open_whackamole, &s_mg_whack_lbl);
+    list_row(list, "金币雨", on_open_goldrain, &s_mg_goldrain_lbl);
 
     /* Coin line: the column's last item, so it scrolls with the list
      * instead of sitting in a fixed slot the scroller would run under.
@@ -1459,6 +1482,7 @@ void muse_interact_ui_build(lv_obj_t *tile)
     s_minigame_page = page_group(tile);
     s_snake_page = page_group(tile);
     s_whackamole_page = page_group(tile);
+    s_goldrain_page = page_group(tile);
     build_main();
     build_feed();
     build_game();
@@ -1467,6 +1491,7 @@ void muse_interact_ui_build(lv_obj_t *tile)
     muse_sudoku_ui_build(s_sudoku_page, on_back);
     muse_snake_ui_build(s_snake_page, on_back);
     muse_whackamole_ui_build(s_whackamole_page, on_back);
+    muse_goldrain_ui_build(s_goldrain_page, on_back);
     show_page(IC_PAGE_MAIN);
     /* Main page is the only one shown at build; muse_ui.c's tileview
      * hides the whole tile when it is not the active tile, so no extra
@@ -1488,12 +1513,13 @@ void muse_interact_ui_on_hidden(void)
      * page pauses the same way (a running game never plays on while
      * the tile is hidden); its board and paid state stay in RAM. */
     muse_sudoku_ui_hide();
-    /* The two timed games pause the same way: their boards and paid
+    /* The three timed games pause the same way: their boards and paid
      * state stay in RAM, and a running game never plays on while the
      * tile is hidden. Whack-a-mole resumes from its pause overlay on
      * the next visit, snake from wherever its tick left it. */
     muse_snake_ui_hide();
     muse_whackamole_ui_hide();
+    muse_goldrain_ui_hide();
     show_page(IC_PAGE_MAIN);
 }
 

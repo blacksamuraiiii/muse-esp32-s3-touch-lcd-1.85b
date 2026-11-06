@@ -81,6 +81,7 @@
 
 #include "muse_audio.h"
 #include "muse_board.h"
+#include "muse_imu.h"
 #include "muse_lcd_bands.h"
 #include "muse_mem.h"
 #include "muse_rtc.h"
@@ -717,6 +718,12 @@ static esp_err_t init(void)
     /* The clock at 0x51. Graceful when the chip is absent: the board then runs
      * on the system clock alone and shows no time until SNTP has run. */
     (void)muse_rtc_init(s_i2c);
+    /* The IMU at 0x6B. Graceful when the chip is absent (muse_imu_init
+     * logs and returns, the game then runs on finger drag alone):
+     * probe + configure + sleep here, the 金币雨 page wakes it on entry
+     * and sleeps it again on exit, so the sensor draws nothing outside
+     * the game. */
+    (void)muse_imu_init(s_i2c);
     /* Light sleep: the RTC's INT is a GPIO wake source too, so an armed alarm
      * ends a nap as well as a deep sleep. Registered once here - the table is
      * fixed at boot, and the line only asserts while the chip has an alarm
