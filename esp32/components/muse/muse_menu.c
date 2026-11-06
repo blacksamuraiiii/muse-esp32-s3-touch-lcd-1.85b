@@ -538,10 +538,11 @@ void muse_menu_build(lv_obj_t *parent, int w, int h)
 {
     bool small = h < 200 || w < 200;
     /* Row text and fine print come from the one shared chain (muse_font.h):
-     * muse_font_btn() is Montserrat 20 with the CJK fallback, exactly the
-     * face the montserrat_20 here was; muse_font_caption() is unscii-16
-     * with the CJK fallback, exactly the unscii_16. The compact faces
-     * (12/14, unscii_8) have no chain counterpart and stay literal. */
+     * muse_font_btn() is the Noto 16 chain since the 2026-11-06
+     * unification (buttons used to be Montserrat 20 with the CJK
+     * fallback); muse_font_caption() is unscii-16 with the CJK fallback,
+     * exactly the unscii_16. The compact faces (12/14, unscii_8) have no
+     * chain counterpart and stay literal. */
     const lv_font_t *font = small ? FONT_COMPACT : muse_font_btn();
     const lv_font_t *fine = small ? &lv_font_unscii_8 : muse_font_caption();
     int pad = small ? 2 : 8;
