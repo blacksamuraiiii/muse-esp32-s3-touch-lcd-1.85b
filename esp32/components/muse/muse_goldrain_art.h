@@ -11,7 +11,7 @@
  * uploaded artwork (same file as the 2026-09-27 avatar), repainted per
  * the approved v7 mockup: original eyes kept as drawn (white highlight
  * / black / green / white, inside out), highlights enlarged 5 px, pants
- * brushed white; cutout by flood fill from the border. 1.6b: the platform
+ * brushed white; cutout by flood fill from the border. 1.5.1: the platform
  * bar she stood on was erased from the pixel data (she flies now, nothing
  * under her feet).
  *
