@@ -50,6 +50,10 @@ esp_err_t muse_imu_init(i2c_master_bus_handle_t bus)
         ESP_LOGW(TAG, "accel ODR 125 Hz failed: %s", esp_err_to_name(err));
         return err;
     }
+    /* Units: v2.0.2 declares qmi8658_read_accel_mg()/_mps2() in the header
+     * but only implements qmi8658_read_accel() -- the unit is a per-device
+     * flag, so ask for m/s^2 here and read through the single function. */
+    qmi8658_set_accel_unit_mps2(&s_dev, true);
     /* Sleep until a game wakes it: the init above left accel + gyro
      * enabled at 1000 Hz, which would draw current all day for a
      * sensor nothing else in this firmware uses. */
@@ -100,5 +104,5 @@ esp_err_t muse_imu_read_accel(float *ax, float *ay, float *az)
     if (!s_ready || !s_awake) {
         return ESP_ERR_INVALID_STATE;
     }
-    return qmi8658_read_accel_mps2(&s_dev, ax, ay, az);
+    return qmi8658_read_accel(&s_dev, ax, ay, az);
 }
