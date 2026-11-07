@@ -597,6 +597,19 @@ static void draw_food_cb(lv_event_t *e)
     (void)h;
 }
 
+/* The horizontal food strip parks where its snap point ends up, and the
+ * snap pass (see lv_obj_scroll.c, find_snap_point) moves the content with
+ * lv_obj_scroll_by(), which does NOT clamp to the scrollable range: a fling
+ * past the last food could leave milk tea on the left edge with empty
+ * space after it. Re-issue the current position through scroll_to_x(),
+ * which goes through lv_obj_scroll_by_bounded() and pulls it back to the
+ * last reachable snap. The follow-up pass has diff == 0 and returns. */
+static void on_feed_strip_scroll_end(lv_event_t *e)
+{
+    lv_obj_t *strip = lv_event_get_target(e);
+    lv_obj_scroll_to_x(strip, lv_obj_get_scroll_x(strip), LV_ANIM_ON);
+}
+
 static void on_feed_food(lv_event_t *e)
 {
     /* Feed is the one subpage that closes on choice (design §5.2): the
@@ -1293,6 +1306,11 @@ static void build_feed(void)
     lv_obj_set_scroll_dir(strip, LV_DIR_HOR);
     lv_obj_set_scrollbar_mode(strip, LV_SCROLLBAR_MODE_OFF);
     lv_obj_set_scroll_snap_x(strip, LV_SCROLL_SNAP_START);
+    /* Hard edge while dragging: with the default elastic flag the strip
+     * can be pulled past the last food and shows empty space. */
+    lv_obj_remove_flag(strip, LV_OBJ_FLAG_SCROLL_ELASTIC);
+    /* ...and the snap pass itself does not clamp (see the callback). */
+    lv_obj_add_event_cb(strip, on_feed_strip_scroll_end, LV_EVENT_SCROLL_END, NULL);
     for (int i = 0; i < (int)MUSE_PET_FEED_KINDS; i++) {
         lv_obj_t *item = lv_obj_create(strip);
         lv_obj_remove_style_all(item);
