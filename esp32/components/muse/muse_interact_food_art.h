@@ -6,15 +6,16 @@
  * (asos520-rgb/tamame-esp32,
  * firmware-overlay/esp32/components/muse/muse_pet_art.c, Apache-2.0;
  * TamaMe attribution retained in muse_pet_model.h and in the design doc).
- * Upstream icon indices: 3 = coffee, 4 = cake, 5 = rice, 6 = hotpot,
- * 8 = tea. Six foods since 2026-11-07 (user decision): the 1.5a port kept
+ * Upstream icon indices: 3 = coffee, 4 = cake, 5 = rice, 8 = tea.
+ * Six foods since 2026-11-07 (user decision): the 1.5a port kept
  * only rice/cake/coffee and dropped hotpot/chicken/tea (chicken reads as a
  * brown blob at 80px, tea is another cup like coffee, hotpot is too dark);
- * the user asked the three back, then swapped chicken for pizza and tea
- * for milk tea. Pizza is NEW, drawn here in the same 16x16 grid and
- * colour map (it is NOT upstream). Milk tea IS upstream icon 8 (a cup
- * with a straw and boba pearls), renamed from 茶 to 奶茶. Chicken (icon 7)
- * stays out.
+ * the user asked the three back, then swapped chicken for pizza, tea
+ * for milk tea, and hotpot for skewers (the hotpot pot reads as a brown
+ * blob). Pizza and skewers are NEW, drawn here in the same 16x16 grid
+ * and colour map (they are NOT upstream). Milk tea IS upstream icon 8
+ * (a cup with a straw and boba pearls), renamed from 茶 to 奶茶.
+ * Chicken (icon 7) and hotpot (icon 6) stay out.
  *
  * Colour map is upstream muse_pet_art_pixel()'s switch, verbatim:
  *  y = 0xA76A19, Y = 0xF6CB4B, W = 0xFFF2CE, O = 0x644331,
@@ -40,7 +41,7 @@ typedef struct {
     const char *rows[MUSE_INTERACT_FOOD_PX];
 } muse_interact_food_art_t;
 
-/* Order is the feed-subpage strip order: rice, cake, coffee, hotpot,
+/* Order is the feed-subpage strip order: rice, cake, coffee, skewers,
  * pizza, milk tea. Must match muse_pet_feed_index() (0..5). */
 static const muse_interact_food_art_t MUSE_INTERACT_FOODS[6] = {
     {
@@ -107,25 +108,28 @@ static const muse_interact_food_art_t MUSE_INTERACT_FOODS[6] = {
         },
     },
     {
-        /* Hotpot: upstream icon 6, verbatim. */
-        "火锅",
+        /* Skewer (grilled skewers): NEW, drawn here in the same 16x16
+         * grid and colour map (not upstream). A vertical stick with
+         * three meat cubes; the orange/red/dark pixels are grill
+         * highlights, a pepper piece and a char mark. */
+        "烤串",
         {
             "                ",
-            "   W     W      ",
-            "     W W        ",
-            "                ",
-            "    RRGGWWRR    ",
-            "   RGWWRRWWRR   ",
-            " OORRRRRRRRRROO ",
-            " OORRRRRRRRRROO ",
-            " OOOOOOOOOOOOOO ",
-            " OOOOOOOOOOOOOO ",
-            "  OOOOOOOOOOOO  ",
-            "   OOOOOOOOOO   ",
-            "    OOOOOOOO    ",
-            "   OO      OO   ",
-            "                ",
-            "                ",
+            "       y        ",
+            "       y        ",
+            "      bbbb      ",
+            "     bbbbbb     ",
+            "     bObbbb     ",
+            "      bbbb      ",
+            "       y        ",
+            "      bbbb      ",
+            "     bbbbbb     ",
+            "     bRbbbb     ",
+            "      bbbb      ",
+            "       y        ",
+            "      bbbb      ",
+            "     bbbbbb     ",
+            "     bDbbbb     ",
         },
     },
     {
