@@ -92,7 +92,8 @@
 #include "muse_state.h"
 #include "muse_theme.h"
 #include "muse_doodle.h"
-#include "muse_goldrain_art.h"
+#include "muse_goldrain_art.h"   /* the shared 18 px coin */
+#include "muse_doodle_art.h"     /* our own 53x66 sprite */
 #include "muse_imu.h"        /* tilt: the board's QMI8658 roll */
 
 /* Cloud colours (the mockup v4): white static, light-blue moving,
@@ -648,7 +649,7 @@ void muse_doodle_ui_build(lv_obj_t *page, lv_event_cb_t back_cb)
     }
     /* Buttercup, hopping (tilted into her direction by refresh_display). */
     s_sprite = lv_image_create(page);
-    lv_image_set_src(s_sprite, &muse_goldrain_sprite);
+    lv_image_set_src(s_sprite, &muse_doodle_sprite);
     lv_obj_set_pos(s_sprite,
                    (lv_coord_t)(s_game.cx - MUSE_DOODLE_SPRITE_W / 2),
                    (lv_coord_t)(s_game.cy - MUSE_DOODLE_SPRITE_H / 2));
