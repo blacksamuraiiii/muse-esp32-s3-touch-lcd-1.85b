@@ -121,6 +121,7 @@ static lv_obj_t *s_back;
 static lv_obj_t *s_name;
 static lv_obj_t *s_hud;
 static lv_obj_t *s_note;
+static lv_obj_t *s_page;
 static lv_timer_t *s_timer;
 
 /* Status / message slot under the field (field ends at y=300): the HUD
@@ -416,6 +417,52 @@ static void settle_round(void)
     }
 }
 
+/* --- floating "+1" ----------------------------------------------- */
+/* A coin collect spawns a label that rises ~36 px and fades over
+ * ~700 ms, then deletes itself. One lv_anim drives both rise and
+ * fade (the exec callback derives opacity from the current y), so no
+ * second anim is still running when the label is deleted. The start
+ * y is kept in the label's user data. */
+static void float_text_anim_cb(void *var, int32_t y)
+{
+    lv_obj_t *lbl = (lv_obj_t *)var;
+    int y0 = (int)(intptr_t)lv_obj_get_user_data(lbl);
+    lv_obj_set_y(lbl, (lv_coord_t)y);
+    int progress = y0 - y; /* 0..36 */
+    int opa = 255 - (progress * 255) / 36;
+    if (opa < 0) {
+        opa = 0;
+    }
+    lv_obj_set_style_opa(lbl, (lv_opa_t)opa, LV_PART_MAIN);
+}
+
+static void float_text_anim_done(lv_anim_t *a)
+{
+    lv_obj_delete((lv_obj_t *)lv_anim_get_var(a));
+}
+
+static void spawn_float_text(const char *text, lv_color_t colour, int cx, int y)
+{
+    lv_obj_t *lbl = lv_label_create(s_page);
+    lv_label_set_text(lbl, text);
+    lv_obj_set_style_text_color(lbl, colour, LV_PART_MAIN);
+    lv_obj_set_style_text_font(lbl, &lv_font_montserrat_20, LV_PART_MAIN);
+    lv_obj_set_style_opa(lbl, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_pos(lbl, (lv_coord_t)(cx - lv_obj_get_width(lbl) / 2),
+                   (lv_coord_t)y);
+    lv_obj_set_user_data(lbl, (void *)(intptr_t)y);
+    lv_obj_remove_flag(lbl, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_remove_flag(lbl, LV_OBJ_FLAG_CLICKABLE);
+    lv_anim_t a;
+    lv_anim_init(&a);
+    lv_anim_set_var(&a, lbl);
+    lv_anim_set_values(&a, y, y - 36);
+    lv_anim_set_duration(&a, 700);
+    lv_anim_set_exec_cb(&a, float_text_anim_cb);
+    lv_anim_set_completed_cb(&a, float_text_anim_done);
+    lv_anim_start(&a);
+}
+
 static void on_tick(lv_timer_t *timer)
 {
     (void)timer;
@@ -430,7 +477,17 @@ static void on_tick(lv_timer_t *timer)
         pause_game();
         return;
     }
+    uint32_t score_before = s_game.score;
     muse_doodle_tick(&s_game, MUSE_DOODLE_TICK_MS);
+    uint32_t delta = s_game.score - score_before;
+    if (delta != 0) {
+        /* Coin collected on this tick: a gold "+1" rising from just
+         * above her, where the collect happened. */
+        char buf[8];
+        snprintf(buf, sizeof(buf), "+%lu", (unsigned long)delta);
+        spawn_float_text(buf, lv_color_hex(MUSE_THEME_GOLD),
+                         (int)s_game.cx, (int)s_game.cy - 28);
+    }
     if (s_game.phase == MUSE_DOODLE_OVER) {
         lv_timer_pause(s_timer);
         /* She fell out of the bottom: convert once, here and nowhere else. */
@@ -559,6 +616,7 @@ static lv_obj_t *cloud_obj(lv_obj_t *page, int idx)
 void muse_doodle_ui_build(lv_obj_t *page, lv_event_cb_t back_cb)
 {
     muse_doodle_init(&s_game);
+    s_page = page;
 
     /* Field, then one star dot each (fixed positions, the mockup v4's
      * night sky), one cloud container per cloud slot, one coin image
