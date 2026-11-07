@@ -61,6 +61,7 @@ if(CONFIG_MUSE_ENABLED)
         "muse_imu.c"  # QMI8658 tilt for 金币雨 (waveshare/qmi8658)
         "muse_doodle.c"
         "muse_doodle_ui.c"
+        "muse_doodle_sprite.c"
         "muse_interact_hand_rock.c"
         "muse_interact_hand_paper.c"
         "muse_interact_hand_scissors.c"

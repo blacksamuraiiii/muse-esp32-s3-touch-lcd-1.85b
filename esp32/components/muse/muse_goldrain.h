@@ -45,7 +45,7 @@
 #define MUSE_GOLDRAIN_FIELD_X 60
 #define MUSE_GOLDRAIN_FIELD_Y 60
 #define MUSE_GOLDRAIN_FIELD_SIZE 240
-/* Art sizes (muse_goldrain_art.h): the coin is 18 px, Buttercup 53x66. */
+/* Art sizes (muse_goldrain_art.h): the coin is 18 px, Buttercup 61x66. */
 #define MUSE_GOLDRAIN_COIN_PX 18
 #define MUSE_GOLDRAIN_SPRITE_W 61
 #define MUSE_GOLDRAIN_SPRITE_H 66

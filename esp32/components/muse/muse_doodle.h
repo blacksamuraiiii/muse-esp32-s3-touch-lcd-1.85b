@@ -54,12 +54,12 @@
 #define MUSE_DOODLE_FIELD_X 60
 #define MUSE_DOODLE_FIELD_Y 60
 #define MUSE_DOODLE_FIELD_SIZE 240
-/* Art sizes (muse_goldrain_art.h): the coin is 18 px, Buttercup 61x66
- * (the shared descriptor: since game-polish 2026-11-07 the sprite is the
- * 61 px flying pose holding the tile, so the doodle game must measure the
- * image it actually draws -- 53 px would center and collide 4 px off). */
+/* Art sizes: the coin is 18 px (muse_goldrain_art.h). The sprite is our own
+ * 53x66 pose (muse_doodle_art.h) -- 金币雨 took the 61 px flying pose on
+ * 2026-11-07, but 毛毛跳跃 keeps this one, so the two games no longer share
+ * a descriptor and each measures its own image. */
 #define MUSE_DOODLE_COIN_PX 18
-#define MUSE_DOODLE_SPRITE_W 61
+#define MUSE_DOODLE_SPRITE_W 53
 #define MUSE_DOODLE_SPRITE_H 66
 /* Cloud geometry (the mockup v4): a puffy cloud 66 px wide, 26 px tall. */
 #define MUSE_DOODLE_CLOUD_W 66
