@@ -47,7 +47,7 @@
 #define MUSE_GOLDRAIN_FIELD_SIZE 240
 /* Art sizes (muse_goldrain_art.h): the coin is 18 px, Buttercup 53x66. */
 #define MUSE_GOLDRAIN_COIN_PX 18
-#define MUSE_GOLDRAIN_SPRITE_W 53
+#define MUSE_GOLDRAIN_SPRITE_W 61
 #define MUSE_GOLDRAIN_SPRITE_H 66
 /* The catch line is the sprite's top edge: the sprite stands on the
  * field's bottom edge, so a coin is caught when its bottom edge reaches
