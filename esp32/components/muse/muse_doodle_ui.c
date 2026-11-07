@@ -1,15 +1,17 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 /*
- * muse_doodle_ui.c -- 毛毛飞行 subpage, see muse_doodle_ui.h.
+ * muse_doodle_ui.c -- 毛毛跳跃 subpage, see muse_doodle_ui.h.
  *
  * Layout (mockup v4, 360x360 round screen, dark theme like the other
  * games): a 240x240 field at (60,60) with a night sky (faint stars,
- * no grid). Buttercup (53x66) flies -- tilted a little into her
- * direction, no motion lines, nothing under her feet -- and clouds
- * (66x26, puffy: a base plus three circles) are the only footing.
- * Coins (18 px, the goldrain token) float in the air in a rising
- * trail. The top crescent shows the title (y=38: the same slot and
- * ACCENT colour the snake page uses for its name): "毛毛飞行" in every
+ * no grid). Buttercup (53x66) hops -- tilted a little into her
+ * direction, no motion lines, nothing under her feet after a bounce --
+ * and clouds (66x26, puffy: a base plus three circles) are the only
+ * footing. Coins (18 px, the goldrain token) float in the air in a
+ * rising trail and are the only score (+1 each); there is no bomb
+ * (user 2026-11-07: "取消炸弹惩罚").
+ * The top crescent shows the title (y=38: the same slot and
+ * ACCENT colour the snake page uses for its name): "毛毛跳跃" in every
  * state except OVER, where the slot itself becomes "游戏结束" (same
  * as snake / whack-a-mole / goldrain). The line under the field
  * (y=308, the slot the snake page prints its score on) never rides
@@ -37,7 +39,7 @@
  * charged 5 coins on a single tap in the narrowest part of the bezel,
  * and leaving is the back arrow's job (same decision as snake). The
  * START overlay carries the hint line at y=304 (DIM, same slot as the
- * snake page's hint): "点左/右飞翔，长按中间暂停".
+ * snake page's hint): "倾斜左右移动，长按中间暂停".
  *
  * Payout (same as snake / whack-a-mole / goldrain): at OVER the HUD
  * turns gold and reads "本局 n 分，+m 金币" with m the GROSS payout
@@ -46,9 +48,8 @@
  * ceiling; the score is settled once, at OVER). The net is
  * deliberately NOT printed: the user said kids cannot tell net apart,
  * so the result shows what was added, not what was gained after the
- * 5-coin entry fee. Clouds give no points (user rule 2026-11-07),
- * so the score is the coins collected and nothing else, and it can
- * never go negative -- no floor helper is needed.
+ * 5-coin entry fee. Clouds give no points and coins are +1, so the
+ * score only ever goes up and the HUD never shows a negative.
  *
  * Message slot: the band under the field (y=308) hosts exactly one
  * line -- the refusal note wins it, otherwise the score line does.
@@ -56,14 +57,26 @@
  * score line's slot, which is why it carries the short copy (the chord
  * under the field is only ~213 px at y=325).
  *
- * Controls: tap to fly (primary, user decision 2026-11-07) -- a tap
- * flaps her upward, and the tap's half picks the direction (left half
- * flies up-left, right half up-right). A press that moves more than
- * ~12 px is a drag and can never pause, so a lingering drag does not
- * stop the game by accident; a press held still for 500 ms pauses.
- * The hold is tracked by hand, not LVGL's LONG_PRESSED, and the flap
- * fires on RELEASE only when the press was a quick tap (under 500 ms,
- * unmoved) -- a hold that already paused never also flaps on release.
+ * Controls (user decision 2026-11-07, switched from tap-to-fly to
+ * classic Doodle Jump): TILT is primary -- the QMI8658 roll (the same
+ * sensor and low-pass the 金币雨 page uses) sets the horizontal
+ * direction, and the board is level = she keeps her line. A tap on the
+ * left/right half of the field adds a shove that decays over ~0.4 s
+ * (about 70 px), so a kid who has not learned the tilt can still steer;
+ * the two sum, they never fight (muse_doodle.c). There is no jump
+ * button: clouds bounce her. A press that moves more than ~12 px is a
+ * drag and can never pause, so a lingering drag does not stop the game
+ * by accident; a press held still for 500 ms pauses. The hold is
+ * tracked by hand, not LVGL's LONG_PRESSED, and the tap shove fires on
+ * RELEASE only when the press was a quick tap (under 500 ms, unmoved)
+ * -- a hold that already paused never also shoves her.
+ *
+ * Power: the accelerometer is woken when a round starts
+ * (muse_imu_wake) and put back to sleep when the page is left
+ * (muse_imu_sleep), the same discipline as the 金币雨 page. A running
+ * round pokes the idle timer (muse_state_poke) because tilt-only play
+ * never touches the screen and the display would otherwise sleep
+ * mid-round.
  */
 #include "muse_doodle_ui.h"
 
@@ -76,9 +89,11 @@
 #include "muse_widgets.h"
 #include "muse_pet.h"        /* snapshot + request: the entry fee */
 #include "muse_pet_model.h"
+#include "muse_state.h"
 #include "muse_theme.h"
 #include "muse_doodle.h"
 #include "muse_goldrain_art.h"
+#include "muse_imu.h"        /* tilt: the board's QMI8658 roll */
 
 /* Cloud colours (the mockup v4): white static, light-blue moving,
  * grey breakable. */
@@ -88,10 +103,17 @@
 /* Hold to pause: the finger stays within this radius for this long. */
 #define MUSE_DOODLE_HOLD_MS 500u
 #define MUSE_DOODLE_HOLD_MOVE_PX 12
-/* Sprite tilt: she leans into her flight direction, this many
- * 0.1-degree units per px/tick of horizontal speed (3 px/tick is
- * about 9 degrees). */
+/* Sprite tilt: she leans into her movement direction, this many
+ * 0.1-degree units per px/tick of horizontal speed (6 px/tick is
+ * about 18 degrees, capped at 150 = 15 degrees). */
 #define MUSE_DOODLE_TILT_PER_VX 30
+/* Steering tilt (the 金币雨 page's numbers): one accel read per tick,
+ * low-pass the roll axis, dead zone, then map to a -1..1 direction.
+ * The sign is the one 金币雨 settled on after its "倾斜反向" fix. */
+#define MUSE_DOODLE_STEER_SMOOTH 0.35f
+#define MUSE_DOODLE_STEER_DEADZONE_MS2 0.5f
+#define MUSE_DOODLE_STEER_FULL_MS2 4.0f
+#define MUSE_DOODLE_STEER_SIGN -1.0f
 
 static muse_doodle_t s_game;
 static bool s_seeded = false;
@@ -99,12 +121,14 @@ static bool s_seeded = false;
  * OVER, s_round_coins holds what the wallet actually accepted. */
 static bool s_settled = false;
 static uint32_t s_round_coins = 0;
-/* Press tracking for the tap-to-flap and the hold-to-pause. */
+/* Press tracking for the tap shove and the hold-to-pause. */
 static bool s_press_active = false;
 static bool s_press_moved = false;
 static uint32_t s_press_start_ms = 0;
 static lv_coord_t s_press_x = 0;
 static lv_coord_t s_press_y = 0;
+/* Low-passed accel roll (m/s^2), one read per tick while playing. */
+static float s_ax_filt = 0.0f;
 
 static lv_obj_t *s_cloud[MUSE_DOODLE_MAX_CLOUDS];
 /* Each cloud's puff pieces, so refresh_display can recolour them by
@@ -245,8 +269,8 @@ static void refresh_display(void)
                        (lv_coord_t)(coin->y - MUSE_DOODLE_COIN_PX / 2));
         lv_obj_clear_flag(s_coin_img[i], LV_OBJ_FLAG_HIDDEN);
     }
-    /* She flies tilted into her direction (no motion lines, user
-     * 2026-11-07); level when she is not moving sideways. */
+    /* She leans into her direction (no motion lines, user 2026-11-07);
+     * level when she is not moving sideways. */
     int16_t rot = (int16_t)(s_game.vx * (float)MUSE_DOODLE_TILT_PER_VX);
     if (rot > 150) {
         rot = 150;
@@ -258,9 +282,9 @@ static void refresh_display(void)
                    (lv_coord_t)(s_game.cx - MUSE_DOODLE_SPRITE_W / 2),
                    (lv_coord_t)(s_game.cy - MUSE_DOODLE_SPRITE_H / 2));
     muse_doodle_phase_t ph = s_game.phase;
-    /* Title: "毛毛飞行" except at OVER, where the title slot itself
+    /* Title: "毛毛跳跃" except at OVER, where the title slot itself
      * becomes the result title (same as snake / whack-a-mole / goldrain). */
-    set_label(s_name, ph == MUSE_DOODLE_OVER ? "游戏结束" : "毛毛飞行");
+    set_label(s_name, ph == MUSE_DOODLE_OVER ? "游戏结束" : "毛毛跳跃");
     /* HUD, same slot as the snake page's score line: while PLAYING or
      * PAUSED it is white and score-only -- no countdown, the round is
      * endless until she falls. At OVER it turns GOLD and adds the
@@ -357,6 +381,10 @@ static void begin_game(bool restart)
     /* A new round: its payout has not been settled yet. */
     s_settled = false;
     s_round_coins = 0;
+    /* Tilt is the primary control: wake the accelerometer (no-op on a
+     * board without the chip) and start the low-pass clean. */
+    muse_imu_wake();
+    s_ax_filt = 0.0f;
     if (restart) {
         muse_doodle_restart(&s_game);
     } else {
@@ -399,10 +427,10 @@ static void pause_game(void)
  * round ceiling -- and the 5-coin entry fee was already charged at
  * start through PET_FEE, so the round's net is payout minus 5, shown
  * on the OVER card. The score is the coins collected and can never go
- * negative (clouds give no points), so no floor helper is needed --
- * round_coins() takes an unsigned score. A refused request (worker
- * not ready / queue full) leaves s_round_coins at 0 so the card never
- * claims coins the wallet did not get. */
+ * negative (clouds give no points, there is no bomb), so no floor
+ * helper is needed -- round_coins() takes an unsigned score. A refused
+ * request (worker not ready / queue full) leaves s_round_coins at 0 so
+ * the card never claims coins the wallet did not get. */
 static void settle_round(void)
 {
     if (s_settled) {
@@ -416,12 +444,40 @@ static void settle_round(void)
     }
 }
 
+/* One accel read per tick: low-pass the roll axis, dead zone, then map
+ * to a -1..1 steering direction for muse_doodle_tilt(). Inside the
+ * dead zone the tilt is 0 -- holding the board level must not drag her
+ * sideways. A failed read is ignored for this tick (she keeps her last
+ * direction). Boards without the chip simply never call in: the tap
+ * shove alone still steers her. */
+static void update_tilt(void)
+{
+    if (!muse_imu_available()) {
+        return;
+    }
+    float ax, ay, az;
+    if (muse_imu_read_accel(&ax, &ay, &az) != ESP_OK) {
+        return;
+    }
+    s_ax_filt += MUSE_DOODLE_STEER_SMOOTH * (ax - s_ax_filt);
+    float tilt = 0.0f;
+    if (s_ax_filt < -MUSE_DOODLE_STEER_DEADZONE_MS2 ||
+        s_ax_filt > MUSE_DOODLE_STEER_DEADZONE_MS2) {
+        tilt = MUSE_DOODLE_STEER_SIGN * s_ax_filt / MUSE_DOODLE_STEER_FULL_MS2;
+    }
+    muse_doodle_tilt(&s_game, tilt);
+}
+
 static void on_tick(lv_timer_t *timer)
 {
     (void)timer;
     if (s_game.phase != MUSE_DOODLE_PLAYING) {
         return;
     }
+    /* A running round is activity: playing by tilt alone never touches
+     * the screen, so without this the idle timer slept the screen
+     * mid-round (same idiom as 金币雨 and video playback). */
+    muse_state_poke();
     /* Hold to pause: the finger stayed within ~12 px for 500 ms. A
      * drag that lingers never reaches this branch (s_press_moved). */
     if (s_press_active && !s_press_moved &&
@@ -430,6 +486,7 @@ static void on_tick(lv_timer_t *timer)
         pause_game();
         return;
     }
+    update_tilt();
     muse_doodle_tick(&s_game, MUSE_DOODLE_TICK_MS);
     if (s_game.phase == MUSE_DOODLE_OVER) {
         lv_timer_pause(s_timer);
@@ -472,13 +529,13 @@ static void on_touch_pressing(lv_event_t *e)
 static void on_touch_released(lv_event_t *e)
 {
     (void)e;
-    /* A quick tap flaps her: the tap's half picks the direction
-     * (left half flies up-left, right half up-right). A hold that
-     * already paused (or a drag) never flaps on release. */
+    /* A quick tap shoves her sideways: the tap's half picks the
+     * direction (left half left, right half right). A hold that
+     * already paused (or a drag) never shoves on release. */
     if (s_press_active && !s_press_moved &&
         lv_tick_get() - s_press_start_ms < MUSE_DOODLE_HOLD_MS &&
         s_game.phase == MUSE_DOODLE_PLAYING) {
-        muse_doodle_flap(&s_game, s_press_x < 180 ? -1 : 1);
+        muse_doodle_tap(&s_game, s_press_x < 180 ? -1 : 1);
         refresh_display();
     }
     s_press_active = false;
@@ -589,8 +646,7 @@ void muse_doodle_ui_build(lv_obj_t *page, lv_event_cb_t back_cb)
         lv_obj_add_flag(coin, LV_OBJ_FLAG_HIDDEN);
         s_coin_img[i] = coin;
     }
-
-    /* Buttercup, flying (tilted into her direction by refresh_display). */
+    /* Buttercup, hopping (tilted into her direction by refresh_display). */
     s_sprite = lv_image_create(page);
     lv_image_set_src(s_sprite, &muse_goldrain_sprite);
     lv_obj_set_pos(s_sprite,
@@ -621,7 +677,7 @@ void muse_doodle_ui_build(lv_obj_t *page, lv_event_cb_t back_cb)
     lv_obj_add_event_cb(start_btn, on_start, LV_EVENT_CLICKED, NULL);
     /* Hint line (mockup v4): same slot as the snake page's hint. */
     lv_obj_t *hint_lb = label(s_start_ov, muse_font_cjk(), MUSE_THEME_DIM);
-    lv_label_set_text(hint_lb, "点左/右飞翔，长按中间暂停");
+    lv_label_set_text(hint_lb, "倾斜左右移动，长按中间暂停");
     lv_obj_align(hint_lb, LV_ALIGN_TOP_MID, 0, 304);
 
     /* PAUSED overlay: dim, ACCENT title, 继续 button with the PLAY symbol
@@ -674,7 +730,7 @@ void muse_doodle_ui_build(lv_obj_t *page, lv_event_cb_t back_cb)
      * the dim overlays, so they stay readable in every state. The line used
      * to sit at y=332 and rode on the bezel (user report 2026-11-01).
      * refresh_display() swaps the title to "游戏结束" at OVER. */
-    s_name = muse_page_title(page, "毛毛飞行", 38);
+    s_name = muse_page_title(page, "毛毛跳跃", 38);
     s_hud = label(page, muse_font_cjk(), MUSE_THEME_TEXT);
     lv_obj_align(s_hud, LV_ALIGN_TOP_MID, 0, MUSE_DOODLE_HUD_Y);
 
@@ -703,6 +759,9 @@ void muse_doodle_ui_hide(void)
         lv_timer_pause(s_timer);
     }
     s_press_active = false;
+    /* Off-screen: the accelerometer goes back to sleep (the 金币雨
+     * page's discipline). A return visit wakes it again on 开始. */
+    muse_imu_sleep();
     refresh_display();
 }
 

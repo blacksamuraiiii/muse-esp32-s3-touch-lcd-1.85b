@@ -1,16 +1,16 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 /*
- * muse_doodle.c -- 毛毛飞行 logic, see muse_doodle.h.
+ * muse_doodle.c -- 毛毛跳跃 logic, see muse_doodle.h.
  *
- * She flies: a tap sets vy to the flap speed and vx to the tap's
- * direction, gravity pulls her back down, and landing on a cloud
- * (falling onto its top) bounces her up again. Clouds are one-way:
- * she passes through them from below and only bounces when falling
- * onto them from above. The camera follows her up past CAM_Y and
- * clouds that scroll off the bottom are recycled above, so the climb
- * never ends; she falls out of the bottom when there is nothing left
- * to bounce on. Coins are the only score (+1 each, collected on
- * touch); clouds give no points.
+ * She hops. There is no upward input: a cloud is the only thing that
+ * sends her up, and only when she is falling onto its top -- she passes
+ * up through clouds, so a bounce is always the reward for landing.
+ * Steering is horizontal (tilt plus a decaying shove from a tap). The
+ * camera follows her up past CAM_Y and clouds that scroll off the
+ * bottom are recycled above, so the climb never ends; she falls out of
+ * the bottom when the player steers her off the clouds. Coins score
+ * +1, clouds give no points, and there is no bomb (user 2026-11-07:
+ * "取消炸弹惩罚"), so the score only ever goes up.
  */
 #include "muse_doodle.h"
 
@@ -45,10 +45,26 @@ static muse_doodle_cloud_kind_t random_kind(void)
     return MUSE_DOODLE_CLOUD_BREAK;
 }
 
-static float random_cloud_x(void)
+/* A new cloud is placed within reach of the cloud below it, not
+ * anywhere across the field: a pure random x made a row above her
+ * unlandable about half the time, so a round could stall on the bottom
+ * cloud with no coin left to chase (measured on the host harness,
+ * 2026-11-07). The window is ~1.5 cloud widths each way, which keeps
+ * the climb varied but always steerable inside one bounce. */
+#define MUSE_DOODLE_REACH_PX 100
+static float random_cloud_x_near(float anchor_x)
 {
     int span = MUSE_DOODLE_FIELD_SIZE - MUSE_DOODLE_CLOUD_W;
-    return FIELD_LEFT + (float)(span > 0 ? rand() % span : 0);
+    float lo = anchor_x - (float)MUSE_DOODLE_REACH_PX;
+    float hi = anchor_x + (float)MUSE_DOODLE_REACH_PX;
+    if (lo < FIELD_LEFT) {
+        lo = FIELD_LEFT;
+    }
+    if (hi > FIELD_LEFT + (float)span) {
+        hi = FIELD_LEFT + (float)span;
+    }
+    int range = (int)(hi - lo);
+    return lo + (float)(range > 0 ? rand() % (range + 1) : 0);
 }
 
 static void place_cloud(muse_doodle_t *g, int i, float x, float y,
@@ -64,6 +80,8 @@ static void place_cloud(muse_doodle_t *g, int i, float x, float y,
                           : 0.0f;
 }
 
+/* The coin above a cloud: just above it, offset to the side so the
+ * trail leads the climb rather than sitting on the cloud. */
 static void spawn_coin_above(muse_doodle_t *g, float cloud_x, float cloud_y)
 {
     if (rand() % 100 >= (int)MUSE_DOODLE_COIN_CHANCE_PCT) {
@@ -74,8 +92,6 @@ static void spawn_coin_above(muse_doodle_t *g, float cloud_x, float cloud_y)
             continue;
         }
         g->coins[i].active = true;
-        /* Just above the cloud, offset to the side so the trail
-         * leads the flight path rather than sitting on the cloud. */
         float cx = cloud_x + 10.0f + (float)(rand() % 40);
         if (cx > FIELD_RIGHT - (float)MUSE_DOODLE_COIN_PX / 2.0f) {
             cx = FIELD_RIGHT - (float)MUSE_DOODLE_COIN_PX / 2.0f;
@@ -89,23 +105,33 @@ static void spawn_coin_above(muse_doodle_t *g, float cloud_x, float cloud_y)
 static void reset_game(muse_doodle_t *g)
 {
     clear_all(g);
-    g->cx = (float)(MUSE_DOODLE_FIELD_X + MUSE_DOODLE_FIELD_SIZE / 2);
-    g->cy = (float)(MUSE_DOODLE_FIELD_Y + MUSE_DOODLE_FIELD_SIZE) - 50.0f;
-    g->vx = 0.0f;
-    g->vy = 0.0f;
     g->score = 0;
     g->caught = 0;
     g->height_px = 0;
+    g->tilt = 0.0f;
+    g->shove = 0.0f;
     /* Six cloud rows from the bottom up, ~70 px apart, so the field
      * starts full and the climb is already going. The two lowest are
      * static for a gentle start; the rest roll the usual mix. */
     float y = FIELD_BOTTOM - 15.0f;
+    float x = random_cloud_x_near((float)(MUSE_DOODLE_FIELD_X +
+                                          MUSE_DOODLE_FIELD_SIZE / 2 -
+                                          MUSE_DOODLE_CLOUD_W / 2));
     for (int i = 0; i < 6; i++) {
         muse_doodle_cloud_kind_t kind =
             (i < 2) ? MUSE_DOODLE_CLOUD_STATIC : random_kind();
-        place_cloud(g, i, random_cloud_x(), y, kind);
+        place_cloud(g, i, x, y, kind);
         y -= (float)MUSE_DOODLE_CLOUD_SPACING;
+        x = random_cloud_x_near(x);
     }
+    /* She starts STANDING ON the lowest cloud, feet just above its top,
+     * so the first tick bounces her off it (user report 2026-11-07:
+     * a restart kept her where she fell, mid-air, and she died again
+     * before the player could react). */
+    g->cx = g->clouds[0].x + (float)MUSE_DOODLE_CLOUD_W / 2.0f;
+    g->cy = g->clouds[0].y - (float)MUSE_DOODLE_SPRITE_H / 2.0f - 1.0f;
+    g->vx = 0.0f;
+    g->vy = 0.0f;
     /* Two coins on the opening trail, so the first thing she sees is
      * something to collect, not just clouds. */
     spawn_coin_above(g, g->clouds[1].x, g->clouds[1].y);
@@ -147,13 +173,25 @@ void muse_doodle_restart(muse_doodle_t *g)
     g->phase = MUSE_DOODLE_PLAYING;
 }
 
-void muse_doodle_flap(muse_doodle_t *g, int dir)
+void muse_doodle_tilt(muse_doodle_t *g, float tilt)
 {
     if (g->phase != MUSE_DOODLE_PLAYING) {
         return;
     }
-    g->vy = MUSE_DOODLE_FLAP_VY;
-    g->vx = (dir < 0) ? -MUSE_DOODLE_H_SPEED : MUSE_DOODLE_H_SPEED;
+    if (tilt > 1.0f) {
+        tilt = 1.0f;
+    } else if (tilt < -1.0f) {
+        tilt = -1.0f;
+    }
+    g->tilt = tilt;
+}
+
+void muse_doodle_tap(muse_doodle_t *g, int dir)
+{
+    if (g->phase != MUSE_DOODLE_PLAYING) {
+        return;
+    }
+    g->shove = (dir < 0) ? -MUSE_DOODLE_TAP_VX : MUSE_DOODLE_TAP_VX;
 }
 
 int muse_doodle_cloud_count(const muse_doodle_t *g)
@@ -198,17 +236,44 @@ static float topmost_cloud_y(const muse_doodle_t *g)
 }
 
 /* Put cloud `i` back at the top, above the highest cloud, with a
- * fresh roll of the dice -- and maybe a coin above it, so the trail
+ * fresh roll of the dice -- and maybe pickups above it, so the trail
  * keeps leading upward. This keeps the cloud count constant: a cloud
  * that scrolls off the bottom or breaks under her is replaced at
  * once, so the field never thins out mid-climb. */
 static void recycle_cloud_to_top(muse_doodle_t *g, int i)
 {
-    float nx = random_cloud_x();
+    /* Anchor the new top cloud on the one that is highest right now,
+     * so the climb stays reachable however the recycle order falls. */
+    float anchor = FIELD_LEFT;
+    float top = 1e9f;
+    for (int k = 0; k < MUSE_DOODLE_MAX_CLOUDS; k++) {
+        if (g->clouds[k].active && g->clouds[k].y < top) {
+            top = g->clouds[k].y;
+            anchor = g->clouds[k].x;
+        }
+    }
+    float nx = random_cloud_x_near(anchor);
     float ny = topmost_cloud_y(g) - (float)MUSE_DOODLE_CLOUD_SPACING;
     muse_doodle_cloud_kind_t kind = random_kind();
     place_cloud(g, i, nx, ny, kind);
     spawn_coin_above(g, nx, ny);
+}
+
+/* Would a pickup centred on (px, py) touch her? Generous: her sprite
+ * plus half a pickup on each side -- a kids' game should not demand
+ * pixel-perfect hovering. */
+static bool touches(const muse_doodle_t *g, float px, float py, int size)
+{
+    float dx = g->cx - px;
+    float dy = g->cy - py;
+    if (dx < 0.0f) {
+        dx = -dx;
+    }
+    if (dy < 0.0f) {
+        dy = -dy;
+    }
+    return dx < (float)MUSE_DOODLE_SPRITE_W / 2.0f + (float)size / 2.0f &&
+           dy < (float)MUSE_DOODLE_SPRITE_H / 2.0f + (float)size / 2.0f;
 }
 
 void muse_doodle_tick(muse_doodle_t *g, uint32_t ms)
@@ -228,6 +293,16 @@ void muse_doodle_tick(muse_doodle_t *g, uint32_t ms)
         if (g->vy > MUSE_DOODLE_MAX_FALL_VY) {
             g->vy = MUSE_DOODLE_MAX_FALL_VY;
         }
+        /* Steering: the tilt holds a direction, a tap adds a shove that
+         * fades, so the two controls sum instead of fighting. The shove
+         * is spent first and decays after the move, so the tick right
+         * after a tap actually runs at MUSE_DOODLE_TAP_VX. */
+        g->vx = g->tilt * MUSE_DOODLE_H_SPEED + g->shove;
+        if (g->vx > MUSE_DOODLE_MAX_VX) {
+            g->vx = MUSE_DOODLE_MAX_VX;
+        } else if (g->vx < -MUSE_DOODLE_MAX_VX) {
+            g->vx = -MUSE_DOODLE_MAX_VX;
+        }
         float prev_feet = g->cy + (float)MUSE_DOODLE_SPRITE_H / 2.0f;
         g->cx += g->vx;
         g->cy += g->vy;
@@ -237,6 +312,12 @@ void muse_doodle_tick(muse_doodle_t *g, uint32_t ms)
             g->cx += (float)MUSE_DOODLE_FIELD_SIZE;
         } else if (g->cx > FIELD_RIGHT) {
             g->cx -= (float)MUSE_DOODLE_FIELD_SIZE;
+        }
+        /* The tap's shove fades one step per tick, after it has moved
+         * her (see the steering block above). */
+        g->shove *= MUSE_DOODLE_TAP_DECAY;
+        if (g->shove < 0.05f && g->shove > -0.05f) {
+            g->shove = 0.0f;
         }
         float feet = g->cy + (float)MUSE_DOODLE_SPRITE_H / 2.0f;
         /* Moving clouds slide and bounce off the field edges. */
@@ -256,8 +337,8 @@ void muse_doodle_tick(muse_doodle_t *g, uint32_t ms)
         }
         /* Bounce: only while falling, only when her feet cross the
          * cloud's top on this tick, and only when her centre is over
-         * the cloud (with a little forgiveness at the edges). Flying
-         * up through a cloud never bounces -- clouds are one-way. */
+         * the cloud (with a little forgiveness at the edges). Rising
+         * through a cloud never bounces -- clouds are one-way. */
         if (g->vy > 0.0f) {
             for (int i = 0; i < MUSE_DOODLE_MAX_CLOUDS; i++) {
                 muse_doodle_cloud_t *c = &g->clouds[i];
@@ -296,7 +377,7 @@ void muse_doodle_tick(muse_doodle_t *g, uint32_t ms)
         }
         /* Recycle clouds that scrolled off the bottom: back to the
          * top, above the highest cloud, with a fresh roll of the
-         * dice -- and maybe a coin above them, so the trail keeps
+         * dice -- and maybe a pickup above them, so the trail keeps
          * leading upward. */
         for (int i = 0; i < MUSE_DOODLE_MAX_CLOUDS; i++) {
             muse_doodle_cloud_t *c = &g->clouds[i];
@@ -308,27 +389,14 @@ void muse_doodle_tick(muse_doodle_t *g, uint32_t ms)
             }
             recycle_cloud_to_top(g, i);
         }
-        /* Coins: collected on touch (a generous box, her sprite plus
-         * half a coin on each side -- a kids' game should not demand
-         * pixel-perfect flying). Coins that scroll off the bottom are
-         * simply gone; no penalty, they were never hers. */
+        /* Coins: +1 on touch. Coins that scroll off the bottom are
+         * simply gone -- no penalty, they were never hers. */
         for (int i = 0; i < MUSE_DOODLE_MAX_COINS; i++) {
             muse_doodle_coin_t *coin = &g->coins[i];
             if (!coin->active) {
                 continue;
             }
-            float dx = g->cx - coin->x;
-            float dy = g->cy - coin->y;
-            if (dx < 0.0f) {
-                dx = -dx;
-            }
-            if (dy < 0.0f) {
-                dy = -dy;
-            }
-            if (dx < (float)MUSE_DOODLE_SPRITE_W / 2.0f +
-                        (float)MUSE_DOODLE_COIN_PX / 2.0f &&
-                dy < (float)MUSE_DOODLE_SPRITE_H / 2.0f +
-                        (float)MUSE_DOODLE_COIN_PX / 2.0f) {
+            if (touches(g, coin->x, coin->y, MUSE_DOODLE_COIN_PX)) {
                 coin->active = false;
                 g->score++;
                 g->caught++;

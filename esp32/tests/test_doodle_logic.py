@@ -42,7 +42,23 @@ class DoodleLogicTest(unittest.TestCase):
                  "-o", str(binary), "-lm"],
                 capture_output=True, text=True)
             self.assertEqual(built.returncode, 0, built.stdout + built.stderr)
-            ran = subprocess.run([str(binary)], capture_output=True, text=True)
+            # ASan's shadow setup is flaky under WSL: roughly one run in
+            # three aborts at startup with a repeating
+            # "AddressSanitizer:DEADLYSIGNAL" and never exits, while the
+            # very same binary passes in ~12 ms on the next try (measured
+            # 2026-11-07). That is the environment, not the logic, so one
+            # retry is allowed on exactly that signature; a real logic
+            # failure still fails the test.
+            ran = None
+            try:
+                ran = subprocess.run([str(binary)], capture_output=True,
+                                     text=True, timeout=20)
+            except subprocess.TimeoutExpired:
+                pass  # the DEADLYSIGNAL loop never exits; retry below
+            if ran is None or (ran.returncode != 0
+                               and "DEADLYSIGNAL" in ran.stderr):
+                ran = subprocess.run([str(binary)], capture_output=True,
+                                     text=True, timeout=60)
             self.assertEqual(ran.returncode, 0, ran.stdout + ran.stderr)
             self.assertIn("ok", ran.stdout)
 
