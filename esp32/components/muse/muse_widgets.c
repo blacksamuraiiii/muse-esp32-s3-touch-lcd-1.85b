@@ -53,3 +53,59 @@ lv_obj_t *muse_page_title(lv_obj_t *parent, const char *text, int y)
     lv_obj_align(t, LV_ALIGN_TOP_MID, 0, y);
     return t;
 }
+
+/* --- floating score label ("+1" / "-5") ---------------------------- */
+/* Rise and fade share one animation: the exec callback sets y and derives
+ * opacity from how far the label has risen, so nothing is still running
+ * when the completed callback deletes the label. The start y travels in
+ * the label's user data. */
+#define MUSE_FLOAT_TEXT_RISE_PX 36
+#define MUSE_FLOAT_TEXT_MS 700
+
+static void float_text_anim_cb(void *var, int32_t y)
+{
+    lv_obj_t *lbl = (lv_obj_t *)var;
+    int y0 = (int)(intptr_t)lv_obj_get_user_data(lbl);
+    lv_obj_set_y(lbl, (lv_coord_t)y);
+    int progress = y0 - y; /* 0..MUSE_FLOAT_TEXT_RISE_PX */
+    int opa = 255 - (progress * 255) / MUSE_FLOAT_TEXT_RISE_PX;
+    if (opa < 0) {
+        opa = 0;
+    }
+    lv_obj_set_style_opa(lbl, (lv_opa_t)opa, LV_PART_MAIN);
+}
+
+static void float_text_anim_done(lv_anim_t *a)
+{
+    /* LVGL 9.5 has no lv_anim_get_var(): the completed callback runs after
+     * the animation was unlinked from the list, so a->var is still valid
+     * and deleting the object cannot free this animation under ourselves. */
+    lv_obj_delete((lv_obj_t *)a->var);
+}
+
+void muse_float_text(lv_obj_t *parent, const char *text, lv_color_t colour,
+                     int cx, int y)
+{
+    lv_obj_t *lbl = lv_label_create(parent);
+    lv_label_set_text(lbl, text);
+    lv_obj_set_style_text_color(lbl, colour, LV_PART_MAIN);
+    lv_obj_set_style_text_font(lbl, &lv_font_montserrat_20, LV_PART_MAIN);
+    lv_obj_set_style_opa(lbl, LV_OPA_COVER, LV_PART_MAIN);
+    /* The label's width is 0 until it lays out, so measure after a forced
+     * layout pass or the text starts at the score point instead of
+     * straddling it. */
+    lv_obj_update_layout(lbl);
+    lv_obj_set_pos(lbl, (lv_coord_t)(cx - lv_obj_get_width(lbl) / 2),
+                   (lv_coord_t)y);
+    lv_obj_set_user_data(lbl, (void *)(intptr_t)y);
+    lv_obj_remove_flag(lbl, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_remove_flag(lbl, LV_OBJ_FLAG_CLICKABLE);
+    lv_anim_t a;
+    lv_anim_init(&a);
+    lv_anim_set_var(&a, lbl);
+    lv_anim_set_values(&a, y, y - MUSE_FLOAT_TEXT_RISE_PX);
+    lv_anim_set_duration(&a, MUSE_FLOAT_TEXT_MS);
+    lv_anim_set_exec_cb(&a, float_text_anim_cb);
+    lv_anim_set_completed_cb(&a, float_text_anim_done);
+    lv_anim_start(&a);
+}

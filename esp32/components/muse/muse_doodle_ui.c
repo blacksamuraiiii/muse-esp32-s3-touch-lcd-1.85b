@@ -488,7 +488,19 @@ static void on_tick(lv_timer_t *timer)
         return;
     }
     update_tilt();
+    /* Coins are +1 each (user rule 2026-11-07) and there is no bomb, so the
+     * score only ever goes up; the delta drives the floating "+1" the user
+     * asked for here as well as on 金币雨 (shared muse_float_text()). */
+    uint32_t score_before = s_game.score;
     muse_doodle_tick(&s_game, MUSE_DOODLE_TICK_MS);
+    uint32_t gained = s_game.score - score_before;
+    if (gained > 0 && s_sprite != NULL) {
+        char buf[12];
+        snprintf(buf, sizeof(buf), "+%u", (unsigned)gained);
+        muse_float_text(lv_obj_get_parent(s_sprite), buf,
+                        lv_color_hex(MUSE_THEME_GOLD),
+                        (int)s_game.cx, (int)s_game.cy - 30);
+    }
     if (s_game.phase == MUSE_DOODLE_OVER) {
         lv_timer_pause(s_timer);
         /* She fell out of the bottom: convert once, here and nowhere else. */

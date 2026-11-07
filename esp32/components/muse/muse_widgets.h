@@ -33,3 +33,17 @@ lv_obj_t *muse_card(lv_obj_t *parent, lv_coord_t w, lv_coord_t h, int radius);
  * menu's list header keeps its own look on purpose (it is a system list,
  * not a subpage). */
 lv_obj_t *muse_page_title(lv_obj_t *parent, const char *text, int y);
+
+/* A floating score label ("+1" / "-5"): created under `parent`, centred on
+ * cx, rising 36 px while fading out over 700 ms, then deleting itself.
+ * One 700 ms lv_anim drives both the rise and the fade (the exec callback
+ * derives opacity from the current y), so no second animation is still
+ * running when the label goes away.
+ *
+ * Two game pages spawn these on every score change (金币雨 for +1 / -5,
+ * 毛毛跳跃 for +1). The user asked for the same effect on both, so it is
+ * one definition here instead of a copy per page.
+ *
+ * Call it from the LVGL timer that ticks the game, never from a worker. */
+void muse_float_text(lv_obj_t *parent, const char *text, lv_color_t colour,
+                     int cx, int y);
