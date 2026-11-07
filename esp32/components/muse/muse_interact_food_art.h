@@ -109,30 +109,32 @@ static const muse_interact_food_art_t MUSE_INTERACT_FOODS[6] = {
     },
     {
         /* Skewer (grilled skewers): NEW, drawn here in the same 16x16
-         * grid and colour map (not upstream). Diagonal, smaller meat:
-         * the stick runs bottom-left to top-right (x+y=16) and stays
-         * visible at the tip, between the three 3x3 meat cubes, and at
-         * the handle -- the stick behind the meat is what reads as a
-         * skewer. The orange/red/dark pixels are grill highlights, a
-         * pepper piece and a char mark. */
+         * grid and colour map (not upstream). After the perler-bead
+         * reference the user sent (拼拼豆 烤串006): TWO skewers crossing
+         * in an X -- stick A bottom-left to top-right (x+y=16), stick B
+         * top-left to bottom-right (x=y) -- with RED grilled meat (the
+         * reference's meat is red, not tan), 3x3 clusters on the four
+         * arms and the centre, yellow highlight on top, dark char spot.
+         * The sticks stay visible at the four tips and between the
+         * meat. */
         "烤串",
         {
             "                ",
-            "               y",
-            "              y ",
-            "          bbby  ",
-            "          bOb   ",
-            "          Rbb   ",
-            "          y     ",
-            "      bbby      ",
-            "      bOb       ",
-            "      bbb       ",
-            "      y         ",
-            "  bbby          ",
-            "  bDb           ",
-            "  bbb           ",
-            "  y             ",
-            " y              ",
+            " y             y",
+            "  y           y ",
+            "   RYR     RYR  ",
+            "   RRR     RRD  ",
+            "   ROR     RRR  ",
+            "      y   y     ",
+            "       RYR      ",
+            "       RDR      ",
+            "       ROR      ",
+            "      y   y     ",
+            "   RYR     RYR  ",
+            "   RRD     RRR  ",
+            "   ROR     RRR  ",
+            "  y           y ",
+            " y             y",
         },
     },
     {
