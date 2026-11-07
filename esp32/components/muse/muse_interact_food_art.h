@@ -109,27 +109,30 @@ static const muse_interact_food_art_t MUSE_INTERACT_FOODS[6] = {
     },
     {
         /* Skewer (grilled skewers): NEW, drawn here in the same 16x16
-         * grid and colour map (not upstream). A vertical stick with
-         * three meat cubes; the orange/red/dark pixels are grill
-         * highlights, a pepper piece and a char mark. */
+         * grid and colour map (not upstream). Diagonal, smaller meat:
+         * the stick runs bottom-left to top-right (x+y=16) and stays
+         * visible at the tip, between the three 3x3 meat cubes, and at
+         * the handle -- the stick behind the meat is what reads as a
+         * skewer. The orange/red/dark pixels are grill highlights, a
+         * pepper piece and a char mark. */
         "烤串",
         {
             "                ",
-            "       y        ",
-            "       y        ",
-            "      bbbb      ",
-            "     bbbbbb     ",
-            "     bObbbb     ",
-            "      bbbb      ",
-            "       y        ",
-            "      bbbb      ",
-            "     bbbbbb     ",
-            "     bRbbbb     ",
-            "      bbbb      ",
-            "       y        ",
-            "      bbbb      ",
-            "     bbbbbb     ",
-            "     bDbbbb     ",
+            "               y",
+            "              y ",
+            "          bbby  ",
+            "          bOb   ",
+            "          Rbb   ",
+            "          y     ",
+            "      bbby      ",
+            "      bOb       ",
+            "      bbb       ",
+            "      y         ",
+            "  bbby          ",
+            "  bDb           ",
+            "  bbb           ",
+            "  y             ",
+            " y              ",
         },
     },
     {
