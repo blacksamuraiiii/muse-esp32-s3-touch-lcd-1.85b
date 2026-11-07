@@ -161,7 +161,7 @@ void muse_pet_model_roll_daily(muse_pet_model_t *s, int64_t now)
 bool muse_pet_action_is_feed(muse_pet_action_t action)
 {
     return action == PET_FEED_RICE || action == PET_FEED_CAKE ||
-           action == PET_FEED_COFFEE || action == PET_FEED_SKEWER ||
+           action == PET_FEED_COFFEE || action == PET_FEED_BURGER ||
            action == PET_FEED_PIZZA || action == PET_FEED_MILKTEA;
 }
 
@@ -171,7 +171,7 @@ int muse_pet_feed_index(muse_pet_action_t action)
     case PET_FEED_RICE: return 0;
     case PET_FEED_CAKE: return 1;
     case PET_FEED_COFFEE: return 2;
-    case PET_FEED_SKEWER: return 3;
+    case PET_FEED_BURGER: return 3;
     case PET_FEED_PIZZA: return 4;
     case PET_FEED_MILKTEA: return 5;
     default: return -1;

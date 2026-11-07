@@ -108,55 +108,53 @@ static const muse_interact_food_art_t MUSE_INTERACT_FOODS[6] = {
         },
     },
     {
-        /* Skewer (grilled skewers): NEW, drawn here in the same 16x16
-         * grid and colour map (not upstream). After the perler-bead
-         * reference the user sent (拼拼豆 烤串006) and their correction:
-         * ONE skewer only (the earlier X was a misread). Diagonal
-         * (x+y=16), bottom is the bare handle held by hand -- four
-         * empty stick cells -- and the top carries FOUR red meat
-         * pieces (3x2 each, yellow highlight / scallion / char /
-         * orange accents), with the stick showing in the gaps
-         * between pieces. */
-        "烤串",
+        /* Hamburger: NEW, drawn here in the same 16x16 grid and colour
+         * map (not upstream) on 2026-11-07 (user). Top bun with
+         * sesame, lettuce, cheese, tomato, patty, bottom bun.
+         * Replaces the skewer (Mard 883), which read as a brown
+         * blob at this size. */
+        "汉堡包",
         {
             "                ",
-            "               O",
-            "             RYR",
-            "            bRR ",
-            "           RGb  ",
-            "          bRR   ",
-            "         RYb    ",
-            "        bRG     ",
-            "       RRb      ",
-            "      bYR       ",
-            "     RGb        ",
-            "     O          ",
-            "    O           ",
-            "   O            ",
-            "  O             ",
-            " O              ",
+            "                ",
+            "      bbbb      ",
+            "    bbbbbbbb    ",
+            "   bbbbbbbbbb   ",
+            "   bWbbbbbbWb   ",
+            "  bbbbbbbbbbbb  ",
+            " GGGGGGGGGGGGGG ",
+            " YYYYYYYYYYYYYY ",
+            "  RRRRRRRRRRRR  ",
+            "  OOOOOOOOOOOO  ",
+            "  OOOOOOOOOOOO  ",
+            "  bbbbbbbbbbbb  ",
+            "   bbbbbbbbbb   ",
+            "                ",
+            "                ",
         },
     },
     {
         /* Pizza slice: NEW, copied from the Mard(707) perler chart on
-         * 2026-11-07 (user). Diagonal slice, tip bottom-left, crust
-         * on the top-right edge; yellow cheese, red pepperoni,
-         * green basil. Replaces the 180-deg-rotated slice. */
+         * 2026-11-07 (user), then reshaped to a triangle on the
+         * same day (user): thick rolled crust at the back
+         * (dark-brown outline + tan band, 2 cells) and a sharp
+         * point at the front. Yellow cheese, red pepperoni,
+         * green basil. */
         "披萨",
         {
             "                ",
             "                ",
-            "       bbb      ",
-            "      YYYYb     ",
-            "      YYYYYb    ",
-            "     YYYYYYYb   ",
-            "     YYRYYYYYb  ",
-            "     YYYYYYYYb  ",
-            "    YYYYYYYYYb  ",
-            "    YYYYRYYY    ",
+            "       OOO      ",
+            "      YbbbO     ",
+            "      YYYYbO    ",
+            "     YYYYYYbO   ",
+            "     YYRYYYYbO  ",
+            "     YYYYYYYbO  ",
+            "    YYYYYYYbO   ",
+            "    YYYRYYYY    ",
             "   YYYYYYY      ",
             "   YYGYYY       ",
-            "   YYYY         ",
+            "   YYY          ",
             "   YY           ",
             "   Y            ",
             "                ",
