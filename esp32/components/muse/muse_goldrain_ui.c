@@ -509,14 +509,17 @@ static void on_tick(lv_timer_t *timer)
     if (delta != 0) {
         /* Caught on this tick: a coin is +1, a bomb is -5. The text
          * rises from just above the catcher, where the catch happened. */
-        char buf[8];
+        /* -Werror=format-truncation: buf has to hold the widest %d plus
+         * its sign, so 12 bytes, and the value is an int-sized score
+         * delta (never near INT_MAX). */
+        char buf[12];
         if (delta > 0) {
-            snprintf(buf, sizeof(buf), "+%ld", (long)delta);
+            snprintf(buf, sizeof(buf), "+%d", (int)delta);
             spawn_float_text(buf, lv_color_hex(MUSE_THEME_GOLD),
                              (int)s_game.catcher_cx,
                              MUSE_GOLDRAIN_CATCH_Y - 28);
         } else {
-            snprintf(buf, sizeof(buf), "%ld", (long)delta);
+            snprintf(buf, sizeof(buf), "%d", (int)delta);
             spawn_float_text(buf, lv_color_hex(MUSE_THEME_DANGER),
                              (int)s_game.catcher_cx,
                              MUSE_GOLDRAIN_CATCH_Y - 28);
