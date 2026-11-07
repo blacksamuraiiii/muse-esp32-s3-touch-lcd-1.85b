@@ -134,29 +134,31 @@ static const muse_interact_food_art_t MUSE_INTERACT_FOODS[6] = {
         },
     },
     {
-        /* Pizza slice: NEW, copied from the Mard(707) perler chart on
-         * 2026-11-07 (user). The triangle reshape of the same
-         * day was dropped; this is the Mard(707) design rotated
-         * 90 deg clockwise (user): tip at the top-left, crust
-         * at the bottom-right. Yellow cheese, red pepperoni,
-         * green basil. */
+        /* Pizza slice: NEW, the very first design drawn for the 6-food
+         * set (wide brown crust, yellow cheese, red pepperoni
+         * clusters, green pepper near the tip), redrawn at the
+         * angle the user specified on 2026-11-07: tip at the
+         * bottom-left, crust at the top-right. (A 45-deg raster
+         * rotation of the original was too messy, so this is a
+         * clean hand redraw at that angle; the Mard(707)
+         * version and the triangle reshape are both dropped.) */
         "披萨",
         {
             "                ",
             "                ",
-            "                ",
-            " YYYYY          ",
-            "  YYYYYY        ",
-            "   YGYYYYYY     ",
-            "   YYYYYYYYYY   ",
-            "    YYYYYRYYYb  ",
-            "    YYRYYYYYYb  ",
-            "     YYYYYYYYb  ",
-            "      YYYYYYb   ",
-            "      YYYYYb    ",
-            "       YYYb     ",
             "       bbb      ",
-            "                ",
+            "      Ybbbb     ",
+            "      YYYYbb    ",
+            "     YYYYYYbb   ",
+            "     YYRRYYYbb  ",
+            "     YYYYYYYbb  ",
+            "    YYYYYYYbb   ",
+            "    YYYRRYYY    ",
+            "   YYYYYYY      ",
+            "   YYGYYY       ",
+            "   YYYY         ",
+            "   YY           ",
+            "   Y            ",
             "                ",
         },
     },
