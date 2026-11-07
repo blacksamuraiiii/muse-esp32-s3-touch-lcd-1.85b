@@ -985,7 +985,10 @@ static void drain_feedback(void)
             break;
         case PET_FEED_RICE:
         case PET_FEED_CAKE:
-        case PET_FEED_COFFEE: {
+        case PET_FEED_COFFEE:
+        case PET_FEED_BURGER:
+        case PET_FEED_PIZZA:
+        case PET_FEED_MILKTEA: {
             /* 1.5b: the request is answered, whatever the result, so the
              * next tap may go through. */
             s_feed_pending = false;
