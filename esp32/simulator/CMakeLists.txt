@@ -168,10 +168,11 @@ add_executable(muse_simulator
     # its API instead.
     "${MUSE_COMPONENT_DIR}/../../avatar/muse_pixel.c"
     # The CJK faces the 1.85B draws Chinese with (compat/sdkconfig.h sets
-    # CONFIG_MUSE_CJK_FONT): one 16 px antialiased level-1 face plus the
-    # 16 px Unifont fallback (1.5b; the old 20 px reply face is gone).
-    "${MUSE_COMPONENT_DIR}/fonts/muse_font_cjk_16.c"
-    "${MUSE_COMPONENT_DIR}/fonts/muse_font_ui_16.c"
+    # CONFIG_MUSE_CJK_FONT): the 16 px Noto Sans SC face plus the DejaVu
+    # symbol tail (1.5.1d; the predecessors ui_16 / cjk_16 are gone from
+    # the tree, and the simulator's list now matches muse_font.c).
+    "${MUSE_COMPONENT_DIR}/fonts/muse_font_cjk_noto_16.c"
+    "${MUSE_COMPONENT_DIR}/fonts/muse_font_sym_16.c"
 )
 
 target_include_directories(muse_simulator PRIVATE
