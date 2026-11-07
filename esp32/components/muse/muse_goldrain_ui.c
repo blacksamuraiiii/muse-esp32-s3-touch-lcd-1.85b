@@ -559,11 +559,9 @@ void muse_goldrain_ui_build(lv_obj_t *page, lv_event_cb_t back_cb)
 {
     muse_goldrain_init(&s_game);
 
-    /* Field, then one coin image and one bomb drawing per item slot. */
-    lv_obj_t *field = fill(page, MUSE_THEME_CARD);
-    lv_obj_set_size(field, MUSE_GOLDRAIN_FIELD_SIZE,
-                    MUSE_GOLDRAIN_FIELD_SIZE);
-    lv_obj_set_pos(field, MUSE_GOLDRAIN_FIELD_X, MUSE_GOLDRAIN_FIELD_Y);
+    /* No CARD field behind the falling items (game-polish 2026-11-07):
+     * coins, bombs and the catcher sit directly on the black page.
+     * One coin image and one bomb drawing per item slot. */
     for (int i = 0; i < MUSE_GOLDRAIN_MAX_ITEMS; i++) {
         lv_obj_t *coin = lv_image_create(page);
         lv_image_set_src(coin, &muse_goldrain_coin);
