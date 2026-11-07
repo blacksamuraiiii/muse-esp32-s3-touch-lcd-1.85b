@@ -28,7 +28,9 @@
 #include "muse_pet_model.h"
 
 /* Day N as a UTC epoch: 00:00 plus a bit, so the value is unambiguously
- * inside that day. MUSE_PET_DAY_OFFSET_SECONDS is 0, so day = now / 86400. */
+ * inside that day. MUSE_PET_DAY_OFFSET_SECONDS is 8*3600 (local midnight),
+ * so day = (now + 28800) / 86400; 3600 + 28800 = 32400 < 86400, so this
+ * still lands inside day N. */
 static int64_t day_now(int32_t day)
 {
     return (int64_t)day * 86400 + 3600;
@@ -199,6 +201,70 @@ int main(void)
     muse_pet_model_init(&m);
     m.sudoku_entry_paid = 2;
     assert(!muse_pet_model_valid(&m));
+
+    /* --- roll_daily: the 2026-11-07 feed bug --------------------------- */
+    /* Feed all three foods on d1, then simulate the worker tick on d2
+     * (no feed action yet): the mask must already be clear, so the UI's
+     * snapshot reads "nothing fed today" and the first rice tap of d2
+     * answers "+10", not "already fed today". Before this fix the mask
+     * was only rolled inside the feed action, so the first tap of a new
+     * day read yesterday's mask (0b111) for s_last_feed_before. */
+    muse_pet_model_init(&m);
+    m.coins = 0;
+    assert(apply(&m, PET_FEED_RICE, d1, 0) == PET_OK);
+    assert(apply(&m, PET_FEED_CAKE, d1, 0) == PET_OK);
+    assert(apply(&m, PET_FEED_COFFEE, d1, 0) == PET_OK);
+    assert(m.coins == 30);
+    assert(m.feed_day == d1);
+    assert(m.feed_mask == 0x7u);
+    /* The tick rolls the caps with no action at all. */
+    muse_pet_model_roll_daily(&m, day_now(d2));
+    assert(m.feed_day == d2);
+    assert(m.feed_mask == 0);
+    assert(m.coins == 30); /* rolling grants nothing, it only clears */
+    /* Rice on the new day now pays, and the bit it sets is fresh.
+     * (The 20-coin living cost is settled by the feed's decay first:
+     * 30 - 20 + 10 = 20.) */
+    assert(apply(&m, PET_FEED_RICE, d2, 0) == PET_OK);
+    assert(m.coins == 20);
+    assert(m.feed_mask == 0x1u);
+    /* A second rice tap the same day pays nothing (mask bit already set). */
+    assert(apply(&m, PET_FEED_RICE, d2, 0) == PET_OK);
+    assert(m.coins == 20);
+    assert(m.feed_mask == 0x1u);
+
+    /* --- roll_daily also clears the touch count ------------------------ */
+    muse_pet_model_init(&m);
+    m.coins = 0;
+    for (int i = 0; i < 10; i++) {
+        assert(apply(&m, PET_TOUCH, d1, 0) == PET_COIN);
+    }
+    assert(m.daily_touch_coins == MUSE_PET_TOUCH_DAILY_MAX);
+    assert(apply(&m, PET_TOUCH, d1, 0) == PET_CAP); /* capped for d1 */
+    muse_pet_model_roll_daily(&m, day_now(d2));
+    assert(m.touch_day == d2);
+    assert(m.daily_touch_coins == 0);
+    assert(apply(&m, PET_TOUCH, d2, 0) == PET_COIN); /* fresh day, pays */
+
+    /* --- roll_daily is idempotent and rollback-safe -------------------- */
+    /* Same day: nothing changes. */
+    uint32_t mask_before = m.feed_mask;
+    muse_pet_model_roll_daily(&m, day_now(d2));
+    assert(m.feed_mask == mask_before);
+    assert(m.feed_day == d2);
+    /* Clock going backwards: the stored day and mask are kept, so a
+     * rollback can never re-grant a day's rewards. */
+    muse_pet_model_roll_daily(&m, day_now(d2 - 1));
+    assert(m.feed_day == d2);
+    assert(m.feed_mask == mask_before);
+
+    /* --- roll_daily is a no-op on an uncalibrated clock ---------------- */
+    muse_pet_model_init(&m);
+    m.feed_day = d1;
+    m.feed_mask = 0x7u;
+    muse_pet_model_roll_daily(&m, MUSE_PET_TIME_MIN - 3600);
+    assert(m.feed_day == d1);
+    assert(m.feed_mask == 0x7u);
 
     printf("ok\n");
     return 0;

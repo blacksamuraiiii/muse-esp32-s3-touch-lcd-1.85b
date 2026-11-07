@@ -150,6 +150,14 @@ void muse_pet_model_decay(muse_pet_model_t *s, int64_t now)
     s->decay_day = day;
 }
 
+void muse_pet_model_roll_daily(muse_pet_model_t *s, int64_t now)
+{
+    bool calibrated = false;
+    int32_t day = muse_pet_day(now, &calibrated);
+    roll_cap(&s->feed_day, &s->feed_mask, day, calibrated);
+    roll_cap(&s->touch_day, &s->daily_touch_coins, day, calibrated);
+}
+
 bool muse_pet_action_is_feed(muse_pet_action_t action)
 {
     return action == PET_FEED_RICE || action == PET_FEED_CAKE ||

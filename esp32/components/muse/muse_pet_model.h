@@ -234,6 +234,19 @@ void muse_pet_sudoku_today(const muse_pet_model_t *s, int64_t now,
  * No-op when uncalibrated, and never moves decay_day backwards on rollback. */
 void muse_pet_model_decay(muse_pet_model_t *s, int64_t now);
 
+/* Roll the daily caps (feed mask + touch count) forward when the calibrated
+ * day has advanced, without settling any action. The worker tick calls this
+ * so the snapshot's feed_mask / touch count are fresh within one tick of the
+ * day boundary: without it the caps are only rolled when a feed/touch action
+ * is applied, so on a new day the UI reads yesterday's mask until the first
+ * feed/touch of that day (2026-11-07: rice always answered "already fed
+ * today" because it is the first button). Idempotent and rollback-safe:
+ * roll_cap() only moves forward, and an uncalibrated clock rolls nothing.
+ * Fortune is deliberately NOT rolled here: it draws on demand (PET_FORTUNE
+ * checks fortune_day at draw time), and the sudoku ledger is read through
+ * muse_pet_sudoku_today(), which compares sudoku_day to today. */
+void muse_pet_model_roll_daily(muse_pet_model_t *s, int64_t now);
+
 /* Settle one action into `s` (decay is applied first). `random` is used only
  * for PET_FORTUNE (index = random % 20). `arg` carries the outcome of a game
  * round (-1 lose / 0 draw / +1 win, decided UI-side at click time, design
