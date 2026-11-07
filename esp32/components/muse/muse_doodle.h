@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 /*
- * muse_doodle.h -- 毛毛飞行 logic (no LVGL, no ESP-IDF).
+ * muse_doodle.h -- 毛毛跳跃 logic (no LVGL, no ESP-IDF).
  *
  * Buttercup flies: she does not stand on anything (user 2026-11-07,
  * "毛毛是会飞的，不需要脚底下那个飞行板"). A tap flaps her upward

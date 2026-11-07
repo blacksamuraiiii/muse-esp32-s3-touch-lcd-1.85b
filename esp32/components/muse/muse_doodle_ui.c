@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 /*
- * muse_doodle_ui.c -- 毛毛飞行 subpage, see muse_doodle_ui.h.
+ * muse_doodle_ui.c -- 毛毛跳跃 subpage, see muse_doodle_ui.h.
  *
  * Layout (mockup v4, 360x360 round screen, dark theme like the other
  * games): a 240x240 field at (60,60) with a night sky (faint stars,
@@ -9,7 +9,7 @@
  * (66x26, puffy: a base plus three circles) are the only footing.
  * Coins (18 px, the goldrain token) float in the air in a rising
  * trail. The top crescent shows the title (y=38: the same slot and
- * ACCENT colour the snake page uses for its name): "毛毛飞行" in every
+ * ACCENT colour the snake page uses for its name): "毛毛跳跃" in every
  * state except OVER, where the slot itself becomes "游戏结束" (same
  * as snake / whack-a-mole / goldrain). The line under the field
  * (y=308, the slot the snake page prints its score on) never rides
@@ -258,9 +258,9 @@ static void refresh_display(void)
                    (lv_coord_t)(s_game.cx - MUSE_DOODLE_SPRITE_W / 2),
                    (lv_coord_t)(s_game.cy - MUSE_DOODLE_SPRITE_H / 2));
     muse_doodle_phase_t ph = s_game.phase;
-    /* Title: "毛毛飞行" except at OVER, where the title slot itself
+    /* Title: "毛毛跳跃" except at OVER, where the title slot itself
      * becomes the result title (same as snake / whack-a-mole / goldrain). */
-    set_label(s_name, ph == MUSE_DOODLE_OVER ? "游戏结束" : "毛毛飞行");
+    set_label(s_name, ph == MUSE_DOODLE_OVER ? "游戏结束" : "毛毛跳跃");
     /* HUD, same slot as the snake page's score line: while PLAYING or
      * PAUSED it is white and score-only -- no countdown, the round is
      * endless until she falls. At OVER it turns GOLD and adds the
@@ -674,7 +674,7 @@ void muse_doodle_ui_build(lv_obj_t *page, lv_event_cb_t back_cb)
      * the dim overlays, so they stay readable in every state. The line used
      * to sit at y=332 and rode on the bezel (user report 2026-11-01).
      * refresh_display() swaps the title to "游戏结束" at OVER. */
-    s_name = muse_page_title(page, "毛毛飞行", 38);
+    s_name = muse_page_title(page, "毛毛跳跃", 38);
     s_hud = label(page, muse_font_cjk(), MUSE_THEME_TEXT);
     lv_obj_align(s_hud, LV_ALIGN_TOP_MID, 0, MUSE_DOODLE_HUD_Y);
 

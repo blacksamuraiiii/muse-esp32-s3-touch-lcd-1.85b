@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 /*
- * muse_doodle.c -- 毛毛飞行 logic, see muse_doodle.h.
+ * muse_doodle.c -- 毛毛跳跃 logic, see muse_doodle.h.
  *
  * She flies: a tap sets vy to the flap speed and vx to the tap's
  * direction, gravity pulls her back down, and landing on a cloud
