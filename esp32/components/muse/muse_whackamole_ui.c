@@ -457,11 +457,8 @@ void muse_whackamole_ui_build(lv_obj_t *page, lv_event_cb_t back_cb)
 {
     muse_whackamole_init(&s_game);
 
-    /* Field, then per-hole stacks: hole -> mole -> lip. */
-    lv_obj_t *field = fill(page, MUSE_THEME_CARD);
-    lv_obj_set_size(field, MUSE_WHACKAMOLE_FIELD_SIZE,
-                    MUSE_WHACKAMOLE_FIELD_SIZE);
-    lv_obj_set_pos(field, MUSE_WHACKAMOLE_FIELD_X, MUSE_WHACKAMOLE_FIELD_Y);
+    /* No CARD field behind the holes (game-polish 2026-11-07): the holes
+     * sit directly on the black page. Per-hole stacks: hole -> mole -> lip. */
     for (int i = 0; i < MUSE_WHACKAMOLE_HOLES; i++) {
         int col = i % MUSE_WHACKAMOLE_COLS;
         int row = i / MUSE_WHACKAMOLE_COLS;

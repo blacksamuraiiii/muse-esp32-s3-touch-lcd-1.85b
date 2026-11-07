@@ -132,6 +132,7 @@ static lv_obj_t *s_back;
 static lv_obj_t *s_name;
 static lv_obj_t *s_hud;
 static lv_obj_t *s_note;
+static lv_obj_t *s_page;
 static lv_timer_t *s_timer;
 
 /* Status / message slot under the field (field ends at y=300): the HUD
@@ -431,6 +432,58 @@ static void update_tilt(void)
     }
 }
 
+/* --- floating "+1" / "-5" ---------------------------------------- */
+/* A catch spawns a label that rises ~36 px and fades over ~700 ms,
+ * then deletes itself. One lv_anim drives both rise and fade (the
+ * exec callback derives opacity from the current y), so no second
+ * anim is still running when the label is deleted. The start y is
+ * kept in the label's user data. */
+static void float_text_anim_cb(void *var, int32_t y)
+{
+    lv_obj_t *lbl = (lv_obj_t *)var;
+    int y0 = (int)(intptr_t)lv_obj_get_user_data(lbl);
+    lv_obj_set_y(lbl, (lv_coord_t)y);
+    int progress = y0 - y; /* 0..36 */
+    int opa = 255 - (progress * 255) / 36;
+    if (opa < 0) {
+        opa = 0;
+    }
+    lv_obj_set_style_opa(lbl, (lv_opa_t)opa, LV_PART_MAIN);
+}
+
+static void float_text_anim_done(lv_anim_t *a)
+{
+    /* LVGL 9.5 has no lv_anim_get_var(): the completed callback runs after
+     * the anim is unlinked from the list, so a->var is still valid here
+     * and deleting the object cannot free this anim under ourselves. */
+    lv_obj_delete((lv_obj_t *)a->var);
+}
+
+static void spawn_float_text(const char *text, lv_color_t colour, int cx, int y)
+{
+    lv_obj_t *lbl = lv_label_create(s_page);
+    lv_label_set_text(lbl, text);
+    lv_obj_set_style_text_color(lbl, colour, LV_PART_MAIN);
+    lv_obj_set_style_text_font(lbl, &lv_font_montserrat_20, LV_PART_MAIN);
+    lv_obj_set_style_opa(lbl, LV_OPA_COVER, LV_PART_MAIN);
+    /* Center on the catch point: the label's width is 0 until it lays out,
+     * so measure after a forced layout pass. */
+    lv_obj_update_layout(lbl);
+    lv_obj_set_pos(lbl, (lv_coord_t)(cx - lv_obj_get_width(lbl) / 2),
+                   (lv_coord_t)y);
+    lv_obj_set_user_data(lbl, (void *)(intptr_t)y);
+    lv_obj_remove_flag(lbl, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_remove_flag(lbl, LV_OBJ_FLAG_CLICKABLE);
+    lv_anim_t a;
+    lv_anim_init(&a);
+    lv_anim_set_var(&a, lbl);
+    lv_anim_set_values(&a, y, y - 36);
+    lv_anim_set_duration(&a, 700);
+    lv_anim_set_exec_cb(&a, float_text_anim_cb);
+    lv_anim_set_completed_cb(&a, float_text_anim_done);
+    lv_anim_start(&a);
+}
+
 static void on_tick(lv_timer_t *timer)
 {
     (void)timer;
@@ -450,7 +503,25 @@ static void on_tick(lv_timer_t *timer)
         return;
     }
     update_tilt();
+    int32_t score_before = s_game.score;
     muse_goldrain_tick(&s_game, MUSE_GOLDRAIN_TICK_MS);
+    int32_t delta = s_game.score - score_before;
+    if (delta != 0) {
+        /* Caught on this tick: a coin is +1, a bomb is -5. The text
+         * rises from just above the catcher, where the catch happened. */
+        char buf[8];
+        if (delta > 0) {
+            snprintf(buf, sizeof(buf), "+%ld", (long)delta);
+            spawn_float_text(buf, lv_color_hex(MUSE_THEME_GOLD),
+                             (int)s_game.catcher_cx,
+                             MUSE_GOLDRAIN_CATCH_Y - 28);
+        } else {
+            snprintf(buf, sizeof(buf), "%ld", (long)delta);
+            spawn_float_text(buf, lv_color_hex(MUSE_THEME_DANGER),
+                             (int)s_game.catcher_cx,
+                             MUSE_GOLDRAIN_CATCH_Y - 28);
+        }
+    }
     if (s_game.phase == MUSE_GOLDRAIN_OVER) {
         lv_timer_pause(s_timer);
         /* The 30 s round is over: convert once, here and nowhere else. */
@@ -578,12 +649,11 @@ static lv_obj_t *bomb_obj(lv_obj_t *page)
 void muse_goldrain_ui_build(lv_obj_t *page, lv_event_cb_t back_cb)
 {
     muse_goldrain_init(&s_game);
+    s_page = page;
 
-    /* Field, then one coin image and one bomb drawing per item slot. */
-    lv_obj_t *field = fill(page, MUSE_THEME_CARD);
-    lv_obj_set_size(field, MUSE_GOLDRAIN_FIELD_SIZE,
-                    MUSE_GOLDRAIN_FIELD_SIZE);
-    lv_obj_set_pos(field, MUSE_GOLDRAIN_FIELD_X, MUSE_GOLDRAIN_FIELD_Y);
+    /* No CARD field behind the falling items (game-polish 2026-11-07):
+     * coins, bombs and the catcher sit directly on the black page.
+     * One coin image and one bomb drawing per item slot. */
     for (int i = 0; i < MUSE_GOLDRAIN_MAX_ITEMS; i++) {
         lv_obj_t *coin = lv_image_create(page);
         lv_image_set_src(coin, &muse_goldrain_coin);
