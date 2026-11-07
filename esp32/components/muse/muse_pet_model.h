@@ -42,7 +42,7 @@
 #define MUSE_PET_TOUCH_COINS 5u        /* per touch */
 #define MUSE_PET_TOUCH_DAILY_MAX 50u   /* per day: the first 10 touches pay */
 #define MUSE_PET_FEED_COINS 10u        /* per food, once per food per day */
-#define MUSE_PET_FEED_KINDS 6u         /* rice / cake / coffee / skewers / pizza / milk tea */
+#define MUSE_PET_FEED_KINDS 6u         /* rice / cake / coffee / burger / pizza / milk tea */
 #define MUSE_PET_FEED_DAILY_MAX 60u    /* six foods x 10 (user decision 2026-11-07) */
 #define MUSE_PET_GAME_STAKE 5u         /* win +5, lose -5, draw 0; also the entry fee
                                         * of every mini-game (PET_FEE / PET_SUDOKU_ENTRY) */

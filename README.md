@@ -6,7 +6,7 @@
 > 板级文档见 [`esp32/README.md`](esp32/README.md) 与 `esp32/AGENTS.md`。
 > 内容以**面向 Windows 用户**的分步操作为主（上游文档只写了 macOS / Linux）。
 >
-> 正式版 **1.4**，最新测试版 **1.5g**（`esp32/version.txt`），发布件见
+> 正式版 **1.5.1**，最新测试版 **1.5.1c**（`esp32/version.txt`），发布件见
 > [Releases](https://github.com/blacksamuraiiii/muse-esp32-s3-touch-lcd-1.85b/releases)。
 >
 > **风险提示**：本项目由「黑客为黑客」而写，纯属好玩。刷入自定义固件可能导致开发板变砖、
