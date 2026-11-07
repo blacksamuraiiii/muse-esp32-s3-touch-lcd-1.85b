@@ -16,7 +16,7 @@
 
 #include "muse_settings_ui.h"
 #include "muse_theme.h"   /* MUSE_THEME_*, the one colour table (1.5b) */
-#include "muse_font.h"    /* muse_font_btn(), muse_font_mont16_cjk(), the one CJK chain */
+#include "muse_font.h"    /* muse_font_btn(), muse_font_cjk(), the one CJK chain */
 #include "muse_widgets.h" /* the shared back arrow / card / title (1.5g) */
 
 #include <stdio.h>
@@ -155,9 +155,10 @@ static void set_text(lv_obj_t *l, const char *text)
 
 static lv_obj_t *note(lv_obj_t *list, const char *text)
 {
-    /* Chained, not bare Montserrat 16: a note can carry a Wi-Fi SSID, and
-     * bare Montserrat drew a Chinese SSID as tofu boxes (2026-11-03). */
-    lv_obj_t *l = label(list, muse_font_mont16_cjk(), MUSE_THEME_DIM, text);
+    /* The shared chain, not bare Montserrat 16: a note can carry a Wi-Fi
+     * SSID, and bare Montserrat drew a Chinese SSID as tofu boxes
+     * (2026-11-03). */
+    lv_obj_t *l = label(list, muse_font_cjk(), MUSE_THEME_DIM, text);
     lv_obj_set_width(l, lv_pct(100));
     lv_label_set_long_mode(l, LV_LABEL_LONG_MODE_WRAP);
     lv_obj_set_style_text_align(l, LV_TEXT_ALIGN_CENTER, 0);
@@ -273,8 +274,8 @@ static lv_obj_t *row(lv_obj_t *list, const char *icon, const char *text, lv_obj_
     lv_obj_set_flex_grow(t, 1);
     lv_label_set_long_mode(t, LV_LABEL_LONG_MODE_DOTS);
     if (value_out) {
-        /* Chained: a row value can be a Wi-Fi SSID (SETTINGS row, 2026-11-03). */
-        lv_obj_t *v = label(c, muse_font_mont16_cjk(), MUSE_THEME_DIM, "");
+        /* Shared chain: a row value can be a Wi-Fi SSID (SETTINGS row, 2026-11-03). */
+        lv_obj_t *v = label(c, muse_font_cjk(), MUSE_THEME_DIM, "");
         lv_obj_set_style_max_width(v, 130, 0);
         lv_label_set_long_mode(v, LV_LABEL_LONG_MODE_DOTS);
         *value_out = v;
@@ -367,9 +368,9 @@ static lv_obj_t *info_row(lv_obj_t *list, const char *text)
 {
     lv_obj_t *c = card(list, false);
     lv_obj_set_height(c, 44);
-    lv_obj_t *t = label(c, muse_font_mont16_cjk(), MUSE_THEME_TEXT, text);
+    lv_obj_t *t = label(c, muse_font_cjk(), MUSE_THEME_TEXT, text);
     lv_obj_set_flex_grow(t, 1);
-    return label(c, muse_font_mont16_cjk(), MUSE_THEME_ACCENT, "");
+    return label(c, muse_font_cjk(), MUSE_THEME_ACCENT, "");
 }
 
 /* ---------- navigation ---------- */
@@ -503,7 +504,7 @@ static void build_keyboard(void)
     lv_obj_set_style_bg_opa(s_text_show, LV_OPA_COVER, 0);
     lv_obj_set_style_bg_color(s_text_show, lv_color_hex(MUSE_THEME_CARD), 0);
     lv_obj_add_event_cb(s_text_show, on_text_show, LV_EVENT_CLICKED, NULL);
-    lv_obj_center(label(s_text_show, muse_font_mont16_cjk(), MUSE_THEME_TEXT, "Show"));
+    lv_obj_center(label(s_text_show, muse_font_cjk(), MUSE_THEME_TEXT, "Show"));
 
     /* Inside the circle, or across the rest of the screen. */
     s_text_kb = lv_keyboard_create(s_text);
@@ -561,7 +562,7 @@ static void build_text_page(lv_obj_t *tile)
     lv_obj_set_style_border_color(s_text_ta, lv_color_hex(MUSE_THEME_ACCENT), 0);
     lv_obj_set_style_border_width(s_text_ta, border, 0);
     lv_obj_set_style_radius(s_text_ta, 14, 0);
-    lv_obj_set_style_text_font(s_text_ta, muse_font_mont16_cjk(), LV_PART_TEXTAREA_PLACEHOLDER);
+    lv_obj_set_style_text_font(s_text_ta, muse_font_cjk(), LV_PART_TEXTAREA_PLACEHOLDER);
     lv_obj_set_style_text_color(s_text_ta, lv_color_hex(MUSE_THEME_DIM), LV_PART_TEXTAREA_PLACEHOLDER);
     lv_obj_add_state(s_text_ta, LV_STATE_FOCUSED);
     if (muse_board->epaper) {
@@ -1286,8 +1287,8 @@ static void build_sound_page(lv_obj_t *tile)
     lv_obj_set_size(meter, lv_pct(100), LV_SIZE_CONTENT);
     lv_obj_set_style_pad_hor(meter, 8, 0);
     lv_obj_remove_flag(meter, LV_OBJ_FLAG_SCROLLABLE);
-    label(meter, muse_font_mont16_cjk(), MUSE_THEME_DIM, "Mic level");
-    s_mic_val = label(meter, muse_font_mont16_cjk(), MUSE_THEME_DIM, "");
+    label(meter, muse_font_cjk(), MUSE_THEME_DIM, "Mic level");
+    s_mic_val = label(meter, muse_font_cjk(), MUSE_THEME_DIM, "");
     lv_obj_align(s_mic_val, LV_ALIGN_TOP_RIGHT, 0, 0);
     s_mic_bar = lv_bar_create(meter);
     lv_obj_set_size(s_mic_bar, lv_pct(94), 10);
