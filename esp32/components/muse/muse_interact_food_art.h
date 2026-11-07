@@ -109,18 +109,18 @@ static const muse_interact_food_art_t MUSE_INTERACT_FOODS[6] = {
     },
     {
         /* Hamburger: NEW, drawn here in the same 16x16 grid and colour
-         * map (not upstream) on 2026-11-07 (user). Top bun with
-         * sesame, lettuce, cheese, tomato, patty, bottom bun.
-         * Replaces the skewer (Mard 883), which read as a brown
-         * blob at this size. */
+         * map (not upstream) on 2026-11-07 (user). Top bun,
+         * lettuce, cheese, tomato, patty, bottom bun. Sesame:
+         * three white dots scattered at random (user: not
+         * symmetric). Replaces the skewer (Mard 883). */
         "汉堡包",
         {
             "                ",
             "                ",
             "      bbbb      ",
-            "    bbbbbbbb    ",
-            "   bbbbbbbbbb   ",
-            "   bWbbbbbbWb   ",
+            "    bbbbbWbb    ",
+            "   bbWbbbbbbb   ",
+            "   bbbbbbbbWb   ",
             "  bbbbbbbbbbbb  ",
             " GGGGGGGGGGGGGG ",
             " YYYYYYYYYYYYYY ",
@@ -135,28 +135,28 @@ static const muse_interact_food_art_t MUSE_INTERACT_FOODS[6] = {
     },
     {
         /* Pizza slice: NEW, copied from the Mard(707) perler chart on
-         * 2026-11-07 (user), then reshaped to a triangle on the
-         * same day (user): thick rolled crust at the back
-         * (dark-brown outline + tan band, 2 cells) and a sharp
-         * point at the front. Yellow cheese, red pepperoni,
+         * 2026-11-07 (user). The triangle reshape of the same
+         * day was dropped; this is the Mard(707) design rotated
+         * 90 deg clockwise (user): tip at the top-left, crust
+         * at the bottom-right. Yellow cheese, red pepperoni,
          * green basil. */
         "披萨",
         {
             "                ",
             "                ",
-            "       OOO      ",
-            "      YbbbO     ",
-            "      YYYYbO    ",
-            "     YYYYYYbO   ",
-            "     YYRYYYYbO  ",
-            "     YYYYYYYbO  ",
-            "    YYYYYYYbO   ",
-            "    YYYRYYYY    ",
-            "   YYYYYYY      ",
-            "   YYGYYY       ",
-            "   YYY          ",
-            "   YY           ",
-            "   Y            ",
+            "                ",
+            " YYYYY          ",
+            "  YYYYYY        ",
+            "   YGYYYYYY     ",
+            "   YYYYYYYYYY   ",
+            "    YYYYYRYYYb  ",
+            "    YYRYYYYYYb  ",
+            "     YYYYYYYYb  ",
+            "      YYYYYYb   ",
+            "      YYYYYb    ",
+            "       YYYb     ",
+            "       bbb      ",
+            "                ",
             "                ",
         },
     },
