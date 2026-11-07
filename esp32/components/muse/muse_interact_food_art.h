@@ -110,31 +110,31 @@ static const muse_interact_food_art_t MUSE_INTERACT_FOODS[6] = {
     {
         /* Skewer (grilled skewers): NEW, drawn here in the same 16x16
          * grid and colour map (not upstream). After the perler-bead
-         * reference the user sent (拼拼豆 烤串006): TWO skewers crossing
-         * in an X -- stick A bottom-left to top-right (x+y=16), stick B
-         * top-left to bottom-right (x=y) -- with RED grilled meat (the
-         * reference's meat is red, not tan), 3x3 clusters on the four
-         * arms and the centre, yellow highlight on top, dark char spot.
-         * The sticks stay visible at the four tips and between the
-         * meat. */
+         * reference the user sent (拼拼豆 烤串006) and their correction:
+         * ONE skewer only (the earlier X was a misread). Diagonal
+         * (x+y=16), bottom is the bare handle held by hand -- four
+         * empty stick cells -- and the top carries FOUR red meat
+         * pieces (3x2 each, yellow highlight / scallion / char /
+         * orange accents), with the stick showing in the gaps
+         * between pieces. */
         "烤串",
         {
             "                ",
-            " y             y",
-            "  y           y ",
-            "   RYR     RYR  ",
-            "   RRR     RRD  ",
-            "   ROR     RRR  ",
-            "      y   y     ",
+            "             RYR",
+            "             RRO",
+            "             y  ",
+            "          RYR   ",
+            "          RGR   ",
+            "          y     ",
             "       RYR      ",
             "       RDR      ",
-            "       ROR      ",
-            "      y   y     ",
-            "   RYR     RYR  ",
-            "   RRD     RRR  ",
-            "   ROR     RRR  ",
-            "  y           y ",
-            " y             y",
+            "       y        ",
+            "    RYR         ",
+            "    RRO         ",
+            "    y           ",
+            "   y            ",
+            "  y             ",
+            " y              ",
         },
     },
     {
