@@ -1,0 +1,7 @@
+# 毛毛跳跃 (the doodle-jump mini game) on its START overlay, 360 px wide:
+# MUSE_SIM_SIZE=360 ./muse_simulator --headless --scenario doodle.txt ...
+page=doodle
+battery=64
+wifi=connected
+paired=true
+advance=600

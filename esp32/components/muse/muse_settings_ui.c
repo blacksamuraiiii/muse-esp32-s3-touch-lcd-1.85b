@@ -38,6 +38,7 @@
 #include "muse_settings.h"
 #include "muse_state.h"
 #include "muse_text.h"
+#include "muse_tts.h"
 #include "muse_ui.h"
 #include "muse_voice.h"
 #include "muse_wifi.h"
@@ -94,8 +95,9 @@ static char s_join_ssid[MUSE_SSID_MAX + 1];
 
 /* Hatch page. */
 static lv_obj_t *s_hatch_status, *s_hatch_host, *s_hatch_vm, *s_hatch_token, *s_hatch_sdk_token;
-/* Speech service rows: the values live in NVS, this is the display side. */
-static lv_obj_t *s_sp_url, *s_sp_voice, *s_sp_key, *s_sp_rate;
+/* Speech service rows: the values live in NVS, this is the display side. The
+ * status line is the probe's answer, never the configuration. */
+static lv_obj_t *s_sp_url, *s_sp_voice, *s_sp_key, *s_sp_rate, *s_sp_status;
 static lv_obj_t *s_proxy_sw;
 static lv_obj_t *s_link_status, *s_link_reset_lbl;
 static int64_t s_link_reset_armed_us;
@@ -882,6 +884,8 @@ static void speech_save(const char *url, const char *voice, const char *key, con
     char k[MUSE_SPEECH_KEY_MAX + 1] = {0}, r[MUSE_SPEECH_RATE_MAX + 1] = {0};
     muse_settings_speech(u, sizeof(u), v, sizeof(v), k, sizeof(k), r, sizeof(r));
     muse_settings_set_speech(url ? url : u, voice ? voice : v, key ? key : k, rate ? rate : r);
+    /* Whatever was probed describes the old endpoint, not this one. */
+    muse_speech_config_changed();
 }
 
 static void on_sp_url_done(const char *text) { speech_save(text, NULL, NULL, NULL); }
@@ -1018,6 +1022,33 @@ static void refresh_speech_rows(void)
         }
     }
     if (s_sp_rate) set_text(s_sp_rate, r[0] ? r : "Not set");
+}
+
+/* The status line under the rows: what the probe found, not what the fields
+ * say. Same shape as the Muse page, so "Connected" means the same thing on
+ * both. */
+static void tick_sp_status(void)
+{
+    if (!s_speech || !s_sp_status) {
+        return;
+    }
+    muse_speech_status_t st;
+    muse_speech_status(&st);
+    char buf[96];
+    if (st.detail[0]) {
+        snprintf(buf, sizeof(buf), "%s\n%s", muse_speech_state_name(st.state), st.detail);
+    } else {
+        strlcpy(buf, muse_speech_state_name(st.state), sizeof(buf));
+    }
+    set_text(s_sp_status, buf);
+    lv_obj_set_style_text_color(s_sp_status, lv_color_hex(st.state == MUSE_SPEECH_REACHABLE ? MUSE_THEME_OK :
+                                                          st.state == MUSE_SPEECH_UNREACHABLE ? MUSE_THEME_WARN : MUSE_THEME_DIM), 0);
+}
+
+static void on_sp_test(lv_event_t *e)
+{
+    (void)e;
+    muse_speech_test();
 }
 
 static void on_hatch_token_done(const char *text)
@@ -1176,16 +1207,23 @@ static void build_speech_page(lv_obj_t *tile)
     row(list, NULL, "Voice", &s_sp_voice, on_sp_voice, NULL);
     row(list, NULL, "Auth key", &s_sp_key, on_sp_key, NULL);
     row(list, NULL, "Rate", &s_sp_rate, on_sp_rate, NULL);
+    s_sp_status = note(list, "");
+    button(list, "Test connection", MUSE_THEME_ACCENT, on_sp_test, NULL);
     note(list, "Replies are spoken by this service. Server is a host only, the "
                "key is sent as k=..., and the rate uses the service's own unit "
                "(+8% by default, not a multiplier). Empty fields fall back to "
                "what this build was compiled with.");
     refresh_speech_rows();
+    /* Ask on entry: the point of the status line is that it is measured, and a
+     * page that only answers after a tap would still show "Not tested" as the
+     * first thing the user sees. The request is two characters of synthesis. */
+    muse_speech_test();
 }
 
 static void tick_speech(void)
 {
     refresh_speech_rows();
+    tick_sp_status();
 }
 
 static void build_ble_page(lv_obj_t *tile)
@@ -1713,11 +1751,12 @@ static void tick_home(void)
     muse_hatch_status(&h);
     set_text(s_home_hatch, muse_hatch_state_name(h.state));
 
+    /* Not "does a URL exist" - that read "Connected" for a host whose domain
+     * had been suspended. Only a probe that came back with audio says so. */
     {
-        char u[MUSE_SPEECH_URL_MAX + 1] = {0}, v[MUSE_SPEECH_VOICE_MAX + 1] = {0};
-        char k[MUSE_SPEECH_KEY_MAX + 1] = {0}, r[MUSE_SPEECH_RATE_MAX + 1] = {0};
-        speech_effective(u, sizeof(u), v, sizeof(v), k, sizeof(k), r, sizeof(r));
-        set_text(s_home_speech, u[0] ? "Connected" : "Not set");
+        muse_speech_status_t st;
+        muse_speech_status(&st);
+        set_text(s_home_speech, muse_speech_state_name(st.state));
     }
 
     muse_ble_status_t b;

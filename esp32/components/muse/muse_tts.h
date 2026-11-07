@@ -68,3 +68,36 @@ bool muse_tts_active(void);
 
 // Abandon the fetch and drop whatever it buffered. Safe to call when idle.
 void muse_tts_cancel(void);
+
+/* Reachability probe, so the settings rows can tell the truth instead of
+ * claiming "Connected" the moment a host is filled in. The probe asks the
+ * service for one very short line through the same template the replies use,
+ * so host, certificate, key and voice are all exercised; the state is what the
+ * UI shows, and it is never inferred from the configuration alone. */
+typedef enum {
+    MUSE_SPEECH_NOT_SET = 0,   /* no endpoint in the settings or the build */
+    MUSE_SPEECH_OFFLINE,       /* saved, but there is no Wi-Fi to try it on */
+    MUSE_SPEECH_UNTESTED,      /* saved, not probed since it was last changed */
+    MUSE_SPEECH_TESTING,       /* the probe's request is in flight */
+    MUSE_SPEECH_REACHABLE,     /* it answered with audio */
+    MUSE_SPEECH_UNREACHABLE,   /* it did not answer, or answered without audio */
+} muse_speech_state_t;
+
+typedef struct {
+    muse_speech_state_t state;
+    char detail[48];   /* one short line, e.g. "HTTP 403" or "Waiting for Wi-Fi" */
+} muse_speech_status_t;
+
+// Probe now. Does nothing without an endpoint, without Wi-Fi, or while a probe
+// is already running.
+void muse_speech_test(void);
+
+// Snapshot of the last probe. No Wi-Fi overrides a stored result, the way
+// muse_hatch_status() does, so a row cannot keep saying "Connected" on a
+// network that went away.
+void muse_speech_status(muse_speech_status_t *out);
+
+const char *muse_speech_state_name(muse_speech_state_t state);
+
+// The speech settings changed: whatever was probed no longer describes them.
+void muse_speech_config_changed(void);
