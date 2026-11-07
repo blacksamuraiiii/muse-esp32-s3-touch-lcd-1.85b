@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 /*
- * muse_doodle_ui.h -- 涂鸦跳跃 subpage inside the interaction tile.
+ * muse_doodle_ui.h -- 毛毛飞行 subpage inside the interaction tile.
  *
  * Owned by muse_interact_ui.c like the feed / game / fortune / sudoku
  * subpages: the page group lives inside the interaction tile (NOT a
@@ -63,9 +63,9 @@
 
 #include "lvgl.h"
 
-/* Build the 涂鸦跳跃 page inside `page` (a 360x360 group created
+/* Build the 毛毛飞行 page inside `page` (a 360x360 group created
  * by muse_interact_ui.c). `back_cb` is the back-arrow handler (the
- * interaction tile's on_back: 涂鸦跳跃 back always lands on the
+ * interaction tile's on_back: 毛毛飞行 back always lands on the
  * mini-game menu). Safe to call once, in the LVGL task. */
 void muse_doodle_ui_build(lv_obj_t *page, lv_event_cb_t back_cb);
 
