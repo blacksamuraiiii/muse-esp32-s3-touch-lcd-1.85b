@@ -212,7 +212,6 @@ static uint32_t s_feed_pending_ms;
  * feed's food name. */
 static int s_feed_skip;
 static lv_obj_t *s_status1;
-static lv_obj_t *s_feed_cards[MUSE_PET_FEED_KINDS];
 static lv_obj_t *s_feed_note;   /* result line on the feed subpage itself */
 static lv_obj_t *s_game_choices[3];
 static int s_game_choice_base_x[3];
@@ -242,7 +241,6 @@ static int s_game_phase = IC_GAME_CHOICE_VIEW;
 static uint32_t s_game_phase_ms;
 static int s_game_player = -1, s_game_house = -1, s_game_result; /* -1 draw */
 static int s_wins, s_losses, s_draws, s_streak; /* session only, NOT NVS */
-static bool s_game_pending; /* PET_GAME requested, feedback not yet seen */
 static bool s_touch_failed;
 static int32_t s_decay_announced_day = -2;
 
@@ -746,7 +744,6 @@ static void show_game_result(void)
 static void reset_game_view(void)
 {
     s_game_phase = IC_GAME_CHOICE_VIEW;
-    s_game_pending = false;
     s_game_player = -1;
     s_game_house = -1;
     lv_obj_add_flag(s_game_you_img, LV_OBJ_FLAG_HIDDEN);
@@ -799,7 +796,6 @@ static void game_start(int choice)
     s_game_phase_ms = lv_tick_get();
     ESP_LOGI(TAG, "game armed: you=%d house=%d result=%d tick=%lu", s_game_player,
              s_game_house, s_game_result, (unsigned long)s_game_phase_ms);
-    s_game_pending = true;
     set_choice_dim(true);
     lv_obj_add_flag(s_game_you_img, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(s_game_house_img, LV_OBJ_FLAG_HIDDEN);
@@ -1059,7 +1055,6 @@ static void drain_feedback(void)
                  * at click time, so nothing more to do here. If the
                  * player has already left the game page, the coin
                  * balance refresh below still lands on the tile. */
-                s_game_pending = false;
             } else if (fb.result == PET_STORAGE) {
                 reset_game_view();
                 write_pet_caption("互动数据损坏");
@@ -1352,7 +1347,6 @@ static void build_feed(void)
          * names this event differently, change only this line. */
         lv_obj_add_event_cb(icon, draw_food_cb, LV_EVENT_DRAW_MAIN_BEGIN, (void *)(intptr_t)i);
         lv_obj_add_event_cb(card, on_feed_food, LV_EVENT_CLICKED, (void *)(intptr_t)i);
-        s_feed_cards[i] = card;
         label(item, muse_font_cjk(), MUSE_THEME_DIM,
               MUSE_INTERACT_FOODS[i].name);
     }

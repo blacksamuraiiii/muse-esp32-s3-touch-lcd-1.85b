@@ -1761,7 +1761,10 @@ static void update_status(muse_mode_t mode, float now)
             /* Chinese, and the digits and symbols beside it, in the 16 px
              * antialiased face so nothing shifts size mid-sentence; plain
              * English prompts (TOO QUIET, HOLD LONGER TO TALK, RECORDING)
-             * keep the Montserrat look they have always had. */
+             * keep muse_font_caption() -- the unscii_16 pixel look the
+             * state words share (says Montserrat above the unification;
+             * the English-side Noto swap is the pending O4, user call
+             * 2026-11-07: not this round). */
             const lv_font_t *f = muse_text_has_cjk(caption) ? muse_font_reply()
                                                             : muse_font_caption();
             lv_obj_set_style_text_font(s_caption_lbl, f, 0);

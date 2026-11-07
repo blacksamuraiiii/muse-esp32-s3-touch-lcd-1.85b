@@ -1470,6 +1470,10 @@ static unsigned poll_buttons(void)
         lv_indev_get_point(s_touch_indev, &p);
         tp_down = true;
         tp_on_face = muse_ui_face_active() && !muse_ui_face_control_at(p.x, p.y);
+        ESP_LOGI(TAG, "tp press %d,%d face=%d", (int)p.x, (int)p.y, (int)tp_on_face);
+        /* 临时诊断（1.5.1d，notes/20261030-1.5e修复评估.md §1）：抓乱跳。
+         * 判读口径见该文档：单点跳变+复回=驱动误报；越界/读错=先查 I2C；
+         * 无日志仍跳=查 LVGL 绘制缓冲。数据取到后删此行。 */
         tp_press_tick = xTaskGetTickCount();
         tp_talking = false;
         /* A reply or a take is in progress: the glass is not an interrupt key.
