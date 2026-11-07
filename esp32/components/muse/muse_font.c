@@ -19,12 +19,28 @@ LV_FONT_DECLARE(muse_font_sym_16)
  * general punctuation, degree-C/F, arrows and geometric shapes the UI
  * prints (weather 25℃, hints, reply text), cut from DejaVu in
  * fonts/muse_font_sym_16.c. */
+/* Before the tail ends: the LVGL private-use icons (LV_SYMBOL_WIFI,
+ * LV_SYMBOL_POWER, ...). Neither Noto nor the DejaVu cut carries U+E000..
+ * U+F8FF, so after the unification muse_font_btn() had no source for the
+ * icons the settings rows and menu hints draw -- they vanished. Montserrat
+ * 16 is the one built-in face that has them, and 16 px matches the text
+ * size the chain now uses for buttons. */
+static const lv_font_t *icon_face(void)
+{
+    static lv_font_t font;
+    if (!font.get_glyph_dsc) {
+        font = lv_font_montserrat_16;
+        font.fallback = NULL;
+    }
+    return &font;
+}
+
 static const lv_font_t *sym_face(void)
 {
     static lv_font_t font;
     if (!font.get_glyph_dsc) {
         font = muse_font_sym_16;
-        font.fallback = NULL;
+        font.fallback = icon_face();
     }
     return &font;
 }
