@@ -584,7 +584,7 @@ static void on_feed_food(lv_event_t *e)
     muse_pet_action_t act = PET_FEED_RICE;
     if (idx == 1) act = PET_FEED_CAKE;
     if (idx == 2) act = PET_FEED_COFFEE;
-    if (idx == 3) act = PET_FEED_SKEWER;
+    if (idx == 3) act = PET_FEED_BURGER;
     if (idx == 4) act = PET_FEED_PIZZA;
     if (idx == 5) act = PET_FEED_MILKTEA;
     if (s_feed_pending) {
