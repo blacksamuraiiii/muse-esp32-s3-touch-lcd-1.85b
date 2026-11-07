@@ -214,7 +214,7 @@ int main(void)
     assert(apply(&m, PET_FEED_RICE, d1, 0) == PET_OK);
     assert(apply(&m, PET_FEED_CAKE, d1, 0) == PET_OK);
     assert(apply(&m, PET_FEED_COFFEE, d1, 0) == PET_OK);
-    assert(apply(&m, PET_FEED_HOTPOT, d1, 0) == PET_OK);
+    assert(apply(&m, PET_FEED_SKEWER, d1, 0) == PET_OK);
     assert(apply(&m, PET_FEED_PIZZA, d1, 0) == PET_OK);
     assert(apply(&m, PET_FEED_MILKTEA, d1, 0) == PET_OK);
     assert(m.coins == 60);
