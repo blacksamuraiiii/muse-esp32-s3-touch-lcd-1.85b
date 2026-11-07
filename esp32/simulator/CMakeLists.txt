@@ -155,6 +155,8 @@ add_executable(muse_simulator
     "${MUSE_COMPONENT_DIR}/muse_state.c"
     "${MUSE_COMPONENT_DIR}/muse_text.c"
     "${MUSE_COMPONENT_DIR}/muse_font.c"
+    "${MUSE_COMPONENT_DIR}/muse_widgets.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/sim_gamestubs.c"
     # 1.5: muse_ui.c builds the interact page (pet economy), so the
     # simulator links it and the pet state it drives.
     "${MUSE_COMPONENT_DIR}/muse_interact_ui.c"
@@ -198,7 +200,13 @@ if(APPLE)
     target_link_libraries(muse_simulator PRIVATE ${MUSE_SIM_IOKIT_FRAMEWORK})
 endif()
 
-target_compile_options(muse_simulator PRIVATE -Wall -Wextra -Wpedantic)
+target_compile_options(muse_simulator PRIVATE
+    -Wall -Wextra -Wpedantic
+    # Board sources pick CONFIG_* from the same sdkconfig the firmware uses.
+    # Without this force-include they compiled with every CONFIG undefined:
+    # muse_font.c silently took its non-CJK branch (pixel faces for
+    # everything), which is how the simulator's Chinese used to be tofu.
+    -include "${CMAKE_CURRENT_SOURCE_DIR}/compat/sdkconfig.h")
 if(MUSE_SIM_WARNINGS_AS_ERRORS)
     target_compile_options(muse_simulator PRIVATE -Werror)
 endif()
