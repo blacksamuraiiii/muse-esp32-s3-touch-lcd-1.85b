@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 /*
- * muse_doodle_ui.h -- 毛毛飞行 subpage inside the interaction tile.
+ * muse_doodle_ui.h -- 毛毛跳跃 subpage inside the interaction tile.
  *
  * Owned by muse_interact_ui.c like the feed / game / fortune / sudoku
  * subpages: the page group lives inside the interaction tile (NOT a
@@ -26,10 +26,11 @@
  * the interact tile calls muse_doodle_ui_fee_refused(), which cancels
  * a running game back to START with the refusal note.
  *
- * Score and payout: only coins score, +1 each (user rule 2026-11-07:
- * clouds give no points); the endless round's score is converted
- * exactly once, at OVER, by muse_pet_round_coins() -- 1 point per
- * coin, at most 10 coins per round -- then sent as PET_PLAY_REWARD.
+ * Score and payout: coins are +1 (user rule 2026-11-07), clouds give no
+ * points and there is no bomb ("取消炸弹惩罚"), so the score only ever
+ * goes up. The endless round's score is converted exactly once, at
+ * OVER, by muse_pet_round_coins() -- 1 point per coin, at most 10 coins
+ * per round -- then sent as PET_PLAY_REWARD.
  * The payout is gross: the 5-coin entry fee was already charged at
  * start, so the round nets min(score,10) - 5 and no round mints more
  * than 5 coins. The result is printed once, under the field: white
@@ -41,13 +42,15 @@
  * page title becomes "游戏结束"). Leaving the page mid-round pauses
  * and settles nothing.
  *
- * Controls (user decision 2026-11-07): tap to fly -- a tap flaps her
- * upward, and the tap's half picks the direction (left half flies
- * up-left, right half up-right). No tilt, no drag. Pausing is a LONG
- * HOLD on the field: the finger stays within ~12 px for 500 ms. The
- * hold is tracked by hand, not LVGL's LONG_PRESSED: a tap that
- * lingers would otherwise pause mid-flap, and the pause must never
- * fire from a moving finger. There is no pause button (same as snake /
+ * Controls (user decision 2026-11-07, switched from tap-to-fly to
+ * classic Doodle Jump): tilt is the steering (muse_imu roll, the same
+ * sensor and low-pass as 金币雨), and a tap on the left/right half of
+ * the field adds a decaying shove in that direction. Nothing sends her
+ * up but a cloud: she hops, she does not fly. Pausing is a LONG HOLD on
+ * the field: the finger stays within ~12 px for 500 ms. The hold is
+ * tracked by hand, not LVGL's LONG_PRESSED: a tap that lingers would
+ * otherwise pause mid-shove, and the pause must never fire from a
+ * moving finger. There is no pause button (same as snake /
  * whack-a-mole since 2026-11-01: the old 34 px one sat outside the
  * round bezel). The back arrow stays hidden while playing -- hold
  * first, then leave from the pause card.
@@ -63,9 +66,9 @@
 
 #include "lvgl.h"
 
-/* Build the 毛毛飞行 page inside `page` (a 360x360 group created
+/* Build the 毛毛跳跃 page inside `page` (a 360x360 group created
  * by muse_interact_ui.c). `back_cb` is the back-arrow handler (the
- * interaction tile's on_back: 毛毛飞行 back always lands on the
+ * interaction tile's on_back: 毛毛跳跃 back always lands on the
  * mini-game menu). Safe to call once, in the LVGL task. */
 void muse_doodle_ui_build(lv_obj_t *page, lv_event_cb_t back_cb);
 

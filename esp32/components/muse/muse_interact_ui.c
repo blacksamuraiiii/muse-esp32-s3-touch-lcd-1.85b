@@ -318,7 +318,7 @@ bool muse_interact_ui_swipe_locked(void)
 {
     /* Any interaction subpage: 喂食, 今日运势, 小游戏 (the minigame list)
      * and the six game boards (小游戏 / 贪吃蛇 / 数独 / 打地鼠 /
-     * 金币雨 / 毛毛飞行). Only the
+     * 金币雨 / 毛毛跳跃). Only the
      * main page swipes, right to the face. A subpage leaves through its
      * "<" back arrow, one level up; BOOT is the exception, and it does not
      * go through here (the voice task switches to the face and starts a
@@ -1241,7 +1241,7 @@ static void build_minigame(void)
     list_row(list, "贪吃蛇", on_open_snake, &s_mg_snake_lbl);
     list_row(list, "打地鼠", on_open_whackamole, &s_mg_whack_lbl);
     list_row(list, "金币雨", on_open_goldrain, &s_mg_goldrain_lbl);
-    list_row(list, "毛毛飞行", on_open_doodle, &s_mg_doodle_lbl);
+    list_row(list, "毛毛跳跃", on_open_doodle, &s_mg_doodle_lbl);
 
     /* Coin line: the column's last item, so it scrolls with the list
      * instead of sitting in a fixed slot the scroller would run under.
