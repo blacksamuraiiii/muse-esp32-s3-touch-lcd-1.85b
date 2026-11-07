@@ -378,7 +378,7 @@ static lv_obj_t *info_row(lv_obj_t *list, const char *text)
 static void drop(lv_obj_t *p)
 {
     lv_obj_t **const pages[] = { &s_wifi, &s_hatch, &s_speech, &s_ble, &s_sound, &s_sleep, &s_battery,
-                                  &s_power, &s_update, &s_text };
+                                  &s_power, &s_update, &s_text, &s_alarm };
     for (size_t i = 0; i < sizeof(pages) / sizeof(pages[0]); i++) {
         if (*pages[i] == p) {
             *pages[i] = NULL;
