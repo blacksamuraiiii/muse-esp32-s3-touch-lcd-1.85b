@@ -425,7 +425,7 @@ static void refresh_status(void)
     /* Dynamic row copy (design §5.2). Dimming is a pre-press signal,
      * not a disable: a fully claimed feed row still works (happy only),
      * and a poor mini-game row still explains itself on press.
-     * 1.5a: the feed row is done only when ALL three foods paid.
+     * 1.5a: the feed row is done only when ALL six foods paid.
      * The main middle row is a menu, not a game: its copy is constant
      * and it never dims -- the coin gate lives inside each game. */
     const uint32_t all_fed = (1u << MUSE_PET_FEED_KINDS) - 1u;

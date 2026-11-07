@@ -11,8 +11,9 @@
  * only rice/cake/coffee and dropped hotpot/chicken/tea (chicken reads as a
  * brown blob at 80px, tea is another cup like coffee, hotpot is too dark);
  * the user asked the three back, then swapped chicken for pizza, tea
- * for milk tea, and hotpot for skewers (the hotpot pot reads as a brown
- * blob). Pizza and skewers are NEW, drawn here in the same 16x16 grid
+ * for milk tea, hotpot for skewers and skewers for a burger (the hotpot
+ * pot reads as a brown blob, and the skewers never looked right).
+ * Pizza and the burger are NEW, drawn here in the same 16x16 grid
  * and colour map (they are NOT upstream). Milk tea IS upstream icon 8
  * (a cup with a straw and boba pearls), renamed from 茶 to 奶茶.
  * Chicken (icon 7) and hotpot (icon 6) stay out.
@@ -41,7 +42,7 @@ typedef struct {
     const char *rows[MUSE_INTERACT_FOOD_PX];
 } muse_interact_food_art_t;
 
-/* Order is the feed-subpage strip order: rice, cake, coffee, skewers,
+/* Order is the feed-subpage strip order: rice, cake, coffee, burger,
  * pizza, milk tea. Must match muse_pet_feed_index() (0..5). */
 static const muse_interact_food_art_t MUSE_INTERACT_FOODS[6] = {
     {

@@ -1588,12 +1588,16 @@ static bool console_command(char *line, bool whole)
             return true;
         }
         if (!strncmp(line, "pet.feed", 8)) {
-            /* Each food pays its own 10 now, so name it: "pet.feed 0/1/2"
-             * = rice / cake / coffee, bare "pet.feed" = rice. */
+            /* Each food pays its own 10 now, so name it: "pet.feed 0..5"
+             * = rice / cake / coffee / burger / pizza / milk tea, bare
+             * "pet.feed" = rice. Six foods since 2026-11-07. */
             int which = (line[8] == ' ') ? atoi(line + 9) : 0;
             muse_pet_action_t act = PET_FEED_RICE;
             if (which == 1) act = PET_FEED_CAKE;
             if (which == 2) act = PET_FEED_COFFEE;
+            if (which == 3) act = PET_FEED_BURGER;
+            if (which == 4) act = PET_FEED_PIZZA;
+            if (which == 5) act = PET_FEED_MILKTEA;
             pet_console_do(act, "feed");
             return true;
         }
