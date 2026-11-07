@@ -205,7 +205,6 @@ static int s_feed_skip;
 static lv_obj_t *s_status1;
 static lv_obj_t *s_feed_cards[MUSE_PET_FEED_KINDS];
 static lv_obj_t *s_feed_note;   /* result line on the feed subpage itself */
-static lv_obj_t *s_feed_page_lbl; /* "1/2" page indicator, top-right */
 static lv_obj_t *s_game_choices[3];
 static int s_game_choice_base_x[3];
 static lv_obj_t *s_game_you_img, *s_game_house_img;
@@ -1207,29 +1206,9 @@ static void build_minigame(void)
     s_minigame_coins = label(list, muse_font_cjk(), MUSE_THEME_TEXT, "金币 --/100");
 }
 
-/* The strip's scroll ended: recompute the page ("1/2") from the scroll
- * offset. A page is 360px wide, so rounding to the nearest page is
- * (x + 180) / 360. */
-static void on_feed_strip_scroll(lv_event_t *e)
-{
-    lv_obj_t *strip = lv_event_get_target(e);
-    int32_t x = lv_obj_get_scroll_x(strip);
-    int pages = (MUSE_PET_FEED_KINDS + 2) / 3;
-    int page = (int)((x + 180) / 360);
-    if (page < 0) page = 0;
-    if (page > pages - 1) page = pages - 1;
-    if (!s_feed_page_lbl) return;
-    char buf[8];
-    snprintf(buf, sizeof(buf), "%d/%d", page + 1, pages);
-    set_label(s_feed_page_lbl, buf);
-}
-
 static void build_feed(void)
 {
     page_header(s_feed_page, "喂饭", on_back);
-    /* Page indicator, top-right ("1/2"): same row as the title. */
-    s_feed_page_lbl = label(s_feed_page, muse_font_cjk(), MUSE_THEME_DIM, "1/2");
-    lv_obj_align(s_feed_page_lbl, LV_ALIGN_TOP_RIGHT, -16, 38);
     /* Rule line: TOP slot (y = 84) since 2026-11-01 (user request). It is
      * read BEFORE a card is tapped, so it belongs above the cards, not
      * under them. Copy, font (muse_font_cjk) and DIM colour are unchanged
@@ -1238,16 +1217,17 @@ static void build_feed(void)
     lv_obj_t *hint = label(s_feed_page, muse_font_cjk(), MUSE_THEME_DIM,
                            "喂饭不花币，每种食物每天 +10");
     lv_obj_align(hint, LV_ALIGN_TOP_MID, 0, 84);
-    /* Scrollable strip, 2026-11-07 (user request): six foods, three per
-     * page, swipe left/right. Two 360px pages inside one horizontal
-     * scroller, snap to a page, scrollbar off. Each page is a flex row
-     * (22px left pad + 8px gaps, the old centred 3-card layout), each
-     * food a flex column (100px card + name below, so the name scrolls
-     * with its card). Cards are clickable containers, not lv_btn: the
-     * pixel drawing is a custom draw callback on the container itself,
-     * and a button's default style would fight the card look. The strip
-     * is 128px tall (100 card + 8 gap + ~20 name); the result line below
-     * it keeps its y = 262 slot. */
+    /* Scrollable strip, 2026-11-07 (user request): ONE row with all six
+     * foods, swipe left/right to choose -- NOT two pages. A single
+     * horizontal scroller (flex row, snap to a food, scrollbar off)
+     * holding six food columns (100px card + name below, so the name
+     * scrolls with its card). 22px pads on both ends so the first three
+     * sit centred like the old 3-card row, and the last three sit
+     * centred when scrolled to the end. Cards are clickable containers,
+     * not lv_btn: the pixel drawing is a custom draw callback on the
+     * container itself, and a button's default style would fight the
+     * card look. The strip is 128px tall (100 card + 8 gap + ~20 name);
+     * the result line below it keeps its y = 262 slot. */
     lv_obj_t *strip = lv_obj_create(s_feed_page);
     lv_obj_remove_style_all(strip);
     lv_obj_set_size(strip, 360, 128);
@@ -1255,59 +1235,47 @@ static void build_feed(void)
     lv_obj_set_flex_flow(strip, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(strip, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START,
                           LV_FLEX_ALIGN_START);
+    lv_obj_set_style_pad_left(strip, 22, 0);
+    lv_obj_set_style_pad_right(strip, 22, 0);
+    lv_obj_set_style_pad_column(strip, 8, 0);
     lv_obj_set_scroll_dir(strip, LV_DIR_HOR);
     lv_obj_set_scrollbar_mode(strip, LV_SCROLLBAR_MODE_OFF);
     lv_obj_set_scroll_snap_x(strip, LV_SCROLL_SNAP_START);
-    lv_obj_add_event_cb(strip, on_feed_strip_scroll, LV_EVENT_SCROLL_END, NULL);
-    const int pages = (MUSE_PET_FEED_KINDS + 2) / 3;
-    for (int p = 0; p < pages; p++) {
-        lv_obj_t *page = lv_obj_create(strip);
-        lv_obj_remove_style_all(page);
-        lv_obj_set_size(page, 360, 128);
-        lv_obj_set_flex_flow(page, LV_FLEX_FLOW_ROW);
-        lv_obj_set_flex_align(page, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START,
-                              LV_FLEX_ALIGN_START);
-        lv_obj_set_style_pad_left(page, 22, 0);
-        lv_obj_set_style_pad_column(page, 8, 0);
-        lv_obj_remove_flag(page, LV_OBJ_FLAG_SCROLLABLE);
-        for (int k = 0; k < 3; k++) {
-            int i = p * 3 + k;
-            if (i >= (int)MUSE_PET_FEED_KINDS) break;
-            lv_obj_t *item = lv_obj_create(page);
-            lv_obj_remove_style_all(item);
-            lv_obj_set_size(item, IC_FEED_CARD, 128);
-            lv_obj_set_flex_flow(item, LV_FLEX_FLOW_COLUMN);
-            lv_obj_set_flex_align(item, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
-                                  LV_FLEX_ALIGN_CENTER);
-            lv_obj_set_style_pad_row(item, 8, 0);
-            lv_obj_remove_flag(item, LV_OBJ_FLAG_SCROLLABLE);
-            lv_obj_t *card = lv_obj_create(item);
-            lv_obj_set_size(card, IC_FEED_CARD, IC_FEED_CARD);
-            lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
-            lv_obj_set_style_bg_color(card, lv_color_hex(MUSE_THEME_CARD), 0);
-            lv_obj_set_style_bg_color(card, lv_color_hex(MUSE_THEME_CARD_PRESSED), LV_STATE_PRESSED);
-            lv_obj_set_style_radius(card, IC_RADIUS, 0);
-            lv_obj_set_style_border_width(card, 0, 0);
-            lv_obj_remove_flag(card, LV_OBJ_FLAG_SCROLLABLE);
-            /* The icon is a transparent child rect, 80px, centred in the
-             * card; the draw callback paints the 16x16 grid into it. */
-            lv_obj_t *icon = lv_obj_create(card);
-            lv_obj_set_size(icon, IC_FEED_ICON, IC_FEED_ICON);
-            lv_obj_center(icon);
-            lv_obj_set_style_bg_opa(icon, LV_OPA_TRANSP, 0);
-            lv_obj_set_style_border_width(icon, 0, 0);
-            lv_obj_remove_flag(icon, LV_OBJ_FLAG_CLICKABLE);
-            /* DRAW_MAIN_BEGIN, not DRAW_MAIN: the icon's own background is
-             * transparent, so painting before the widget's own draw pass
-             * cannot be overpainted by it, and the order against the class
-             * handler is not load-bearing. If the repo's LVGL version
-             * names this event differently, change only this line. */
-            lv_obj_add_event_cb(icon, draw_food_cb, LV_EVENT_DRAW_MAIN_BEGIN, (void *)(intptr_t)i);
-            lv_obj_add_event_cb(card, on_feed_food, LV_EVENT_CLICKED, (void *)(intptr_t)i);
-            s_feed_cards[i] = card;
-            label(item, muse_font_cjk(), MUSE_THEME_DIM,
-                  MUSE_INTERACT_FOODS[i].name);
-        }
+    for (int i = 0; i < (int)MUSE_PET_FEED_KINDS; i++) {
+        lv_obj_t *item = lv_obj_create(strip);
+        lv_obj_remove_style_all(item);
+        lv_obj_set_size(item, IC_FEED_CARD, 128);
+        lv_obj_set_flex_flow(item, LV_FLEX_FLOW_COLUMN);
+        lv_obj_set_flex_align(item, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
+                              LV_FLEX_ALIGN_CENTER);
+        lv_obj_set_style_pad_row(item, 8, 0);
+        lv_obj_remove_flag(item, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_t *card = lv_obj_create(item);
+        lv_obj_set_size(card, IC_FEED_CARD, IC_FEED_CARD);
+        lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
+        lv_obj_set_style_bg_color(card, lv_color_hex(MUSE_THEME_CARD), 0);
+        lv_obj_set_style_bg_color(card, lv_color_hex(MUSE_THEME_CARD_PRESSED), LV_STATE_PRESSED);
+        lv_obj_set_style_radius(card, IC_RADIUS, 0);
+        lv_obj_set_style_border_width(card, 0, 0);
+        lv_obj_remove_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+        /* The icon is a transparent child rect, 80px, centred in the
+         * card; the draw callback paints the 16x16 grid into it. */
+        lv_obj_t *icon = lv_obj_create(card);
+        lv_obj_set_size(icon, IC_FEED_ICON, IC_FEED_ICON);
+        lv_obj_center(icon);
+        lv_obj_set_style_bg_opa(icon, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_border_width(icon, 0, 0);
+        lv_obj_remove_flag(icon, LV_OBJ_FLAG_CLICKABLE);
+        /* DRAW_MAIN_BEGIN, not DRAW_MAIN: the icon's own background is
+         * transparent, so painting before the widget's own draw pass
+         * cannot be overpainted by it, and the order against the class
+         * handler is not load-bearing. If the repo's LVGL version
+         * names this event differently, change only this line. */
+        lv_obj_add_event_cb(icon, draw_food_cb, LV_EVENT_DRAW_MAIN_BEGIN, (void *)(intptr_t)i);
+        lv_obj_add_event_cb(card, on_feed_food, LV_EVENT_CLICKED, (void *)(intptr_t)i);
+        s_feed_cards[i] = card;
+        label(item, muse_font_cjk(), MUSE_THEME_DIM,
+              MUSE_INTERACT_FOODS[i].name);
     }
     /* Result line ("喂了米饭 +10 金币"): takes over the slot the rule line
      * used to own (y = 262), directly under the food names (y = 228, ends
