@@ -48,7 +48,8 @@
 
 - 修复设置页 Alarm 二次进入可能崩溃：子页销毁时 `s_alarm` 指针未清（use-after-free）。
 - 修复退出互动子页后第一下滑动被吞：tile 滑动锁解锁改为在页切换时即时生效（同设置页做法）。
-- 新增触摸乱跳诊断日志：每次新按下记一行 `tp press`（临时，判读口径见 notes/20261030-1.5e修复评估.md §1，取到数据后删除）。
+- 新增触摸乱跳与定向难滑诊断（`tp press` / `tv scroll` / `tpstream` 临时点），取数后已撤除；结论归档 notes/20261107-滑动根因归档.md：判定 CST816S 报点迟滞（芯片层），LVGL 侧旋钮到底不再折腾。
+- 保留：滚动门槛 10→6px（`lv_indev_set_scroll_limit`）与息屏期触点硬读跳过（`touch_poll_once`，息屏期 I2C 失败 10,272→0）。
 - 清理互动页死状态（`s_game_pending`、`s_feed_cards`）与 muse_ui 英文提示注释漂移。
 - 删除已停编的旧字库源 `muse_font_ui_16.c` / `muse_font_cjk_16.c`；模拟器字体列表同步到 Noto+符号脸。
 
