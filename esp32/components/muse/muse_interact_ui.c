@@ -556,11 +556,14 @@ static void caption_tick(void)
 static void draw_food_cb(lv_event_t *e)
 {
     /* Draw callback: LVGL draw pass only. No allocation, no worker calls,
-     * no state writes. `user_data` is the food index (0 rice, 1 cake,
-     * 2 coffee, in MUSE_INTERACT_FOODS order). */
+     * no state writes. `user_data` is the food index in
+     * MUSE_INTERACT_FOODS order (0 rice .. 5 milk tea). The bound must
+     * follow MUSE_PET_FEED_KINDS: it was hard-wired to the old 3 foods,
+     * so burger / pizza / milk tea drew nothing and their cards stayed
+     * empty (reported on the bench 2026-11-07). */
     lv_obj_t *obj = lv_event_get_target(e);
     int idx = (int)(intptr_t)lv_event_get_user_data(e);
-    if (idx < 0 || idx > 2) {
+    if (idx < 0 || idx >= (int)MUSE_PET_FEED_KINDS) {
         return;
     }
     const muse_interact_food_art_t *food = &MUSE_INTERACT_FOODS[idx];
