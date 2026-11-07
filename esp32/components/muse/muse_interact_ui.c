@@ -209,7 +209,7 @@ static uint32_t s_feed_pending_ms;
  * feed's food name. */
 static int s_feed_skip;
 static lv_obj_t *s_status1;
-static lv_obj_t *s_feed_cards[3];
+static lv_obj_t *s_feed_cards[MUSE_PET_FEED_KINDS];
 static lv_obj_t *s_feed_note;   /* result line on the feed subpage itself */
 static lv_obj_t *s_game_choices[3];
 static int s_game_choice_base_x[3];
@@ -606,6 +606,9 @@ static void on_feed_food(lv_event_t *e)
     muse_pet_action_t act = PET_FEED_RICE;
     if (idx == 1) act = PET_FEED_CAKE;
     if (idx == 2) act = PET_FEED_COFFEE;
+    if (idx == 3) act = PET_FEED_BURGER;
+    if (idx == 4) act = PET_FEED_PIZZA;
+    if (idx == 5) act = PET_FEED_MILKTEA;
     if (s_feed_pending) {
         return; /* 1.5b: one feed at a time -- see s_feed_pending. */
     }
@@ -1260,18 +1263,41 @@ static void build_feed(void)
     lv_obj_t *hint = label(s_feed_page, muse_font_cjk(), MUSE_THEME_DIM,
                            "喂饭不花币，每种食物每天 +10");
     lv_obj_align(hint, LV_ALIGN_TOP_MID, 0, 84);
-    /* Three cards in one row: 100px each, 8px gaps, centred as a group
-     * (total 316px). Icon 80px inside the 100px card, food name below
-     * the card in DIM. Cards are clickable containers, not lv_btn: the
-     * pixel drawing is a custom draw callback on the container itself,
-     * and a button's default style would fight the card look. */
-    int total = 3 * IC_FEED_CARD + 2 * 8;
-    int x0 = (360 - total) / 2;
-    int y = 120;
-    for (int i = 0; i < 3; i++) {
-        lv_obj_t *card = lv_obj_create(s_feed_page);
+    /* Scrollable strip, 2026-11-07 (user request): ONE row with all six
+     * foods, swipe left/right to choose -- NOT two pages. A single
+     * horizontal scroller (flex row, snap to a food, scrollbar off)
+     * holding six food columns (100px card + name below, so the name
+     * scrolls with its card). 22px pads on both ends so the first three
+     * sit centred like the old 3-card row, and the last three sit
+     * centred when scrolled to the end. Cards are clickable containers,
+     * not lv_btn: the pixel drawing is a custom draw callback on the
+     * container itself, and a button's default style would fight the
+     * card look. The strip is 128px tall (100 card + 8 gap + ~20 name);
+     * the result line below it keeps its y = 262 slot. */
+    lv_obj_t *strip = lv_obj_create(s_feed_page);
+    lv_obj_remove_style_all(strip);
+    lv_obj_set_size(strip, 360, 128);
+    lv_obj_align(strip, LV_ALIGN_TOP_MID, 0, 120);
+    lv_obj_set_flex_flow(strip, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(strip, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START,
+                          LV_FLEX_ALIGN_START);
+    lv_obj_set_style_pad_left(strip, 22, 0);
+    lv_obj_set_style_pad_right(strip, 22, 0);
+    lv_obj_set_style_pad_column(strip, 8, 0);
+    lv_obj_set_scroll_dir(strip, LV_DIR_HOR);
+    lv_obj_set_scrollbar_mode(strip, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_set_scroll_snap_x(strip, LV_SCROLL_SNAP_START);
+    for (int i = 0; i < (int)MUSE_PET_FEED_KINDS; i++) {
+        lv_obj_t *item = lv_obj_create(strip);
+        lv_obj_remove_style_all(item);
+        lv_obj_set_size(item, IC_FEED_CARD, 128);
+        lv_obj_set_flex_flow(item, LV_FLEX_FLOW_COLUMN);
+        lv_obj_set_flex_align(item, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
+                              LV_FLEX_ALIGN_CENTER);
+        lv_obj_set_style_pad_row(item, 8, 0);
+        lv_obj_remove_flag(item, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_t *card = lv_obj_create(item);
         lv_obj_set_size(card, IC_FEED_CARD, IC_FEED_CARD);
-        lv_obj_set_pos(card, x0 + i * (IC_FEED_CARD + 8), y);
         lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
         lv_obj_set_style_bg_color(card, lv_color_hex(MUSE_THEME_CARD), 0);
         lv_obj_set_style_bg_color(card, lv_color_hex(MUSE_THEME_CARD_PRESSED), LV_STATE_PRESSED);
@@ -1294,10 +1320,8 @@ static void build_feed(void)
         lv_obj_add_event_cb(icon, draw_food_cb, LV_EVENT_DRAW_MAIN_BEGIN, (void *)(intptr_t)i);
         lv_obj_add_event_cb(card, on_feed_food, LV_EVENT_CLICKED, (void *)(intptr_t)i);
         s_feed_cards[i] = card;
-        lv_obj_t *nm = label(s_feed_page, muse_font_cjk(), MUSE_THEME_DIM,
-                             MUSE_INTERACT_FOODS[i].name);
-        lv_obj_align(nm, LV_ALIGN_TOP_MID,
-                     x0 + i * (IC_FEED_CARD + 8) + IC_FEED_CARD / 2 - 180, y + IC_FEED_CARD + 8);
+        label(item, muse_font_cjk(), MUSE_THEME_DIM,
+              MUSE_INTERACT_FOODS[i].name);
     }
     /* Result line ("喂了米饭 +10 金币"): takes over the slot the rule line
      * used to own (y = 262), directly under the food names (y = 228, ends

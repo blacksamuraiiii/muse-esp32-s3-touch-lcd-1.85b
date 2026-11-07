@@ -150,10 +150,19 @@ void muse_pet_model_decay(muse_pet_model_t *s, int64_t now)
     s->decay_day = day;
 }
 
+void muse_pet_model_roll_daily(muse_pet_model_t *s, int64_t now)
+{
+    bool calibrated = false;
+    int32_t day = muse_pet_day(now, &calibrated);
+    roll_cap(&s->feed_day, &s->feed_mask, day, calibrated);
+    roll_cap(&s->touch_day, &s->daily_touch_coins, day, calibrated);
+}
+
 bool muse_pet_action_is_feed(muse_pet_action_t action)
 {
     return action == PET_FEED_RICE || action == PET_FEED_CAKE ||
-           action == PET_FEED_COFFEE;
+           action == PET_FEED_COFFEE || action == PET_FEED_BURGER ||
+           action == PET_FEED_PIZZA || action == PET_FEED_MILKTEA;
 }
 
 int muse_pet_feed_index(muse_pet_action_t action)
@@ -162,6 +171,9 @@ int muse_pet_feed_index(muse_pet_action_t action)
     case PET_FEED_RICE: return 0;
     case PET_FEED_CAKE: return 1;
     case PET_FEED_COFFEE: return 2;
+    case PET_FEED_BURGER: return 3;
+    case PET_FEED_PIZZA: return 4;
+    case PET_FEED_MILKTEA: return 5;
     default: return -1;
     }
 }
@@ -202,9 +214,10 @@ muse_pet_result_t muse_pet_model_apply(muse_pet_model_t *s, muse_pet_action_t ac
     }
 
     if (muse_pet_action_is_feed(action)) {
-        /* 1.5a (user decision 2026-10-25): each of the three foods pays its own
-         * 10 once a day -- 30 a day in total, not "the first feed of the day".
-         * The mask bit is what the UI reads back to word the result. */
+        /* 1.5a (user decision 2026-10-25), six foods since 2026-11-07: each
+         * food pays its own 10 once a day -- 60 a day in total, not "the
+         * first feed of the day". The mask bit is what the UI reads back
+         * to word the result. */
         int kind = muse_pet_feed_index(action);
         roll_cap(&s->feed_day, &s->feed_mask, day, calibrated);
         if (kind < 0 || (s->feed_mask & (1u << kind)) != 0) {

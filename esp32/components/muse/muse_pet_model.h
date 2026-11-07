@@ -42,8 +42,8 @@
 #define MUSE_PET_TOUCH_COINS 5u        /* per touch */
 #define MUSE_PET_TOUCH_DAILY_MAX 50u   /* per day: the first 10 touches pay */
 #define MUSE_PET_FEED_COINS 10u        /* per food, once per food per day */
-#define MUSE_PET_FEED_KINDS 3u         /* rice / cake / coffee */
-#define MUSE_PET_FEED_DAILY_MAX 30u    /* three foods x 10 (user decision 2026-10-25) */
+#define MUSE_PET_FEED_KINDS 6u         /* rice / cake / coffee / skewers / pizza / milk tea */
+#define MUSE_PET_FEED_DAILY_MAX 60u    /* six foods x 10 (user decision 2026-11-07) */
 #define MUSE_PET_GAME_STAKE 5u         /* win +5, lose -5, draw 0; also the entry fee
                                         * of every mini-game (PET_FEE / PET_SUDOKU_ENTRY) */
 #define MUSE_PET_FORTUNE_COINS 20u     /* once a day, paid with the new card */
@@ -151,6 +151,9 @@ typedef enum {
     PET_FEED_RICE,
     PET_FEED_CAKE,
     PET_FEED_COFFEE,
+    PET_FEED_BURGER,
+    PET_FEED_PIZZA,
+    PET_FEED_MILKTEA,
     PET_GAME,
     PET_FORTUNE,
     PET_DECAY_ACK,
@@ -233,6 +236,19 @@ void muse_pet_sudoku_today(const muse_pet_model_t *s, int64_t now,
 /* Settle one calendar day's living cost into `s` (idempotent for a given day).
  * No-op when uncalibrated, and never moves decay_day backwards on rollback. */
 void muse_pet_model_decay(muse_pet_model_t *s, int64_t now);
+
+/* Roll the daily caps (feed mask + touch count) forward when the calibrated
+ * day has advanced, without settling any action. The worker tick calls this
+ * so the snapshot's feed_mask / touch count are fresh within one tick of the
+ * day boundary: without it the caps are only rolled when a feed/touch action
+ * is applied, so on a new day the UI reads yesterday's mask until the first
+ * feed/touch of that day (2026-11-07: rice always answered "already fed
+ * today" because it is the first button). Idempotent and rollback-safe:
+ * roll_cap() only moves forward, and an uncalibrated clock rolls nothing.
+ * Fortune is deliberately NOT rolled here: it draws on demand (PET_FORTUNE
+ * checks fortune_day at draw time), and the sudoku ledger is read through
+ * muse_pet_sudoku_today(), which compares sudoku_day to today. */
+void muse_pet_model_roll_daily(muse_pet_model_t *s, int64_t now);
 
 /* Settle one action into `s` (decay is applied first). `random` is used only
  * for PET_FORTUNE (index = random % 20). `arg` carries the outcome of a game
