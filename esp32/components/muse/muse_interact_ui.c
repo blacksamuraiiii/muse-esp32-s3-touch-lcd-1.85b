@@ -55,10 +55,13 @@
  *     default 10px scroll limit turned a slightly drifting press into
  *     a tile scroll, which swallowed the click and dropped the player
  *     out of the round) and was extended to the feed, fortune and
- *     minigame-list pages on 2026-11-04. muse_interact_ui_swipe_locked()
- *     reports that state and muse_ui.c applies it with the same rule it
- *     already uses for settings subpages. muse_interact_ui_on_hidden()
- *     still resets the page when the tile is left (BOOT included).
+ * was extended to the feed, fortune and minigame-list pages on 2026-11-04.
+ * muse_interact_ui_swipe_locked() reports that state for muse_ui.c (backstop,
+ * and the rule chrome already uses for settings subpages); since 1.5.1d
+ * show_page() also toggles it directly, so leaving a subpage re-enables the
+ * tile swipe on the spot instead of at the next 0.25 s tick.
+ * muse_interact_ui_on_hidden() still resets the page when the tile is left
+ * (BOOT included).
  *
  * Colours: the shared table in muse_theme.h (1.5b), values taken from 1.4d
  *   muse_settings_ui.c / muse_ui.c, NOT invented. DANGER is the in-repo
@@ -312,6 +315,12 @@ static void show_page(int page)
     if (page == IC_PAGE_GOLDRAIN) show = s_goldrain_page;
     if (page == IC_PAGE_DOODLE) show = s_doodle_page;
     lv_obj_remove_flag(show, LV_OBJ_FLAG_HIDDEN);
+    /* The swipe lock takes effect here, not at the next 0.25 s chrome tick
+     * (muse_ui.c): chrome polling left up to 250 ms after leaving a subpage
+     * with the tileview still unscrollable, and the first swipe was
+     * swallowed (1.5.1d). muse_ui_set_swipe_enabled ignores a NULL tv on
+     * boards without touch, so this is safe at build time too. */
+    muse_ui_set_swipe_enabled(s_page == IC_PAGE_MAIN);
 }
 
 bool muse_interact_ui_swipe_locked(void)

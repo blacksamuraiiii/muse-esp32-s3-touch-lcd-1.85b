@@ -1474,7 +1474,10 @@ static void update_chrome(float now)
          * limit (1.3mm on this panel) turned a slightly drifting press
          * into a tile scroll -- the button lost its LV_EVENT_CLICKED
          * and the round was abandoned mid-play). Only the interaction
-         * main page swipes, right to the face. */
+         * main page swipes, right to the face. Since 1.5.1d both pages
+         * toggle the flag themselves (settings show(), interact
+         * show_page()), so this tick is the backstop for anything that
+         * slips past them. */
         bool locked = page == 0 && muse_interact_ui_swipe_locked();
         bool swipe = !((page == 2 && subpage) || locked);
         if (swipe != lv_obj_has_flag(s_tv, LV_OBJ_FLAG_SCROLLABLE)) {
