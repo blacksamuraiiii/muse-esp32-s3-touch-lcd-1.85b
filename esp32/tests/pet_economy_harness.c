@@ -203,7 +203,7 @@ int main(void)
     assert(!muse_pet_model_valid(&m));
 
     /* --- roll_daily: the 2026-11-07 feed bug --------------------------- */
-    /* Feed all three foods on d1, then simulate the worker tick on d2
+    /* Feed all six foods on d1, then simulate the worker tick on d2
      * (no feed action yet): the mask must already be clear, so the UI's
      * snapshot reads "nothing fed today" and the first rice tap of d2
      * answers "+10", not "already fed today". Before this fix the mask
@@ -214,23 +214,26 @@ int main(void)
     assert(apply(&m, PET_FEED_RICE, d1, 0) == PET_OK);
     assert(apply(&m, PET_FEED_CAKE, d1, 0) == PET_OK);
     assert(apply(&m, PET_FEED_COFFEE, d1, 0) == PET_OK);
-    assert(m.coins == 30);
+    assert(apply(&m, PET_FEED_HOTPOT, d1, 0) == PET_OK);
+    assert(apply(&m, PET_FEED_PIZZA, d1, 0) == PET_OK);
+    assert(apply(&m, PET_FEED_MILKTEA, d1, 0) == PET_OK);
+    assert(m.coins == 60);
     assert(m.feed_day == d1);
-    assert(m.feed_mask == 0x7u);
+    assert(m.feed_mask == 0x3fu);
     /* The tick rolls the caps with no action at all. */
     muse_pet_model_roll_daily(&m, day_now(d2));
     assert(m.feed_day == d2);
     assert(m.feed_mask == 0);
-    assert(m.coins == 30); /* rolling grants nothing, it only clears */
+    assert(m.coins == 60); /* rolling grants nothing, it only clears */
     /* Rice on the new day now pays, and the bit it sets is fresh.
      * (The 20-coin living cost is settled by the feed's decay first:
-     * 30 - 20 + 10 = 20.) */
+     * 60 - 20 + 10 = 50.) */
     assert(apply(&m, PET_FEED_RICE, d2, 0) == PET_OK);
-    assert(m.coins == 20);
+    assert(m.coins == 50);
     assert(m.feed_mask == 0x1u);
     /* A second rice tap the same day pays nothing (mask bit already set). */
     assert(apply(&m, PET_FEED_RICE, d2, 0) == PET_OK);
-    assert(m.coins == 20);
+    assert(m.coins == 50);
     assert(m.feed_mask == 0x1u);
 
     /* --- roll_daily also clears the touch count ------------------------ */
