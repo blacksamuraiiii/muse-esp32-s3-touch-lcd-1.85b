@@ -238,9 +238,12 @@ static void worker(void *arg)
     /* Settle the current day's living cost before the first snapshot, and
      * persist it before publishing: the notice must only be announced after
      * it is on disk (design §4.4). A failed store here keeps the loaded
-     * state; the next tick retries the decay. */
+     * state; the next tick retries the decay. Roll the daily caps here too
+     * so the first snapshot is fresh even when the board boots after the
+     * day boundary (2026-11-07 feed bug: yesterday's feed_mask). */
     muse_pet_model_t settled = state;
     muse_pet_model_decay(&settled, time(NULL));
+    muse_pet_model_roll_daily(&settled, time(NULL));
     if (memcmp(&settled, &state, sizeof(state)) != 0) {
         if (store(h, &settled)) {
             state = settled;
@@ -262,8 +265,14 @@ static void worker(void *arg)
             result = muse_pet_model_apply(&candidate, action, now, esp_random(),
                                           cmd.arg);
         } else {
-            /* Tick: day rollover / living cost only. No action, no feedback. */
+            /* Tick: day rollover / living cost / daily caps only. No action,
+             * no feedback. The cap roll is what keeps the snapshot's
+             * feed_mask fresh: without it the mask is only rolled when a
+             * feed action is applied, so on a new day the UI reads
+             * yesterday's mask until the first feed of that day
+             * (2026-11-07: rice always answered "already fed today"). */
             muse_pet_model_decay(&candidate, now);
+            muse_pet_model_roll_daily(&candidate, now);
             result = PET_OK;
         }
         bool changed = memcmp(&candidate, &state, sizeof(state)) != 0;
