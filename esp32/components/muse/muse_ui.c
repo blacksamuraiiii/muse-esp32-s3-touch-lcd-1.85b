@@ -105,6 +105,8 @@ static int s_canvas_px;     /* Muse's size on screen */
 static int s_dy;            /* full layout: offset from a 466 px tall screen */
 static lv_indev_t *s_indev;
 static lv_obj_t *s_tv;
+static lv_obj_t *s_interact;
+static lv_obj_t *s_settings;
 /* True while the face tile is the visible tile. Updated in the LVGL task;
  * read from any task (single word, benign if briefly stale). */
 static volatile bool s_face_active = true;
@@ -121,8 +123,6 @@ bool muse_ui_face_active(void)
 {
     return s_face_active;
 }
-static lv_obj_t *s_interact;
-static lv_obj_t *s_settings;
 static lv_obj_t *s_dots[3];
 static lv_obj_t *s_wifi_icon;
 static lv_obj_t *s_ble_icon;

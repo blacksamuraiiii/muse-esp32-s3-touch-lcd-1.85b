@@ -633,6 +633,25 @@ static esp_lcd_panel_handle_t s_panel;
 static esp_lcd_panel_io_handle_t s_tp_io;   /* CST816S register access */
 static esp_lcd_panel_io_handle_t s_panel_io; /* kept for SLPIN/SLPOUT */
 static esp_lcd_touch_handle_t s_tp;         /* read to release its INT */
+static bool s_panel_dark;                   /* panel_sleep() tracks: while dark the touch controller sleeps */
+
+/* Poll hygiene: the adapter's per-scan touch read, with the panel-dark skip.
+ * Signature per esp_lv_adapter_input.h custom_touch_read. */
+static esp_err_t touch_poll_once(esp_lcd_touch_handle_t tp,
+                                 esp_lcd_touch_point_data_t *points, uint8_t *count,
+                                 uint8_t max_count, void *user_ctx)
+{
+    (void)user_ctx;
+    *count = 0;
+    if (s_panel_dark) {
+        return ESP_OK;   /* controller asleep: no I2C traffic, state stays RELEASED */
+    }
+    esp_err_t ret = esp_lcd_touch_read_data(tp);
+    if (ret != ESP_OK) {
+        return ret;
+    }
+    return esp_lcd_touch_get_data(tp, points, count, max_count);
+}
 static lv_indev_t *s_touch_indev;           /* LVGL's input device for the face */
 static muse_gpio_button_t s_talk;
 
@@ -1005,14 +1024,18 @@ static lv_display_t *display_start(lv_indev_t **touch)
         .x_max = LCD_H_RES,
         .y_max = LCD_V_RES,
         .rst_gpio_num = TP_RST,
-        /* INT pin kept (2026-11-01): gating reads on the ISR signal was
-         * measured to freeze the point during drags (touch probe: 19 drags in
-         * 60 s, longest still run 150 ms on a 194 ms touch, 7 single-sample
-         * jumps of 40+ px), so polling was tried instead -- measured jumps
-         * dropped to 0, but the user judged the feel no better than IRQ and
-         * chose the power saving back. Do not read this as "IRQ is smooth";
-         * it means polling did not fix the drag either. */
-        .int_gpio_num = TP_INT,
+        /* INT pin DROPPED (2026-11-07, 1.5.1d): keep IRQ gating and reads
+         * freeze during drags. Quantified this round (tp press/release vs
+         * tileview scroll logs, 162 swipes, ser-151d-swipe.log): 13/13 fast
+         * swipes moved the finger 172-290 px with NO scroll begin at all --
+         * the indev never saw the movement; 24 more started and died at
+         * 2-5 px. Same failure the 2026-11-01 probe measured (longest still
+         * run 150 ms). Polling (int_gpio_num = -1) had dropped jumps to 0
+         * back then; it also removes the freeze window. Panel-awake touch
+         * autosleep is already off (touch_autosleep follows the panel), so
+         * the cost is the 15 ms poll's bus time. Revisit if a wake line
+         * returns: it needs the IRQ back (see the TP_INT comment below). */
+        .int_gpio_num = -1,
         .levels = {
             .reset = 0,
             .interrupt = 0,
@@ -1039,9 +1062,36 @@ static lv_display_t *display_start(lv_indev_t **touch)
     s_tp_io = tp_io;
     s_tp = tp;
     touch_report_config();
-    const esp_lv_adapter_touch_config_t lv_tp_cfg = ESP_LV_ADAPTER_TOUCH_DEFAULT_CONFIG(disp, tp);
+    /* Poll hygiene (1.5.1d): while the panel is dark the CST816S is asleep,
+     * and the adapter's 15 ms poll would NAK the I2C every cycle -- one
+     * 11-minute bench window measured 10.7k failed reads (ser-151d-poll.log,
+     * 2026-11-07). Skip the hardware read entirely while dark: no pointer
+     * can move anything useful then, and the state stays RELEASED as before.
+     * TOUCH can never wake the chip (1.4: no wake line), so nothing else
+     * depends on reading through the dark window. */
+    const esp_lv_adapter_touch_config_t lv_tp_cfg = {
+        .disp = disp,
+        .handle = tp,
+        .scale = { .x = 1.0f, .y = 1.0f },
+        .multi_touch = {
+            .mode = ESP_LV_ADAPTER_TOUCH_MODE_SINGLE,
+            .pointers = 1,
+        },
+        .callbacks = {
+            .custom_touch_read = touch_poll_once,
+        },
+    };
     *touch = esp_lv_adapter_register_touch(&lv_tp_cfg);
     s_touch_indev = *touch;   /* poll_buttons() reads its state for hold-to-talk */
+    /* LVGL starts a scroll only after this many px of movement: the default
+     * 10 px is ~1.3 mm on this panel, and with the controller's own report
+     * latency at the start of a contact (notes/20261030-1.5e修复评估.md §1,
+     * plus the 2026-11-07 tpstream capture) that leaves an unlucky short
+     * swipe with nothing to show for itself. 6 px (~0.8 mm) keeps taps
+     * usable; the game pages stay swipe-locked regardless. */
+    if (*touch) {
+        lv_indev_set_scroll_limit(*touch, 6);
+    }
     /* The touch line is deliberately NOT a wake source, and 1.4 makes that
      * final: a hand resting near the glass, a stray pulse from the controller
      * and a screen that never stayed dark were all traced back to it, and the
@@ -1089,6 +1139,7 @@ static void send_panel_sleep(void *sleep)
 
 static void panel_sleep(bool sleep)
 {
+    s_panel_dark = sleep;
     muse_lcd_bands_run(send_panel_sleep, &sleep);
     vTaskDelay(pdMS_TO_TICKS(120));   /* SLPIN/SLPOUT settle, as 1.75C/1.85C do */
     /* The controller idles down with the panel and comes back with it: this is
@@ -1470,10 +1521,6 @@ static unsigned poll_buttons(void)
         lv_indev_get_point(s_touch_indev, &p);
         tp_down = true;
         tp_on_face = muse_ui_face_active() && !muse_ui_face_control_at(p.x, p.y);
-        ESP_LOGI(TAG, "tp press %d,%d face=%d", (int)p.x, (int)p.y, (int)tp_on_face);
-        /* 临时诊断（1.5.1d，notes/20261030-1.5e修复评估.md §1）：抓乱跳。
-         * 判读口径见该文档：单点跳变+复回=驱动误报；越界/读错=先查 I2C；
-         * 无日志仍跳=查 LVGL 绘制缓冲。数据取到后删此行。 */
         tp_press_tick = xTaskGetTickCount();
         tp_talking = false;
         /* A reply or a take is in progress: the glass is not an interrupt key.
