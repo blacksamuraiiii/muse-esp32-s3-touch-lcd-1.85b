@@ -186,8 +186,8 @@ static void ellipse_o(int cx, int cy, int rx, int ry, uint8_t fill, uint8_t out)
  */
 #define HAIR_ROW0 28
 static const uint64_t HAIR_BITS[64] = {
-    0x0000000000000000ULL, 0x0000000000000000ULL, 0x0000000000000000ULL, 0x0000000000000000ULL,
-    0x0000000000000000ULL, 0x0000000ff8000000ULL, 0x000000ffff800000ULL, 0x000003ffffe00000ULL,
+    0x0000000002100000ULL, 0x0000000002100000ULL, 0x0000000006300000ULL, 0x0000000006300000ULL,
+    0x0000000007f00000ULL, 0x0000000fff800000ULL, 0x000000ffff800000ULL, 0x000003ffffe00000ULL,
     0x00000ffffff80000ULL, 0x00003ffffffe0000ULL, 0x00007fff7fff0000ULL, 0x0000fffe3fff8000ULL,
     0x0001fffc1fffc000ULL, 0x0003fffc1fffe000ULL, 0x0007fff80ffff000ULL, 0x0007fff007fff000ULL,
     0x000ffff007fff800ULL, 0x040f80000000f810ULL, 0x071e000000003c70ULL, 0x07f8000000000ff0ULL,
@@ -446,9 +446,6 @@ void muse_pixel_render(const muse_pose_t *p)
 
     /* -- Face (fills the frame) -- */
     ellipse_o(cx, cy, 18, 16, C_SKIN, C_OUT);
-    /* thin shading crescent at the jaw edge */
-    fill_ellipse(cx + 9, cy + 9, 7, 5, C_SKIND);
-    fill_ellipse(cx + 6, cy + 7, 8, 6, C_SKIN);
 
     /* -- Hair: the v8 dot matrix --
      * Drawn after the face, not before it: the matrix carries only the hair
