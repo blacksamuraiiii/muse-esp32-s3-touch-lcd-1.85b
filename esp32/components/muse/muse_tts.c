@@ -22,6 +22,7 @@
 
 #include "muse_sentence.h"
 #include "muse_settings.h"
+#include "muse_wifi.h"   /* muse_wifi_connected(): the probe needs a network */
 
 #include "esp_app_desc.h"
 #include "esp_crt_bundle.h"
@@ -332,43 +333,53 @@ static bool fetch(const char *url, int timeout_ms)
  *
  * The {text} placeholder is what fetch_reply() splits on, so both paths share
  * one expansion. */
-static const char *tts_template(void)
+#define TTS_TEMPLATE_CAP (MUSE_SPEECH_URL_MAX + MUSE_SPEECH_KEY_MAX + MUSE_SPEECH_VOICE_MAX + \
+                          MUSE_SPEECH_RATE_MAX + 24)
+
+/* Into the caller's buffer: the reply worker and the reachability probe can ask
+ * at the same time. */
+static const char *tts_template_into(char *buf, size_t cap)
 {
-    static char buf[MUSE_SPEECH_URL_MAX + MUSE_SPEECH_KEY_MAX + MUSE_SPEECH_VOICE_MAX +
-                     MUSE_SPEECH_RATE_MAX + 24];
     char url[MUSE_SPEECH_URL_MAX + 1] = {0}, voice[MUSE_SPEECH_VOICE_MAX + 1] = {0};
     char key[MUSE_SPEECH_KEY_MAX + 1] = {0}, rate[MUSE_SPEECH_RATE_MAX + 1] = {0};
     muse_settings_speech(url, sizeof(url), voice, sizeof(voice), key, sizeof(key), rate, sizeof(rate));
     if (!url[0]) {
-        return CONFIG_MUSE_TTS_URL;
+        strlcpy(buf, CONFIG_MUSE_TTS_URL, cap);
+        return buf;
     }
     /* The settings page asks for a bare host, the way the Muse server row does,
      * so a value without a scheme gets https:// here. A full URL is used as
      * written. */
     if (strstr(url, "://")) {
-        strlcpy(buf, url, sizeof(buf));
+        strlcpy(buf, url, cap);
     } else {
-        strlcpy(buf, "https://", sizeof(buf));
-        strlcat(buf, url, sizeof(buf));
+        strlcpy(buf, "https://", cap);
+        strlcat(buf, url, cap);
     }
     bool have_query = strchr(buf, '?') != NULL;
     if (key[0]) {
-        strlcat(buf, have_query ? "&k=" : "?k=", sizeof(buf));
-        strlcat(buf, key, sizeof(buf));
+        strlcat(buf, have_query ? "&k=" : "?k=", cap);
+        strlcat(buf, key, cap);
         have_query = true;
     }
     if (voice[0]) {
-        strlcat(buf, have_query ? "&voice=" : "?voice=", sizeof(buf));
-        strlcat(buf, voice, sizeof(buf));
+        strlcat(buf, have_query ? "&voice=" : "?voice=", cap);
+        strlcat(buf, voice, cap);
         have_query = true;
     }
     if (rate[0]) {
-        strlcat(buf, have_query ? "&rate=" : "?rate=", sizeof(buf));
-        strlcat(buf, rate, sizeof(buf));
+        strlcat(buf, have_query ? "&rate=" : "?rate=", cap);
+        strlcat(buf, rate, cap);
         have_query = true;
     }
-    strlcat(buf, have_query ? "&text={text}" : "?text={text}", sizeof(buf));
+    strlcat(buf, have_query ? "&text={text}" : "?text={text}", cap);
     return buf;
+}
+
+static const char *tts_template(void)
+{
+    static char buf[TTS_TEMPLATE_CAP];
+    return tts_template_into(buf, sizeof(buf));
 }
 
 static void fetch_reply(char *text)
@@ -563,4 +574,208 @@ void muse_tts_cancel(void)
     if (ring_dirty) s_ring_dirty = true;
     taskEXIT_CRITICAL(&s_lock);
     free(stale);
+}
+
+/* ---------- reachability probe ---------- */
+
+/* What the settings page shows used to be inferred from the configuration: any
+ * non-empty URL read "Connected", so a host that stopped resolving still looked
+ * fine. This asks the service for a real reply instead - the same template, the
+ * same key, one two-character line - so host, certificate, key and voice are
+ * all exercised. Two characters is the cheapest request that proves speech
+ * works, and it stays provider-independent: any service that answers MP3 works,
+ * not just the one with a /health route. */
+#define SPEECH_PROBE_TEXT "你好"
+/* One TLS handshake on this stack; 8 KB was enough on paper and not in
+ * practice, the same way TTS_TASK_STACK grew. */
+#define SPEECH_PROBE_STACK 10240
+#define SPEECH_PROBE_PRIO 3
+#define SPEECH_PROBE_TIMEOUT_MS 6000
+/* A body this small is an error page, not a line of speech. */
+#define SPEECH_PROBE_MIN_BYTES 512
+
+static portMUX_TYPE s_probe_lock = portMUX_INITIALIZER_UNLOCKED;
+static muse_speech_state_t s_probe_state = MUSE_SPEECH_UNTESTED;
+static char s_probe_detail[48];
+/* Bumped whenever the settings change under a probe in flight, so a result that
+ * belongs to the old endpoint is dropped instead of being reported as the
+ * new one's. */
+static volatile uint32_t s_probe_gen;
+static volatile bool s_probe_running;
+static volatile size_t s_probe_bytes;
+
+static void probe_report(muse_speech_state_t state, const char *detail)
+{
+    portENTER_CRITICAL(&s_probe_lock);
+    s_probe_state = state;
+    strlcpy(s_probe_detail, detail, sizeof(s_probe_detail));
+    portEXIT_CRITICAL(&s_probe_lock);
+}
+
+/* Is there an endpoint at all? Asked without touching tts_template()'s shared
+ * static buffer: this runs on the UI task every tick, and that buffer belongs
+ * to the reply worker. */
+static bool speech_configured(void)
+{
+    char u[MUSE_SPEECH_URL_MAX + 1] = {0}, v[MUSE_SPEECH_VOICE_MAX + 1] = {0};
+    char k[MUSE_SPEECH_KEY_MAX + 1] = {0}, r[MUSE_SPEECH_RATE_MAX + 1] = {0};
+    muse_settings_speech(u, sizeof(u), v, sizeof(v), k, sizeof(k), r, sizeof(r));
+    return u[0] || CONFIG_MUSE_TTS_URL[0];
+}
+
+/* The reply URL with the placeholder already expanded: exactly what
+ * fetch_reply() would put on the wire, minus the reply's own text. */
+static bool probe_url(char *out, size_t cap)
+{
+    char tpl[TTS_TEMPLATE_CAP];
+    const char *t = tts_template_into(tpl, sizeof(tpl));
+    const char *ph = strstr(t, "{text}");
+    if (!t[0] || !ph) {
+        return false;
+    }
+    char enc[sizeof(SPEECH_PROBE_TEXT) * 3];
+    if (url_encode(enc, sizeof(enc), SPEECH_PROBE_TEXT, strlen(SPEECH_PROBE_TEXT)) == 0) {
+        return false;
+    }
+    const size_t pre = (size_t)(ph - t), enc_len = strlen(enc), suf = strlen(ph + 6);
+    if (pre + enc_len + suf + 1 > cap) {
+        return false;
+    }
+    memcpy(out, t, pre);
+    memcpy(out + pre, enc, enc_len);
+    memcpy(out + pre + enc_len, ph + 6, suf + 1);
+    return true;
+}
+
+static esp_err_t on_probe_data(esp_http_client_event_t *ev)
+{
+    if (ev->event_id == HTTP_EVENT_ON_DATA && ev->data_len > 0) {
+        s_probe_bytes += (size_t)ev->data_len;
+    }
+    return ESP_OK;
+}
+
+/* One attempt. Content-Length is not trusted: the service streams its first
+ * bytes, so the body is counted as it arrives. */
+static bool probe_attempt(const char *url, const char *user_agent, int *status_out)
+{
+    s_probe_bytes = 0;
+    const esp_http_client_config_t cfg = {
+        .url = url,
+        .method = HTTP_METHOD_GET,
+        .timeout_ms = SPEECH_PROBE_TIMEOUT_MS,
+        .buffer_size = TTS_HTTP_BUF,
+        .crt_bundle_attach = esp_crt_bundle_attach,
+        .user_agent = user_agent,
+        .event_handler = on_probe_data,
+    };
+    esp_http_client_handle_t c = esp_http_client_init(&cfg);
+    if (!c) {
+        *status_out = 0;
+        return false;
+    }
+    esp_err_t err = esp_http_client_perform(c);
+    *status_out = esp_http_client_get_status_code(c);
+    esp_http_client_cleanup(c);
+    return err == ESP_OK && *status_out == 200 && s_probe_bytes >= SPEECH_PROBE_MIN_BYTES;
+}
+
+static void probe_task(void *arg)
+{
+    const uint32_t gen = (uint32_t)(uintptr_t)arg;
+    char url[MUSE_SPEECH_URL_MAX + MUSE_SPEECH_KEY_MAX + MUSE_SPEECH_VOICE_MAX +
+             MUSE_SPEECH_RATE_MAX + 64];
+    char detail[48] = "No answer";
+    muse_speech_state_t state = MUSE_SPEECH_UNREACHABLE;
+
+    const esp_app_desc_t *app = esp_app_get_description();
+    char user_agent[48];
+    snprintf(user_agent, sizeof(user_agent), "MuseGadget/%s", app->version);
+
+    if (!probe_url(url, sizeof(url))) {
+        strlcpy(detail, "No {text} in the URL", sizeof(detail));
+    } else {
+        /* Twice: the first request after an idle spell pays the TLS handshake
+         * and can miss the timeout with the service perfectly healthy. */
+        for (int i = 0; i < 2; i++) {
+            int status = 0;
+            if (probe_attempt(url, user_agent, &status)) {
+                state = MUSE_SPEECH_REACHABLE;
+                detail[0] = '\0';
+                break;
+            }
+            if (status == 401 || status == 403) {
+                /* The gate answered: the host is fine, the key is not. Saying
+                 * "Can't connect" here would send the user after the network. */
+                strlcpy(detail, "Key rejected", sizeof(detail));
+            } else if (status) {
+                snprintf(detail, sizeof(detail), "HTTP %d", status);
+            } else {
+                strlcpy(detail, "No answer", sizeof(detail));
+            }
+            if (i == 0) {
+                vTaskDelay(pdMS_TO_TICKS(200));
+            }
+        }
+    }
+
+    if (gen == s_probe_gen) {
+        probe_report(state, detail);
+    }
+    s_probe_running = false;
+    vTaskDelete(NULL);
+}
+
+void muse_speech_test(void)
+{
+    if (!speech_configured() || !muse_wifi_connected() || s_probe_running) {
+        return;
+    }
+    s_probe_running = true;
+    probe_report(MUSE_SPEECH_TESTING, "Testing...");
+    if (xTaskCreateWithCaps(probe_task, "muse_tts_probe", SPEECH_PROBE_STACK,
+                            (void *)(uintptr_t)s_probe_gen, SPEECH_PROBE_PRIO, NULL,
+                            MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) != pdPASS) {
+        s_probe_running = false;
+        probe_report(MUSE_SPEECH_UNREACHABLE, "No task for the probe");
+    }
+}
+
+void muse_speech_status(muse_speech_status_t *out)
+{
+    out->detail[0] = '\0';
+    if (!speech_configured()) {
+        out->state = MUSE_SPEECH_NOT_SET;
+        strlcpy(out->detail, "No speech service", sizeof(out->detail));
+        return;
+    }
+    portENTER_CRITICAL(&s_probe_lock);
+    out->state = s_probe_state;
+    strlcpy(out->detail, s_probe_detail, sizeof(out->detail));
+    portEXIT_CRITICAL(&s_probe_lock);
+    if (!muse_wifi_connected() && out->state != MUSE_SPEECH_TESTING) {
+        out->state = MUSE_SPEECH_OFFLINE;
+        strlcpy(out->detail, "Waiting for Wi-Fi", sizeof(out->detail));
+    } else if (out->state == MUSE_SPEECH_UNTESTED && !out->detail[0]) {
+        strlcpy(out->detail, "Tap Test connection", sizeof(out->detail));
+    }
+}
+
+const char *muse_speech_state_name(muse_speech_state_t state)
+{
+    switch (state) {
+    case MUSE_SPEECH_NOT_SET: return "Not set";
+    case MUSE_SPEECH_OFFLINE: return "Offline";
+    case MUSE_SPEECH_UNTESTED: return "Not tested";
+    case MUSE_SPEECH_TESTING: return "Testing";
+    case MUSE_SPEECH_REACHABLE: return "Connected";
+    case MUSE_SPEECH_UNREACHABLE: return "Can't connect";
+    }
+    return "";
+}
+
+void muse_speech_config_changed(void)
+{
+    s_probe_gen++;
+    probe_report(MUSE_SPEECH_UNTESTED, "");
 }

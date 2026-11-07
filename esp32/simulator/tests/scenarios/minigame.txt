@@ -1,0 +1,7 @@
+# The interaction page's mini-game list, 360 px wide (1.85B):
+# the six games in their shipped order, 金币雨 then 毛毛跳跃.
+page=minigame
+battery=64
+wifi=connected
+paired=true
+advance=600
