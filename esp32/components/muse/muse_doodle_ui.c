@@ -411,6 +411,11 @@ static void on_resume(lv_event_t *e)
 {
     (void)e;
     muse_doodle_resume(&s_game);
+    /* The sensor may have been slept while the pause card was up (leaving
+     * the page, or the interact tile being hidden, calls
+     * muse_doodle_ui_hide). Waking here is idempotent, and 继续 is the one
+     * action that restarts the ticks, so tilt must be armed by now. */
+    muse_imu_wake();
     lv_timer_resume(s_timer);
     refresh_display();
 }
@@ -762,6 +767,11 @@ void muse_doodle_ui_build(lv_obj_t *page, lv_event_cb_t back_cb)
 
 void muse_doodle_ui_show(void)
 {
+    /* Re-arm the accelerometer on every visit: muse_doodle_ui_hide() put it
+     * to sleep, and 金币雨 has the same wake on show (muse_goldrain_ui_show).
+     * Without this a pause followed by leaving the page left the sensor off,
+     * and 继续 restarted the ticks with tilt dead. */
+    muse_imu_wake();
     refresh_display();
 }
 
