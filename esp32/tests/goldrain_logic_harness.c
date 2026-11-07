@@ -152,9 +152,9 @@ int main(void)
 
     /* Catcher clamps to the field. */
     muse_goldrain_set_catcher(&g, 0.0f);
-    assert(fabsf(g.catcher_cx - (60.0f + 53.0f / 2.0f)) < 0.01f);
+    assert(fabsf(g.catcher_cx - (60.0f + MUSE_GOLDRAIN_SPRITE_W / 2.0f)) < 0.01f);
     muse_goldrain_set_catcher(&g, 9999.0f);
-    assert(fabsf(g.catcher_cx - (300.0f - 53.0f / 2.0f)) < 0.01f);
+    assert(fabsf(g.catcher_cx - (300.0f - MUSE_GOLDRAIN_SPRITE_W / 2.0f)) < 0.01f);
 
     /* Pause freezes time; resume continues it. */
     uint32_t elapsed = g.elapsed_ms;
