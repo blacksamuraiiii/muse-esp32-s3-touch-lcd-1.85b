@@ -48,3 +48,9 @@ esp32/probe_build.log
 
 # Local scratch refs (temporary comparison dumps used while reviewing merges).
 .refs/
+
+# ESP32 桌面模拟器：本地工作副本（约 82 MB 的第三方 checkout），只用来预览版面，
+# 不属于固件，不入库。
+# The desktop simulator tree stays local: it is a large third-party
+# checkout used to preview layouts, not part of the firmware.
+esp32sim/
