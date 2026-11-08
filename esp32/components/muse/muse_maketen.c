@@ -1,99 +1,69 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 /*
- * muse_maketen.c -- 凑十练习 logic, see muse_maketen.h.
+ * muse_maketen.c -- 凑十法练习 logic, see muse_maketen.h.
  *
- * Each question is one make-ten addition, dealt by next_question():
- * a in 6..9, b in 3..9, a + b in 11..18, and b larger than the
- * complement c = 10 - a (so the remainder r = b - c is at least 1).
- * The correct solution is a + c + r = 10 + r. A wrong solution is
- * one of two kinds, picked at random: a wrong split (c' is not the
- * complement of a, c' + r' still equals b, so the chain reads
- * plausibly but the whole equation is false) or a wrong final sum
- * (the split is right, the displayed 10 + r' is off by one). The
- * 1:1 correct/wrong split is a per-question coin flip (user rule
- * 2026-11-08), so a round averages 1:1.
+ * Each question is one comparison, dealt by next_question():
+ * a, b in 2..9, a + b in 11..18. The comparison number d is the
+ * true sum (answer =), a near-miss above it (answer <) or a
+ * near-miss below it (answer >), each about a third of the time;
+ * the near-misses are off by 1 or 2 and stay inside 0..20. The
+ * hint splits one addend at random -- a into (10 - b) + the rest
+ * or b into (10 - a) + the rest -- which is valid exactly when
+ * a + b > 10, which the dealer guarantees.
  *
- * A judgement only ever adds: right is +1, wrong is +0. The round
+ * A pick only ever adds: right is +1, wrong is +0. The round
  * ends only on the 30 s timer -- there is no early end and no lives.
  */
 #include "muse_maketen.h"
 
 #include <stdlib.h>
 
-/* A wrong split: a first part c' that is not the complement of a
- * (so the split does not make ten with a), still smaller than b so
- * the second part r' = b - c' stays >= 1 and the displayed chain
- * reads plausibly. Returns c' through the out parameters. There is
- * always at least one candidate: b >= 3, and the values 1..b-1
- * except c are non-empty for every (a, b) the dealer can produce
- * (a == 9, c == 1 leaves 2..b-1; any other a leaves 1 in range). */static void wrong_split(const muse_maketen_t *g, int *out_c, int *out_r)
-{
-    /* Candidates are the values 1..b-1 except the true complement.
-     * Non-empty by construction (see the header comment above): b >= 3
-     * and the dealer only produces (a, b) with b > c. */
-    int cands[9];
-    int n = 0;
-    for (int v = 1; v <= MUSE_MAKETEN_B_MAX; v++) {
-        if (v != g->c && v < g->b) {
-            cands[n++] = v;
-        }
-    }
-    int c = cands[rand() % n];
-    *out_c = c;
-    *out_r = g->b - c;
-}
-
-/* A wrong final sum: the true remainder shifted by one, staying
- * inside 0..9 and never equal to the true remainder. r is 1..8, so
- * at least one of r+1 / r-1 is always valid. */
-static int wrong_sum(const muse_maketen_t *g)
-{
-    int r = g->r;
-    int d = (rand() % 2 == 0) ? 1 : -1;
-    int v = 10 + r + d;
-    if (v < 10 || v > 19) {
-        v = 10 + r - d;
-    }
-    return v;
-}
-
 static void next_question(muse_maketen_t *g)
 {
-    /* Deal a make-ten question: a in 6..9, b in 3..9, a + b in
-     * 11..18, b > complement of a (remainder at least 1). The loop
+    /* Deal the addition: a, b in 2..9, a + b in 11..18. The loop
      * retries until the constraints hold; a and b are independent
      * draws, so it terminates quickly. */
+    int sum;
     for (;;) {
         g->a = MUSE_MAKETEN_A_MIN +
                rand() % (MUSE_MAKETEN_A_MAX - MUSE_MAKETEN_A_MIN + 1);
         g->b = MUSE_MAKETEN_B_MIN +
                rand() % (MUSE_MAKETEN_B_MAX - MUSE_MAKETEN_B_MIN + 1);
-        g->c = 10 - g->a;
-        if (g->a + g->b >= 11 && g->a + g->b <= MUSE_MAKETEN_SUM_MAX &&
-            g->b > g->c) {
+        sum = g->a + g->b;
+        if (sum >= MUSE_MAKETEN_SUM_MIN && sum <= MUSE_MAKETEN_SUM_MAX) {
             break;
         }
     }
-    g->r = g->b - g->c;
-    /* 1:1 correct/wrong (user rule 2026-11-08): a coin flip per
-     * question, so a round averages half right, half wrong. */
-    if (rand() % 2 == 0) {
-        g->shown_c = g->c;
-        g->shown_r = g->r;
-        g->shown_sum = 10 + g->r;
-        g->is_correct = true;
+    /* The comparison number: the true sum (answer =), a near-miss
+     * above it (answer <) or a near-miss below it (answer >), each
+     * about a third of the time. The near-miss is off by 1 or 2 and
+     * stays inside 0..20: sums are 11..18, so both directions always
+     * have room. */
+    int kind = rand() % 3;
+    int delta = 1 + rand() % 2;
+    if (kind == 0) {
+        g->d = sum;
+        g->correct = MUSE_MAKETEN_CMP_EQ;
+    } else if (kind == 1) {
+        g->d = sum + delta;
+        g->correct = MUSE_MAKETEN_CMP_LT;
     } else {
-        g->is_correct = false;
-        if (rand() % 2 == 0) {
-            /* Wrong split: the first part is not the complement. */
-            wrong_split(g, &g->shown_c, &g->shown_r);
-            g->shown_sum = 10 + g->shown_r;
-        } else {
-            /* Wrong final sum: the split is right, the sum is off. */
-            g->shown_c = g->c;
-            g->shown_r = g->r;
-            g->shown_sum = wrong_sum(g);
-        }
+        g->d = sum - delta;
+        g->correct = MUSE_MAKETEN_CMP_GT;
+    }
+    /* The hint: split one addend at random. Splitting a means
+     * y = 10 - b (the complement that makes ten with b) and
+     * z = a - y; splitting b is the mirror. Both are valid exactly
+     * when a + b > 10, which the dealer guarantees, so y >= 1 and
+     * z >= 1 on either side. */
+    if (rand() % 2 == 0) {
+        g->hint_x = g->a;
+        g->hint_y = 10 - g->b;
+        g->hint_z = g->a - g->hint_y;
+    } else {
+        g->hint_x = g->b;
+        g->hint_y = 10 - g->a;
+        g->hint_z = g->b - g->hint_y;
     }
 }
 
@@ -151,12 +121,12 @@ void muse_maketen_tick(muse_maketen_t *g, uint32_t ms)
     }
 }
 
-bool muse_maketen_answer(muse_maketen_t *g, bool judged_correct)
+bool muse_maketen_answer(muse_maketen_t *g, muse_maketen_cmp_t cmp)
 {
     if (g->phase != MUSE_MAKETEN_PLAYING) {
         return false;
     }
-    bool right = (judged_correct == g->is_correct);
+    bool right = (cmp == g->correct);
     if (right) {
         g->score++;
     }
