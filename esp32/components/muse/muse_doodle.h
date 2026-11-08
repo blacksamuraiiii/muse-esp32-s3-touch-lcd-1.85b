@@ -11,14 +11,16 @@
  * the left/right half adds a shove in that direction. Clouds are one-way
  * (she passes up through them and only bounces when falling onto them);
  * a grey cloud breaks after one bounce and is replaced at the top at
- * once, so the field never thins out. The game is endless: the camera
- * follows her up, clouds recycle above, and she falls out of the bottom
- * when there is nothing left to bounce on.
+ * once, so the field never thins out. The climb itself has no ceiling:
+ * the camera follows her up and clouds recycle above -- but a round
+ * lasts 60 s (MUSE_DOODLE_GAME_MS, user 2026-11-08), so it ends on
+ * the clock even if she never falls out of the bottom.
  *
  * A round can still be survived without input on a white cloud: it
  * bounces her in place (user decision 2026-11-07, "保留三色"). She dies
- * when the player steers her off the clouds -- that is the round's only
- * end, same as the original game.
+ * when the player steers her off the clouds -- that is one way a round
+ * ends; the other is the 60 s clock (user 2026-11-08), which ends the
+ * round wherever she is, so a careful player cannot climb forever.
  *
  * Score (user rules 2026-11-07): clouds give NO points, a coin is +1,
  * and there is no bomb (user 2026-11-07, "取消炸弹惩罚" while the port
@@ -34,7 +36,10 @@
  * always reaches the next row. Horizontal speed is 6 px/tick (120 px/s,
  * the same feel as the 金币雨 drag); a tap adds a 6 px/tick shove that
  * decays by 8% a tick (about 75 px of travel), and the field edges wrap
- * around (classic Doodle Jump).
+ * around (classic Doodle Jump). The 60 s round clock (MUSE_DOODLE_GAME_MS)
+ * is separate from the physics steps: tick() adds the whole `ms` to
+ * elapsed_ms first, then runs the steps, so the clock is exact even
+ * when the caller passes a step other than 50 ms.
  *
  * Timing is in milliseconds and advances only through
  * muse_doodle_tick(), so the host test drives it deterministically
@@ -50,6 +55,13 @@
 #include <stdint.h>
 
 #define MUSE_DOODLE_TICK_MS 50u
+/* One round lasts 60 s (user 2026-11-08: a time limit, so a round
+ * cannot run on forever). The clock runs only while PLAYING -- the
+ * UI pauses its timer while paused, so tick() also no-ops unless
+ * PLAYING, and the limit is a wall-clock round length, not play
+ * time. When it runs out the round ends the same way as falling
+ * out of the bottom (OVER, field cleared, coins settled once). */
+#define MUSE_DOODLE_GAME_MS 60000u
 /* Field geometry, same 240x240 square the other games use. */
 #define MUSE_DOODLE_FIELD_X 60
 #define MUSE_DOODLE_FIELD_Y 60
@@ -121,6 +133,7 @@ typedef struct {
     float vy; /* px/tick, positive is falling */
     float tilt; /* -1..1, set by muse_doodle_tilt(), kept between ticks */
     float shove; /* px/tick from the last tap, decays every tick */
+    uint32_t elapsed_ms; /* PLAYING time this round; the 60 s clock */
     uint32_t score; /* +1 per coin; clouds give no points */
     uint32_t caught; /* coins collected */
     uint32_t height_px; /* total px scrolled, i.e. height climbed */
@@ -148,8 +161,13 @@ void muse_doodle_restart(muse_doodle_t *g);
 /* Advance the game by `ms` milliseconds. No-op unless PLAYING.
  * Applies gravity, moves her, bounces her off clouds, scrolls the
  * camera, recycles clouds above, collects coins, and ends the game
- * when she falls out of the bottom of the field. */
+ * when she falls out of the bottom of the field -- or when the 60 s
+ * round clock runs out, whichever comes first. */
 void muse_doodle_tick(muse_doodle_t *g, uint32_t ms);
+
+/* Whole seconds left in the round, rounded up (60 at the start, 0 at
+ * the end), for the HUD countdown. Same ceiling formula as 金币雨. */
+uint32_t muse_doodle_remaining_s(const muse_doodle_t *g);
 
 /* Steering: `tilt` is -1 (full left) .. +1 (full right), normally the
  * smoothed accelerometer roll. Kept until the next call, so a tick
