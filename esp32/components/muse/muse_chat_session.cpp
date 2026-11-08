@@ -116,7 +116,13 @@ static_assert(MP3_BUF > MP3_POLL_ROOM + MP3_HOLD, "reads would stall with the MP
 #define DEAD_US (60 * 1000000LL)           /* nothing from the server, pongs included */
 #define IDLE_CLOSE_US (10 * 60 * 1000000LL)
 #define AUTO_RETRY_MIN_US (5 * 1000000LL)  /* connecting without a turn, after a failure */
-#define AUTO_RETRY_MAX_US (120 * 1000000LL)
+#define AUTO_RETRY_MAX_US (300 * 1000000LL) /* was 120: during the 2026-11-08 outage the
+                                             * reconnect loop made 533 attempts in one hour,
+                                             * every one answered 502, and the VM came back
+                                             * the moment the device was rebooted. */
+#define BUSY_RETRY_US (30 * 1000000LL)      /* the VM answered 502/503: try again after this */
+#define BUSY_STREAK_US (120 * 1000000LL)    /* three of those in a row: stop for two minutes */
+#define BUSY_STREAK_MIN 3
 #define FINAL_TIMEOUT_US (15 * 1000000LL)  /* release -> final transcript */
 #define REPLY_TIMEOUT_US (60 * 1000000LL)  /* chat posted -> first assistant message */
 #define TURN_CAP_US (180 * 1000000LL)
@@ -178,6 +184,7 @@ static char s_host[MUSE_HOST_MAX + 1];
  * if that fails or the connection drops, not after an idle close. */
 static int64_t s_auto_next_us;
 static int64_t s_auto_backoff_us = AUTO_RETRY_MIN_US;
+static int s_busy_streak;   /* consecutive 502/503 answers from the VM's session route */
 
 /* ---- Streams on the connection ---- */
 
@@ -915,13 +922,14 @@ static bool ensure_connected(void)
         strlcpy(s_host, "hatch.metaaivm.com", sizeof(s_host));
     }
     char err[48] = "";
+    int status = 0;
     for (int attempt = 0; attempt < 2; attempt++) {
         if (!resolve_vm(err, sizeof(err))) {
             break;
         }
-        int status;
         if (connect_once(err, sizeof(err), &status)) {
             /* The settings page shows the VM in its VM ID row. */
+            s_busy_streak = 0;
             muse_hatch_report_vm(s_vm.vm_id);
             muse_hatch_report(MUSE_HATCH_REACHABLE, "");
             return true;
@@ -933,6 +941,15 @@ static bool ensure_connected(void)
             continue;
         }
         break;
+    }
+    if (status == 502 || status == 503) {
+        /* The edge is up (401 came back for a bare probe) but this VM's
+         * session route is not. Counted, so the reconnect loop backs off
+         * instead of hammering it. */
+        if (s_busy_streak < 1000) {
+            s_busy_streak++;
+        }
+        ESP_LOGW(TAG, "VM session route busy (HTTP %d), %d in a row", status, s_busy_streak);
     }
     ESP_LOGW(TAG, "connect failed: %s", err);
     muse_hatch_report(MUSE_HATCH_UNREACHABLE, err);
@@ -1055,7 +1072,11 @@ static bool turn_start(uint32_t gen, bool text)
         drop_connection("stale before turn");
     }
     if (!ensure_connected()) {
-        turn_fail(muse_hatch_configured() ? "CAN'T REACH MUSE" : "MUSE NOT SET UP");
+        /* A 502 from the VM's session route is not the same as an unreachable
+         * server: say what it is, so the press is not retried against a route
+         * that is down for a known reason. */
+        turn_fail(!muse_hatch_configured() ? "MUSE NOT SET UP"
+                                           : s_busy_streak ? "MUSE IS BUSY" : "CAN'T REACH MUSE");
         return false;
     }
     return true;
@@ -2204,6 +2225,23 @@ static void handle(const cmd_t &cmd)
     }
 }
 
+/* How long the reconnect loop waits before its next attempt. A 502/503 means
+ * the VM's session route is down while the edge itself answers (see the
+ * 2026-11-08 outage: 533 attempts in one hour, all 502, and a reboot fixed it
+ * at once). One such answer earns a slower retry; three in a row stop the
+ * hammering for two minutes, so the VM gets room to come back instead of
+ * being flooded. */
+static int64_t retry_wait_us(void)
+{
+    if (s_busy_streak >= BUSY_STREAK_MIN) {
+        return BUSY_STREAK_US;
+    }
+    if (s_busy_streak) {
+        return BUSY_RETRY_US;
+    }
+    return s_auto_backoff_us;
+}
+
 static void hatch_task(void *arg)
 {
     (void)arg;
@@ -2229,7 +2267,7 @@ static void hatch_task(void *arg)
                     s_auto_next_us = INT64_MAX;   /* until it drops */
                     s_auto_backoff_us = AUTO_RETRY_MIN_US;
                 } else {
-                    s_auto_next_us = now_us() + s_auto_backoff_us;
+                    s_auto_next_us = now_us() + retry_wait_us();
                     s_auto_backoff_us = s_auto_backoff_us * 2 < AUTO_RETRY_MAX_US ? s_auto_backoff_us * 2
                                                                                    : AUTO_RETRY_MAX_US;
                 }
