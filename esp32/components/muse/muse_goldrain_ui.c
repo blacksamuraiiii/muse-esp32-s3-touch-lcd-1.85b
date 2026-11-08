@@ -30,7 +30,7 @@
  * the button. The OVER card itself carries no title and no payout line
  * any more (UI polish 2026-11-01): both moved to the page-level title
  * and HUD slots. The PAUSED card carries no restart capsule: it
- * charged 5 coins on a single tap in the narrowest part of the bezel,
+ * charged 10 coins on a single tap in the narrowest part of the bezel,
  * and leaving is the back arrow's job (same decision as snake). The
  * START overlay carries the hint line at y=304 (DIM, same slot as the
  * snake page's hint): "左右倾斜移动，长按中间暂停".
@@ -379,7 +379,9 @@ static void on_pause(lv_event_t *e)
  * muse_pet_round_coins() is the only conversion curve -- 1 point (one
  * coin) per coin, 20 coins per round ceiling -- and the 10-coin entry
  * fee was already charged at start through PET_FEE, so the round's net
- * is payout minus 10, shown on the OVER card. The score is floored at
+ * is payout minus 10, computed on the OVER card, never printed (kids
+ * cannot tell net apart: the card shows what was added, not what was
+ * gained). The score is floored at
  * zero first (muse_goldrain_settle_score): a bomb is -5, so a round
  * can end below zero, and that pays 0 coins, never a negative amount
  * -- round_coins() takes an unsigned score, so an unfloored negative
@@ -660,7 +662,7 @@ void muse_goldrain_ui_build(lv_obj_t *page, lv_event_cb_t back_cb)
     /* PAUSED overlay: dim, 继续 button with the PLAY symbol above
      * the label (snake's card). No "已暂停" label on the card any
      * more: the page title itself becomes "已暂停" while paused
-     * (user 2026-11-08). No restart capsule: it charged 5 coins on
+     * (user 2026-11-08). No restart capsule: it charged 10 coins on
      * a single tap in the narrowest part of the bezel; the back
      * arrow leaves, and 开始 charges again on the next visit. */
     s_paused_ov = overlay(page, true);

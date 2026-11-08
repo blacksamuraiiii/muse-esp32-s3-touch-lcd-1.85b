@@ -42,7 +42,7 @@
  * the fee the moment it is pressed, so the price belongs on the button.
  * The OVER card itself carries no title and no payout line any more (UI
  * polish 2026-11-01): both moved to the page-level title and HUD slots.
- * The PAUSED card carries no restart capsule: it charged 5 coins on a
+ * The PAUSED card carries no restart capsule: it charged 10 coins on a
  * single tap in the narrowest part of the bezel, and leaving is the back
  * arrow's job (same decision as snake).
  *
@@ -362,7 +362,8 @@ static void on_touch_hold(lv_event_t *e)
  * muse_pet_round_coins() is the only conversion curve -- 1 point (one mole)
  * per coin, 20 coins per round ceiling -- and the 10-coin entry fee was
  * already charged at start through PET_FEE, so the round's net is payout
- * minus 5, shown on the OVER card. A refused request (worker not ready /
+ * minus 10, computed on the OVER card, never printed (kids cannot tell
+ * net apart: the card shows what was added, not what was gained). A
  * queue full) leaves s_round_coins at 0 so the card never claims coins the
  * wallet did not get. */
 static void settle_round(void)
@@ -520,7 +521,7 @@ void muse_whackamole_ui_build(lv_obj_t *page, lv_event_cb_t back_cb)
     /* PAUSED overlay: dim, 继续 button with the PLAY symbol above
      * the label (snake's card). No "已暂停" label on the card any
      * more: the page title itself becomes "已暂停" while paused
-     * (user 2026-11-08). No restart capsule: it charged 5 coins on
+     * (user 2026-11-08). No restart capsule: it charged 10 coins on
      * a single tap in the narrowest part of the bezel; the back
      * arrow leaves, and 开始 charges again on the next visit. */
     s_paused_ov = overlay(page, true);

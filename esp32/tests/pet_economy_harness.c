@@ -310,6 +310,25 @@ int main(void)
     assert(m.feed_day == d2);
     assert(m.feed_mask == mask_before);
 
+    /* --- decay_notice accumulates across un-ACKed days (audit 2026-11-08)
+     * Day d2 takes 20 and the UI never ACKs it; day d3 takes another 20.
+     * The notice must read 40, not 20 (the old plain assignment overwrote
+     * yesterday's un-announced notice). */
+    const int32_t d3 = d2 + 1;
+    muse_pet_model_init(&m);
+    m.coins = 100;
+    assert(apply(&m, PET_TOUCH, d1, 0) == PET_COIN);
+    assert(m.decay_notice == 0);
+    assert(apply(&m, PET_TOUCH, d2, 0) == PET_COIN);
+    assert(m.coins == 85); /* 100 - 20 decay + 5 touch */
+    assert(m.decay_notice == 20);
+    m.coins = 100; /* replenish before the next day, as a user would */
+    assert(apply(&m, PET_TOUCH, d3, 0) == PET_COIN);
+    assert(m.coins == 85); /* 100 - 20 decay + 5 touch */
+    assert(m.decay_notice == 40);
+    assert(apply(&m, PET_DECAY_ACK, d3, d3) == PET_OK);
+    assert(m.decay_notice == 0);
+
     /* --- roll_daily is a no-op on an uncalibrated clock ---------------- */
     muse_pet_model_init(&m);
     m.feed_day = d1;

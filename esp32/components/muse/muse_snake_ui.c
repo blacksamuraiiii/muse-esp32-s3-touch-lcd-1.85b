@@ -51,7 +51,7 @@
  *     line); PAUSED and OVER dim the board 50% black and show their
  *     title and centre button only. PAUSED has NO restart button
  *     on purpose: an 84x32 one at y = 314 -- the narrowest part of the
- *     bezel -- charged 5 coins on a single tap with no confirmation.
+ *     bezel -- charged 10 coins on a single tap with no confirmation.
  *     Leaving goes through the shared back arrow, which is visible
  *     whenever the game is not PLAYING. OVER's button carries the price
  *     ("- 10 金币"), because the fee is otherwise invisible.
@@ -340,7 +340,7 @@ static void hide_note(void)
     sync_message_band();
 }
 
-/* The entry fee (user decision 2026-10-31): 5 coins per game, gated
+/* The entry fee (user decision 2026-10-31): 10 coins per game, gated
  * on the pet snapshot and settled by the worker as PET_FEE. False
  * shows the refusal note and starts nothing. */
 static bool charge_for_game(void)
@@ -746,7 +746,7 @@ void muse_snake_ui_build(lv_obj_t *page, lv_event_cb_t back_cb)
     lv_obj_align(rl, LV_ALIGN_TOP_MID, 0, 34);
     sector_dashes(s_pause_ov);
     /* The 重开 capsule that used to sit at (138,314) is gone: it charged
-     * 5 coins on one tap, with no confirmation, in the narrowest part of
+     * 10 coins on one tap, with no confirmation, in the narrowest part of
      * the bezel. Leaving is the back arrow's job; restarting is offered
      * on the OVER card, where the price is printed. */
 

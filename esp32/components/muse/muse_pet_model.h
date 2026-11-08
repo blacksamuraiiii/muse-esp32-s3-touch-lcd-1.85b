@@ -19,15 +19,16 @@
  *  - No hunger / mood / energy / sfx / last_time fields at all (design §4.1
  *    allows keeping them inert, but dropping them is stronger: they cannot
  *    silently affect coins).
- *  - Feed is three action values (rice / cake / coffee) that settle
- *    identically. The design calls feed one action; the three UI buttons need
- *    a way for phase-2 UI to know which food was fed for its subtitle
- *    ("喂了<食物名>"), and the command queue carries only an action value,
- *    so the food is encoded in the action. Reward is identical for all three.
+ *  - Feed is six action values (rice / cake / coffee / hamburger / pizza /
+ *    milk tea) that settle identically. The design calls feed one action;
+ *    the six UI buttons need a way for phase-2 UI to know which food was fed
+ *    for its subtitle ("喂了<食物名>"), and the command queue carries only an
+ *    action value, so the food is encoded in the action. Reward is identical
+ *    for all six.
  *  - Day numbers come from muse_pet_day(), which is a UTC day
  *    (epoch / 86400 + MUSE_PET_DAY_OFFSET_SECONDS, TZ-independent,
- *    user decision 2026-10-25). The boundary is 08:00 Beijing time
- *    with the default offset 0, not local midnight.
+ *    user decision 2026-10-25). The boundary is local midnight
+ *    (offset 8*3600, retuned 2026-11-05), not 08:00 Beijing time.
  */
 #pragma once
 
@@ -66,9 +67,10 @@
  *                               win / draw / loss of rock-paper-scissors
  *                               (retuned from 5 / 10 on 2026-11-08).
  *
- * The conversion lives in muse_pet_round_coins() and nowhere else, so
- * snake and whack-a-mole cannot drift apart. The 20-coin ceiling is what
- * keeps games from minting coins -- not the curve, which is 1:1.
+ * The conversion lives in muse_pet_round_coins() (and its capped variant
+ * muse_pet_round_coins_cap(), which the math game uses with its own
+ * ceiling), so the five games cannot drift apart. The 20-coin ceiling is
+ * what keeps games from minting coins -- not the curve, which is 1:1.
  */
 #define MUSE_PET_SCORE_PER_COIN 1u     /* points per coin (1:1) */
 #define MUSE_PET_ROUND_COIN_MAX 20u    /* per-round payout ceiling */
@@ -130,7 +132,7 @@ typedef struct {
     int32_t touch_day;           /* day of the current touch cap, -1 = none */
     uint32_t daily_touch_coins;  /* 0..50 */
     int32_t feed_day;            /* day of the current feed cap, -1 = none */
-    uint32_t feed_mask;          /* bits 0..2: that food already paid today */
+    uint32_t feed_mask;          /* bits 0..5: that food already paid today */
     int32_t fortune_day;         /* day of the current fortune, -1 = never */
     uint32_t fortune;            /* 0..19, valid only if fortune_day >= 0 */
     int32_t decay_day;           /* last day living cost was settled, -1 = none */
@@ -195,7 +197,7 @@ typedef enum {
     PET_OK = 0,
     PET_COIN,          /* touch paid */
     PET_CAP,           /* daily cap reached: touch = happy only, no coins;
-                        * sudoku = today's 5 coins already paid, no coins */
+                        * sudoku = today's 10 coins already paid, no coins */
     PET_POOR,          /* game/fee: coins < the entry fee, not settled,
                         * no round started */
     PET_FORTUNE_NEW,   /* new card drawn */
@@ -286,9 +288,10 @@ void muse_pet_model_roll_daily(muse_pet_model_t *s, int64_t now);
 muse_pet_result_t muse_pet_model_apply(muse_pet_model_t *s, muse_pet_action_t action,
                                        int64_t now, uint32_t random, int32_t arg);
 
-/* True for the three feed actions. */
+/* True for the six feed actions. */
 bool muse_pet_action_is_feed(muse_pet_action_t action);
 
-/* 0..2 (rice / cake / coffee) for a feed action, -1 for anything else. The
+/* 0..5 (rice / cake / coffee / hamburger / pizza / milk tea) for a feed
+ * action, -1 for anything else. The
  * index is the bit in feed_mask, so each food pays once per day on its own. */
 int muse_pet_feed_index(muse_pet_action_t action);
