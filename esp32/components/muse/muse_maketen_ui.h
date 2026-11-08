@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 /*
- * muse_maketen_ui.h -- 凑十练习 subpage inside the interaction tile.
+ * muse_maketen_ui.h -- 凑十法练习 subpage inside the interaction tile.
  *
  * Owned by muse_interact_ui.c like the feed / game / fortune / sudoku
  * subpages: the page group lives inside the interaction tile (NOT a
@@ -27,7 +27,7 @@
  * muse_maketen_ui_fee_refused(), which cancels a running game
  * back to START with the refusal note.
  *
- * Score and payout: a correct judgement is +1, a wrong one is +0,
+ * Score and payout: a correct pick is +1, a wrong one is +0,
  * so the score only ever goes up. The 30 s round's score is converted
  * exactly once, at OVER, by muse_pet_round_coins() -- 1 point per
  * coin, at most 10 coins per round -- then sent as
@@ -43,18 +43,19 @@
  * nothing.
  *
  * Controls (user decision 2026-11-08): one question at a time -- an
- * addition ("8 + 5 = ?") with one proposed make-ten solution
- * ("8 + 2 + 3 = 13"), right about half the time and wrong about
- * half the time (1:1). The green check button (left) means "this
- * solution is right", the red cross button (right) means "this
- * solution is wrong". Either tap judges the solution at once and
- * deals the next one -- there is no confirm step. Pausing is a LONG
- * HOLD on the question area (finger within ~12 px for 500 ms, the
- * doodle page's idiom): the answer buttons must never pause the
- * game, so the hold is tracked on a layer under them, not on the
- * buttons. There is no pause button (same as snake / whack-a-mole
- * since 2026-11-01). The back arrow stays hidden while playing --
- * hold first, then leave from the pause card.
+ * addition with a ? where the comparison goes ("5 + 8 ? 13"), a small
+ * hint line with a make-ten split ("提示：2+3=5"), and three buttons
+ * below -- >, < and =. The player taps the comparison that makes the
+ * statement true; a right pick scores one point, a wrong pick scores
+ * nothing, and either tap deals the next question at once -- there is
+ * no confirm step. The hint is a scaffold, not the answer: it shows
+ * how one addend splits, never the sum and never the comparison.
+ * Pausing is a LONG HOLD on the question area (finger within ~12 px
+ * for 500 ms, the doodle page's idiom): the answer buttons must never
+ * pause the game, so the hold is tracked on a layer under them, not
+ * on the buttons. There is no pause button (same as snake /
+ * whack-a-mole since 2026-11-01). The back arrow stays hidden while
+ * playing -- hold first, then leave from the pause card.
  *
  * Progress lives in static RAM: leaving the tile
  * (muse_maketen_ui_hide) pauses a running game, so a return
@@ -68,9 +69,9 @@
 
 #include "lvgl.h"
 
-/* Build the 凑十练习 page inside `page` (a 360x360 group created
+/* Build the 凑十法练习 page inside `page` (a 360x360 group created
  * by muse_interact_ui.c). `back_cb` is the back-arrow handler (the
- * interaction tile's on_back: 凑十练习 back always lands on the
+ * interaction tile's on_back: 凑十法练习 back always lands on the
  * mini-game menu). Safe to call once, in the LVGL task. */
 void muse_maketen_ui_build(lv_obj_t *page, lv_event_cb_t back_cb);
 

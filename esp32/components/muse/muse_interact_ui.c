@@ -1311,7 +1311,7 @@ static void build_minigame(void)
     list_row(list, "金币雨", on_open_goldrain, &s_mg_goldrain_lbl);
     list_row(list, "毛毛跳跃", on_open_doodle, &s_mg_doodle_lbl);
     list_row(list, "加减练习", on_open_mathpractice, &s_mg_mathpractice_lbl);
-    list_row(list, "凑十练习", on_open_maketen, &s_mg_maketen_lbl);
+    list_row(list, "凑十法练习", on_open_maketen, &s_mg_maketen_lbl);
 
     /* Coin line: the column's last item, so it scrolls with the list
      * instead of sitting in a fixed slot the scroller would run under.
