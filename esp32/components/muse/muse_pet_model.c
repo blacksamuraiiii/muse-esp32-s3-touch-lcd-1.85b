@@ -261,7 +261,7 @@ muse_pet_result_t muse_pet_model_apply(muse_pet_model_t *s, muse_pet_action_t ac
     }
 
     if (action == PET_FEE) {
-        /* Entry fee for one of the five games (user decision
+        /* Entry fee for one of the six games (user decision
          * 2026-10-31; sudoku moved to PET_SUDOKU_ENTRY on 2026-11-01 because
          * its fee is daily, not per puzzle): same 10-coin gate as PET_GAME, no
          * outcome, no refund path -- the UI only sends it after its own
@@ -312,15 +312,17 @@ muse_pet_result_t muse_pet_model_apply(muse_pet_model_t *s, muse_pet_action_t ac
     }
 
     if (action == PET_PLAY_REWARD) {
-        /* End-of-round payout for any of the five games (user decision
+        /* End-of-round payout for any of the six games (user decision
          * 2026-11-01, ceiling retuned to 10 the same day, then to 20 on
          * 2026-11-08). The UI converts its own score with
-         * muse_pet_round_coins(); the worker clamps again so a UI bug
-         * cannot mint coins, and 0 is a valid settlement (a scoreless
-         * round earns nothing) that still returns PET_OK. This is the
-         * GROSS payout: the 10-coin entry fee was already charged at round
-         * start through PET_FEE, so the round's net is payout minus 10
-         * and is the UI's to show, not the model's to fold in. */
+         * muse_pet_round_coins() (OX棋 maps its outcome instead, with
+         * muse_tictactoe_payout_coins()); the worker clamps again so a
+         * UI bug cannot mint coins, and 0 is a valid settlement (a
+         * scoreless round earns nothing) that still returns PET_OK.
+         * This is the GROSS payout: the 10-coin entry fee was already
+         * charged at round start through PET_FEE, so the round's net
+         * is payout minus 10 and is the UI's to show, not the model's
+         * to fold in. */
         uint32_t add = arg > 0 ? (uint32_t)arg : 0;
         if (add > MUSE_PET_ROUND_COIN_HARD_MAX) {
             add = MUSE_PET_ROUND_COIN_HARD_MAX;
