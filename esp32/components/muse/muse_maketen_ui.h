@@ -44,18 +44,20 @@
  *
  * Controls (user decision 2026-11-08): one question at a time -- an
  * addition with a ? where the comparison goes ("5 + 8 ? 13"), a small
- * hint line with a make-ten split ("提示：2+3=5"), and three buttons
- * below -- >, < and =. The player taps the comparison that makes the
- * statement true; a right pick scores one point, a wrong pick scores
- * nothing, and either tap deals the next question at once -- there is
- * no confirm step. The hint is a scaffold, not the answer: it shows
- * how one addend splits, never the sum and never the comparison.
- * Pausing is a LONG HOLD on the question area (finger within ~12 px
- * for 500 ms, the doodle page's idiom): the answer buttons must never
- * pause the game, so the hold is tracked on a layer under them, not
- * on the buttons. There is no pause button (same as snake /
- * whack-a-mole since 2026-11-01). The back arrow stays hidden while
- * playing -- hold first, then leave from the pause card.
+ * hint line with the two make-ten steps ("10-8=2  5-2=3"), and three
+ * buttons below -- >, < and =. The player taps the comparison that
+ * makes the statement true; a right pick scores one point, a wrong
+ * pick scores nothing, and either tap deals the next question at
+ * once -- there is no confirm step. The hint is a scaffold, not the
+ * answer: it shows the thinking (how much the big addend needs to
+ * reach 10, and what is left of the small addend after giving it),
+ * never the sum and never the comparison. Pausing is a LONG HOLD on
+ * the question area (finger within ~12 px for 500 ms, the doodle
+ * page's idiom): the answer buttons must never pause the game, so
+ * the hold is tracked on a layer under them, not on the buttons.
+ * There is no pause button (same as snake / whack-a-mole since
+ * 2026-11-01). The back arrow stays hidden while playing -- hold
+ * first, then leave from the pause card.
  *
  * Progress lives in static RAM: leaving the tile
  * (muse_maketen_ui_hide) pauses a running game, so a return

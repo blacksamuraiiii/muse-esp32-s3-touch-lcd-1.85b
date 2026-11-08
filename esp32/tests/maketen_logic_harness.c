@@ -6,9 +6,10 @@
  * The rules under test are the ones the user settled on 2026-11-08:
  * 比较三选一 (a + b ? d with >, < or =), a, b in 2..9, a + b in
  * 11..18, the comparison number d is the true sum about a third of
- * the time and a near-miss (±1 or ±2) the rest, the hint is a valid
- * make-ten split of one addend, a correct pick is +1 and a wrong
- * one is +0 (never negative), and the round is 30 s. */
+ * the time and a near-miss (±1 or ±2) the rest, the hint is the two
+ * make-ten steps as subtractions (10 - big = need, small - need =
+ * left), a correct pick is +1 and a wrong one is +0 (never
+ * negative), and the round is 30 s. */
 #include <assert.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -25,10 +26,12 @@ static void tick_n(muse_maketen_t *g, int n)
 
 /* The question the game is currently showing must always be legal:
  * a, b in 2..9, a + b in 11..18, d in 0..20, the correct comparison
- * matches the sign of (a + b) - d, and the hint is a valid make-ten
- * split: hint_y + hint_z == hint_x, hint_x is one of the addends,
- * and the split makes ten with the other addend
- * (hint_y == 10 - other). */
+ * matches the sign of (a + b) - d, and the hint is the two make-ten
+ * steps as subtractions: hint_big is the larger addend (6..9),
+ * hint_small the smaller, hint_need = 10 - hint_big (1..4) is what
+ * big is short of 10, and hint_left = hint_small - hint_need (>= 1)
+ * is what remains of small after giving need to big. The UI prints
+ * "10-big=need  small-need=left". */
 static void check_question(const muse_maketen_t *g)
 {
     assert(g->a >= MUSE_MAKETEN_A_MIN && g->a <= MUSE_MAKETEN_A_MAX);
@@ -51,15 +54,20 @@ static void check_question(const muse_maketen_t *g)
         diff = -diff;
     }
     assert(diff == 0 || diff == 1 || diff == 2);
-    /* The hint is a valid make-ten split of one addend. */
-    assert(g->hint_y + g->hint_z == g->hint_x);
-    assert(g->hint_y >= 1 && g->hint_z >= 1);
-    if (g->hint_x == g->a) {
-        assert(g->hint_y == 10 - g->b);
-    } else {
-        assert(g->hint_x == g->b);
-        assert(g->hint_y == 10 - g->a);
-    }
+    /* The hint is the two make-ten steps, as subtractions. */
+    int big = g->a > g->b ? g->a : g->b;
+    int small = g->a > g->b ? g->b : g->a;
+    assert(g->hint_big == big);
+    assert(g->hint_small == small);
+    assert(g->hint_big >= 6 && g->hint_big <= 9);
+    assert(g->hint_need == 10 - g->hint_big);
+    assert(g->hint_need >= 1 && g->hint_need <= 4);
+    assert(g->hint_left == g->hint_small - g->hint_need);
+    assert(g->hint_left >= 1);
+    /* The steps recombine to the sum: big + need is 10, and
+     * 10 + left is the true sum. */
+    assert(g->hint_big + g->hint_need == 10);
+    assert(10 + g->hint_left == sum);
 }
 
 int main(void)
@@ -145,18 +153,21 @@ int main(void)
     assert(gt_n > total_n * 25 / 100 && gt_n < total_n * 42 / 100);
     assert(lt_n > total_n * 25 / 100 && lt_n < total_n * 42 / 100);
 
-    /* The hint splits either addend over a long run. */
+    /* The hint's big addend is sometimes a, sometimes b: the dealer
+     * draws a and b independently, so over a long run both orderings
+     * appear (the hint itself is deterministic given a and b -- big
+     * is always the larger addend). */
     muse_maketen_restart(&g);
-    int split_a_n = 0, split_b_n = 0;
+    int big_a_n = 0, big_b_n = 0;
     for (int i = 0; i < total_n; i++) {
-        if (g.hint_x == g.a) {
-            split_a_n++;
+        if (g.hint_big == g.a) {
+            big_a_n++;
         } else {
-            split_b_n++;
+            big_b_n++;
         }
         muse_maketen_answer(&g, g.correct);
     }
-    assert(split_a_n > 0 && split_b_n > 0);
+    assert(big_a_n > 0 && big_b_n > 0);
 
     /* Timer: 30 s ends the round. remaining_s counts down. */
     muse_maketen_restart(&g);
