@@ -286,6 +286,15 @@ static void refresh_display(void)
                                     LV_PART_MAIN);
     }
     set_label(s_hud, hud_buf);
+    /* The START page shows no 本局 score line (user 2026-11-08): it
+     * only appears once the round has been paid for and started. A
+     * refusal note still wins the slot there, which is why only the
+     * plain HUD is hidden here. */
+    if (s_game.phase == MUSE_MATHPRACTICE_START) {
+        lv_obj_add_flag(s_hud, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        sync_message_band();
+    }
     /* Title: the game name, "已暂停" while paused, or "游戏结束" at
      * OVER (user 2026-11-08: the pause title moves to the title slot
      * on every game, so the pause card is just the 继续 button). */
