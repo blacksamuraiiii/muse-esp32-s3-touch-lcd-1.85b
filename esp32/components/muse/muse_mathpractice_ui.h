@@ -32,8 +32,10 @@
  *
  * Score and payout: a right pick is +1, a wrong one is +0, so the
  * score only ever goes up. The 3-minute round's score is converted exactly
- * once, at OVER, by muse_pet_round_coins() -- 1 point per coin, at
- * most 10 coins per round -- then sent as PET_PLAY_REWARD. The payout
+ * once, at OVER, by muse_pet_round_coins_cap() -- 1 point per coin, at
+ * most 20 coins per round (this game's own ceiling since the round grew
+ * to 3 minutes on 2026-11-08; every other game stays at 10) -- then sent
+ * as PET_PLAY_REWARD. The payout
  * is gross: the 5-coin entry fee was already charged at start, so no
  * round mints more than 5 coins. The HUD reads "本局 n 分 · 剩余 s 秒"
  * while PLAYING or PAUSED and turns GOLD with "本局 n 分，+m 金币" at

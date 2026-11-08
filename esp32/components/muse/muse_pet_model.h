@@ -68,6 +68,14 @@
  */
 #define MUSE_PET_SCORE_PER_COIN 1u     /* points per coin (1:1) */
 #define MUSE_PET_ROUND_COIN_MAX 10u    /* per-round payout ceiling */
+/* 加减练习 is a 3-minute round since 2026-11-08 (user decision), so its
+ * per-round ceiling was raised to 20 the same day -- a 3-minute round
+ * would otherwise top out in its first third. Every other game stays at
+ * MUSE_PET_ROUND_COIN_MAX (10). The worker clamps PET_PLAY_REWARD to the
+ * hard maximum below, so a UI bug still cannot mint more than any game's
+ * ceiling. */
+#define MUSE_PET_ROUND_COIN_MAX_MATHPRACTICE 20u
+#define MUSE_PET_ROUND_COIN_HARD_MAX 20u
 
 /*
  * Sudoku pays in completions, not points: the first puzzle solved on a
@@ -195,6 +203,11 @@ bool muse_pet_model_valid(const muse_pet_model_t *s);
  * PET_FEE) is NOT subtracted here: the UI shows payout and net separately,
  * so the conversion must stay the gross payout. */
 uint32_t muse_pet_round_coins(uint32_t score);
+
+/* Same 1:1 curve, but with the caller's ceiling (a game whose round
+ * length differs from the standard one). The worker still clamps the
+ * result to MUSE_PET_ROUND_COIN_HARD_MAX when it is paid out. */
+uint32_t muse_pet_round_coins_cap(uint32_t score, uint32_t cap);
 
 /* Day-boundary offset, in seconds, added to the UTC epoch before dividing
  * by 86400. 8*3600 puts the boundary at local midnight in China (UTC+8),
