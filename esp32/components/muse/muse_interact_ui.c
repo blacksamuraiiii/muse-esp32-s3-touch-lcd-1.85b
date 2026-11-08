@@ -44,7 +44,7 @@
  *     coin line at y = 302.
  *     The 石头剪刀布 game page is the one exception to the coin-slot
  *     rule: its coin line sits at y = 300 and the "点一张手出拳，每局
- *     -5 金币" cost hint at y = 84 (swapped, 2026-11-01, user request),
+ *     -10 金币" cost hint at y = 84 (swapped, 2026-11-01, user request),
  *     because the result / streak lines already own y = 240 / 272.
  *     Tile swipe is DISABLED on every interaction subpage (feed,
  *     fortune, minigame list and the four game boards): a subpage
@@ -451,7 +451,7 @@ static void refresh_status(void)
               feed_done ? "喂饭 ｜ 今日已领满" : "喂饭 ｜ 每种 +10金币");
     lv_obj_set_style_text_color(s_btn_feed_lbl,
                                 lv_color_hex(feed_done ? MUSE_THEME_DIM : MUSE_THEME_TEXT), 0);
-    set_label(s_btn_game_lbl, "小游戏 ｜ 每种 -5金币");
+    set_label(s_btn_game_lbl, "小游戏 ｜ 每种 -10金币");
     lv_obj_set_style_text_color(s_btn_game_lbl, lv_color_hex(MUSE_THEME_TEXT), 0);
     if (s_snap.fortune_day >= 0) {
         const char *grade = muse_pet_fortune_grade(s_snap.fortune);
@@ -681,9 +681,10 @@ static const lv_image_dsc_t *hand_img(int choice)
 
 /* 1 beats 0, 2 beats 1, 0 beats 2 (paper wraps rock, scissors cut paper,
  * rock crushes scissors). Returns +1 player wins, -1 player loses,
- * 0 draw. This is UI-local: the model never settles win/loss (design
- * §5.2 -- the model only deducts the 5 coins; the random result is
- * decided at click time, in this file, and never enters NVS). */
+ * 0 draw. This is UI-local: the random result is decided at click time,
+ * in this file, and passed to the model as PET_GAME's arg; the model then
+ * settles it as entry fee + outcome payout (win 20 / draw 10 / loss 0),
+ * and the result itself never enters NVS. */
 static int game_result(int player, int house)
 {
     if (player == house) {
@@ -785,19 +786,21 @@ static void game_start(int choice)
     if (s_game_phase == IC_GAME_SHAKE) {
         return; /* shake: buttons are dimmed and not re-clickable */
     }
-    if (!s_have_snap || s_snap.coins < 5) {
+    if (!s_have_snap || s_snap.coins < MUSE_PET_GAME_STAKE) {
         /* Poor, checked against the last snapshot before any settlement
-         * (design §5.2: coins < 5 never settles, never starts a round). */
+         * (design §5.2: coins under the entry fee never settle, never
+         * start a round). */
         write_pet_caption("金币不够，先摸摸 / 喂饭 / 抽运势");
         game_hint("金币不够，先摸摸 / 喂饭 / 抽运势");
         return;
     }
-    /* The result is decided NOW, at click time (design §5.2), and 1.5a
-     * settles by result (+5 win / -5 loss / 0 draw), so the worker needs it
-     * before it can apply anything. The animation that follows only reveals
-     * this already-decided outcome. If the feedback later comes back
-     * PET_POOR (snapshot was stale and the balance actually was < 5), the
-     * round is cancelled in drain_feedback() and nothing was settled. */
+    /* The result is decided NOW, at click time (design §5.2), and PET_GAME
+     * settles it as entry fee + outcome payout (win 20 / draw 10 / loss 0),
+     * so the worker needs it before it can apply anything. The animation
+     * that follows only reveals this already-decided outcome. If the
+     * feedback later comes back PET_POOR (snapshot was stale and the
+     * balance actually was under the entry fee), the round is cancelled
+     * in drain_feedback() and nothing was settled. */
     int player = choice;
     int house = (int)(esp_random() % 3);
     int outcome = game_result(player, house);
@@ -896,7 +899,7 @@ static void game_tick(void)
             /* Reveal hold ends: hands leave, choice row returns, result
              * text + streak stay. No auto-leave, no power lock
              * (design §5.2). A click on a choice now starts the next
-             * round (and re-checks the 5-coin balance first). */
+             * round (and re-checks the entry-fee balance first). */
             lv_obj_add_flag(s_game_you_img, LV_OBJ_FLAG_HIDDEN);
             lv_obj_add_flag(s_game_house_img, LV_OBJ_FLAG_HIDDEN);
             for (int i = 0; i < 3; i++) {
@@ -1060,7 +1063,7 @@ static void drain_feedback(void)
         }
         case PET_GAME:
             if (fb.result == PET_POOR) {
-                /* Snapshot was stale: the 5 coins were never deducted,
+                /* Snapshot was stale: the 10 coins were never deducted,
                  * so there is nothing to refund -- cancel the animation
                  * (which was only a reveal of a never-started game). */
                 reset_game_view();
@@ -1257,7 +1260,7 @@ static void build_main(void)
     s_btn_feed = main_button(s_main_page, IC_LIST_TOP, "喂饭 ｜ 每种 +10金币",
                              on_open_feed, &s_btn_feed_lbl);
     s_btn_game = main_button(s_main_page, IC_LIST_TOP + IC_ROW_H + IC_ROW_GAP,
-                             "小游戏 ｜ 每种 -5金币", on_open_minigame, &s_btn_game_lbl);
+                             "小游戏 ｜ 每种 -10金币", on_open_minigame, &s_btn_game_lbl);
     s_btn_fortune = main_button(s_main_page,
                                 IC_LIST_TOP + 2 * (IC_ROW_H + IC_ROW_GAP),
                                 "今日运势 ｜ 未抽", on_fortune_open,
@@ -1507,7 +1510,7 @@ static void build_game(void)
      * 2026-11-01. Same copy and DIM colour as before; 84 is the main
      * page's first-row y, so it clears the title (centre y = 52) and
      * stops ~1 px above the reveal hands (top y = 105). */
-    s_game_hint_lbl = label(s_game_page, muse_font_cjk(), MUSE_THEME_DIM, "点一张手出拳，每局 -5 金币");
+    s_game_hint_lbl = label(s_game_page, muse_font_cjk(), MUSE_THEME_DIM, "点一张手出拳，每局 -10 金币");
     lv_obj_align(s_game_hint_lbl, LV_ALIGN_TOP_MID, 0, 84);
 }
 

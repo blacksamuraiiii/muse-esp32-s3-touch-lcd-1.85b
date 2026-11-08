@@ -54,8 +54,8 @@
  *     bezel -- charged 5 coins on a single tap with no confirmation.
  *     Leaving goes through the shared back arrow, which is visible
  *     whenever the game is not PLAYING. OVER's button carries the price
- *     ("- 5 金币"), because the fee is otherwise invisible.
- *     A blocked start shows one page-level note ("金币不够（需 5 枚）" or
+ *     ("- 10 金币"), because the fee is otherwise invisible.
+ *     A blocked start shows one page-level note ("金币不够（需 10 枚）" or
  *     "互动未就绪") under the board, above the dim (see the message
  *     slot below).
  *   - OVER result (user decision 2026-11-01, UI polish -- supersedes the
@@ -66,9 +66,9 @@
  *     swaps its text), and the result moves to the line under the board:
  *     at OVER that line turns GOLD and reads "本局 n 分，+m 金币" with m
  *     the GROSS payout the wallet actually accepted (s_round_coins, from
- *     muse_pet_round_coins() -- 1 point per coin, 10-coin ceiling from
+ *     muse_pet_round_coins() -- 1 point per coin, 20-coin ceiling from
  *     the economy branch; the score is settled once, at OVER, through
- *     PET_PLAY_REWARD). The net (payout minus the 5-coin entry fee) is
+ *     PET_PLAY_REWARD). The net (payout minus the 10-coin entry fee) is
  *     deliberately NOT printed: the user said kids cannot tell net
  *     apart, so the card shows what was added, not what was gained
  *     after the fee. While PLAYING or PAUSED the same line is white and
@@ -434,11 +434,11 @@ static void sync_snake(void)
 }
 
 /* Score -> coins, once per round, at OVER (user decision 2026-11-01,
- * ceiling retuned to 10 the same day).
+ * ceiling retuned to 20 on 2026-11-08).
  * muse_pet_round_coins() is the only conversion curve (1 point per food,
- * 1 point per coin, 10 coins per round ceiling), and the 5-coin entry fee
+ * 1 point per coin, 20 coins per round ceiling), and the 10-coin entry fee
  * was already charged at start through PET_FEE -- so the round's net is
- * payout minus 5, computed on the OVER card, never folded into the
+ * payout minus 10, computed on the OVER card, never folded into the
  * conversion. A refused request (worker not ready or queue full) leaves
  * s_round_coins at 0: the card must never claim coins the wallet did not
  * get, and the net then honestly reads -5 (fee paid, payout lost). */

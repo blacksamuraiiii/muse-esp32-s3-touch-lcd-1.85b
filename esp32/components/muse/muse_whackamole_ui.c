@@ -38,7 +38,7 @@
  * Overlays follow the snake page (2026-11-01, one style across the mini
  * games): the PAUSED card has an ACCENT title at y=100 and a 98x66
  * ACCENT-bordered centre button, and the OVER card has the price
- * "- 5 金币" on its own line under the replay label -- on_restart charges
+ * "- 10 金币" on its own line under the replay label -- on_restart charges
  * the fee the moment it is pressed, so the price belongs on the button.
  * The OVER card itself carries no title and no payout line any more (UI
  * polish 2026-11-01): both moved to the page-level title and HUD slots.
@@ -49,11 +49,11 @@
  * Payout (UI polish 2026-11-01, superseding the economy branch's net
  * line): at OVER the HUD turns gold and reads "本局 n 分，+m 金币" with m
  * the GROSS payout the wallet actually accepted (s_round_coins, from
- * muse_pet_round_coins() -- 1 point per coin, 10 coins per round ceiling
+ * muse_pet_round_coins() -- 1 point per coin, 20 coins per round ceiling
  * from the economy branch; the score is settled once, at OVER). The net
  * is deliberately NOT printed: the user said kids cannot tell net apart,
  * so the result shows what was added, not what was gained after the
- * 5-coin entry fee. 30 s is one round, one point is one mole.
+ * 10-coin entry fee. 30 s is one round, one point is one mole.
  *
  * Message slot (user request 2026-11-01, "提示统一显示在游戏区域下方"): the
  * band under the field (y=308) hosts exactly one line -- the refusal note
@@ -358,9 +358,9 @@ static void on_touch_hold(lv_event_t *e)
 }
 
 /* Score -> coins, once per round, at OVER (user decision 2026-11-01,
- * ceiling retuned to 10 the same day).
+ * ceiling retuned to 20 on 2026-11-08).
  * muse_pet_round_coins() is the only conversion curve -- 1 point (one mole)
- * per coin, 10 coins per round ceiling -- and the 5-coin entry fee was
+ * per coin, 20 coins per round ceiling -- and the 10-coin entry fee was
  * already charged at start through PET_FEE, so the round's net is payout
  * minus 5, shown on the OVER card. A refused request (worker not ready /
  * queue full) leaves s_round_coins at 0 so the card never claims coins the
