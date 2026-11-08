@@ -70,6 +70,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "muse_audio.h"   /* game sound effects */
 #include "muse_font.h"
 #include "muse_widgets.h"
 #include "muse_pet.h"        /* snapshot + request: the entry fee */
@@ -384,6 +385,8 @@ static bool charge_for_game(void)
         snprintf(note, sizeof(note), "金币不够（需 %u 枚）",
                  (unsigned)MUSE_PET_GAME_STAKE);
         show_note(note);
+        /* Refused at the door: the low sound. */
+        muse_audio_sfx(MUSE_SFX_BAD);
         return false;
     }
     if (!muse_pet_request(PET_FEE)) {
@@ -409,6 +412,9 @@ static void begin_game(bool restart)
     if (!charge_for_game()) {
         return;
     }
+    /* Charged: the round starts with the start chirp (also on 再来一局,
+     * which comes through here with restart=true). */
+    muse_audio_sfx(MUSE_SFX_START);
     seed_once();
     /* A new round: its payout has not been settled yet. */
     s_settled = false;
@@ -467,6 +473,15 @@ static void settle_round(void)
     s_round_coins = 0;
     if (coins != 0 && muse_pet_request_play_reward(coins)) {
         s_round_coins = coins;
+    }
+    /* The result sound is keyed on the outcome, not the coins: a draw
+     * pays 10 but must sound 平, not 胜利. */
+    if (s_game.outcome == MUSE_TICTACTOE_WIN) {
+        muse_audio_sfx(MUSE_SFX_WIN);
+    } else if (s_game.outcome == MUSE_TICTACTOE_DRAW) {
+        muse_audio_sfx(MUSE_SFX_DRAW);
+    } else {
+        muse_audio_sfx(MUSE_SFX_BAD);
     }
 }
 
@@ -576,6 +591,9 @@ static void on_touch_released(lv_event_t *e)
         return;
     }
     if (muse_tictactoe_play(&s_game, cell)) {
+        /* The tap landed: a short "placed" tick, not a judgement. The
+         * AI's answer stays silent (the board shows it). */
+        muse_audio_sfx(MUSE_SFX_PLACE);
         after_move();
     }
 }
