@@ -1304,6 +1304,9 @@ static void build_minigame(void)
     lv_obj_set_scroll_dir(list, LV_DIR_VER);
     lv_obj_set_scrollbar_mode(list, LV_SCROLLBAR_MODE_OFF);
 
+    /* List order (user 2026-11-08): 凑十法练习 first, then
+     * 石头剪刀布 and 数独, then the rest in their old order. */
+    list_row(list, "凑十法练习", on_open_maketen, &s_mg_maketen_lbl);
     list_row(list, "石头剪刀布", on_open_game, &s_mg_rps_lbl);
     list_row(list, "数独", on_open_sudoku, &s_mg_sudoku_lbl);
     list_row(list, "贪吃蛇", on_open_snake, &s_mg_snake_lbl);
@@ -1311,7 +1314,6 @@ static void build_minigame(void)
     list_row(list, "金币雨", on_open_goldrain, &s_mg_goldrain_lbl);
     list_row(list, "毛毛跳跃", on_open_doodle, &s_mg_doodle_lbl);
     list_row(list, "加减练习", on_open_mathpractice, &s_mg_mathpractice_lbl);
-    list_row(list, "凑十法练习", on_open_maketen, &s_mg_maketen_lbl);
 
     /* Coin line: the column's last item, so it scrolls with the list
      * instead of sitting in a fixed slot the scroller would run under.
