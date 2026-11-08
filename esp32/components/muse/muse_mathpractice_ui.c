@@ -56,8 +56,8 @@
  * Payout (same as snake / whack-a-mole / goldrain / doodle): at OVER
  * the HUD turns gold and reads "本局 n 分，+m 金币" with m the GROSS
  * payout the wallet actually accepted (s_round_coins, from
- * muse_pet_round_coins() -- 1 point per coin, 20 coins per round
- * ceiling; the score is settled once, at OVER). The net is
+ * muse_pet_round_coins_cap() with this game's own 20-coin ceiling --
+ * 1 point per coin; the score is settled once, at OVER). The net is
  * deliberately NOT printed: kids cannot tell net apart. The score
  * only ever goes up (a wrong pick is +0, never -1), so the HUD never
  * shows a negative.
@@ -423,9 +423,10 @@ static void pause_game(void)
 }
 
 /* Score -> coins, once per round, at OVER (user decision 2026-11-01,
- * ceiling retuned to 20 on 2026-11-08). muse_pet_round_coins() is the
- * only conversion curve -- 1 point per right pick, 20 coins per round
- * ceiling -- and the 10-coin entry fee was already charged at start, so
+ * ceiling retuned to 20 on 2026-11-08). This game converts through
+ * muse_pet_round_coins_cap() with its own ceiling (not the shared
+ * muse_pet_round_coins() curve) -- 1 point per right pick, 20 coins per
+ * round ceiling -- and the 10-coin entry fee was already charged at start, so
  * the round's net is payout minus 10. The score only ever goes up, so
  * no floor helper is needed. A refused request (worker not ready /
  * queue full) leaves s_round_coins at 0 so the card never claims coins
@@ -652,7 +653,7 @@ void muse_mathpractice_ui_build(lv_obj_t *page, lv_event_cb_t back_cb)
     /* PAUSED overlay: dim, 继续 button with the PLAY symbol above the
      * label (snake's card). No "已暂停" label on the card any more: the
      * page title itself becomes "已暂停" while paused (user 2026-11-08).
-     * No restart capsule: it charged 5 coins on a single tap in the
+     * No restart capsule: it charged 10 coins on a single tap in the
      * narrowest part of the bezel; the back arrow leaves, and 开始
      * charges again on the next visit. */
     s_paused_ov = overlay(page, true);

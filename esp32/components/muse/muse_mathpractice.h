@@ -2,7 +2,7 @@
 /*
  * muse_mathpractice.h -- 加减练习 logic (no LVGL, no ESP-IDF).
  *
- * One 30-second round of two question kinds (user decision 2026-11-08,
+ * One 3-minute round of two question kinds (user decision 2026-11-08,
  * the round that fused 凑十法练习 into this game):
  *
  *   - ADD_TEN: a + b with a, b in 2..9 and 11 <= a + b <= 18, so the
@@ -26,7 +26,7 @@
  * Score only ever goes up, so the settlement is
  * muse_pet_round_coins_cap() with this game's own 20-coin ceiling (1
  * point per coin; raised from the shared 10 on 2026-11-08 because the
- * round is 3 minutes now). The 5-coin entry fee was already charged at
+ * round is 3 minutes now). The 10-coin entry fee was already charged at
  * start.
  *
  * Timing is in milliseconds and advances only through
@@ -125,5 +125,5 @@ bool muse_mathpractice_answer(muse_mathpractice_t *g, muse_mathpractice_cmp_t cm
 /* The true value of the current equation (a + b or a - b). */
 int muse_mathpractice_value(const muse_mathpractice_t *g);
 
-/* Remaining whole seconds, rounded up (30 at start, 0 at the end). */
+/* Remaining whole seconds, rounded up (180 at start, 0 at the end). */
 uint32_t muse_mathpractice_remaining_s(const muse_mathpractice_t *g);
