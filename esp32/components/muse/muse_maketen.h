@@ -7,28 +7,35 @@
  * cancelled the same day; the user then asked for this compare
  * version, "游戏名称改成凑十法练习", on the same branch): the
  * screen shows one addition with a ? where the comparison goes
- * ("5 + 8 ? 13"), a small hint line with a make-ten split
- * ("提示：2+3=5"), and three buttons below -- >, < and =. The
+ * ("5 + 8 ? 13"), a small hint line with the two make-ten steps
+ * ("10-8=2  5-2=3"), and three buttons below -- >, < and =. The
  * player taps the comparison that makes the statement true. A
  * correct pick scores one point; a wrong pick scores nothing and
  * never subtracts. The next question appears at once, so the round
  * is as many questions as fit in 30 seconds.
  *
  * One question practises three things at once (user idea
- * 2026-11-08): the hint gives the make-ten split, the player still
- * has to compute the sum (8 + 2 = 10, 10 + 3 = 13) and then compare
- * it with the number on the right. The hint is a scaffold, not the
- * answer: it shows how one addend splits, never the sum and never
- * the comparison.
+ * 2026-11-08): the hint gives the make-ten steps, the player still
+ * has to compute the sum (10 + 3 = 13) and then compare it with
+ * the number on the right. The hint is a scaffold, not the answer:
+ * it shows the thinking -- how much the big addend needs to reach
+ * 10, and what is left of the small addend after giving it -- never
+ * the sum and never the comparison. The steps are subtractions
+ * (user correction 2026-11-08, "是不是这样好理解一些"): 10 - big
+ * is what the big addend is short of 10, small - that is what
+ * remains; the addition split ("2+3=5", "2+8=10") only states
+ * results and hides where the 2 comes from.
  *
  * A question is a + b with a, b in 2..9 and a + b in 11..18 (so the
  * make-ten split always applies). The comparison number d is the
  * true sum about a third of the time (answer =), a near-miss above
  * it about a third (answer <) and a near-miss below it about a
  * third (answer >) -- the near-misses are off by 1 or 2, so the
- * player has to compute, not guess. The hint splits one addend at
- * random: either a into (10 - b) + (a - (10 - b)) or b into
- * (10 - a) + (b - (10 - a)); both are valid exactly when a + b > 10.
+ * player has to compute, not guess. The hint follows the口诀
+ * "看大数，分小数，凑成十，加剩数": big is the larger addend
+ * (6..9), small the smaller (2..9); need = 10 - big (1..4) is
+ * what big is short of 10, left = small - need (>= 1, since
+ * a + b > 10) is what remains of small after giving need to big.
  *
  * Score only ever goes up, so the settlement is
  * muse_pet_round_coins() directly (1 point per coin, 10 coins per
@@ -78,9 +85,10 @@ typedef struct {
     int b;           /* second addend, 2..9 */
     int d;           /* the number to compare against, 0..20 */
     muse_maketen_cmp_t correct; /* the comparison that is true */
-    int hint_x;      /* the addend the hint splits (a or b) */
-    int hint_y;      /* first part of the split */
-    int hint_z;      /* second part: hint_y + hint_z == hint_x */
+    int hint_big;    /* the larger addend, 6..9 */
+    int hint_small;  /* the smaller addend, 2..9 */
+    int hint_need;   /* 10 - hint_big: what big is short of 10, 1..4 */
+    int hint_left;   /* hint_small - hint_need: what remains, >= 1 */
     uint32_t score;    /* +1 per correct pick, never decreases */
     uint32_t answered; /* questions answered so far */
     uint32_t elapsed_ms;

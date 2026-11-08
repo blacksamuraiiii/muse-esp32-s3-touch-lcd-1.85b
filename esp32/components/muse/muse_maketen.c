@@ -7,9 +7,12 @@
  * true sum (answer =), a near-miss above it (answer <) or a
  * near-miss below it (answer >), each about a third of the time;
  * the near-misses are off by 1 or 2 and stay inside 0..20. The
- * hint splits one addend at random -- a into (10 - b) + the rest
- * or b into (10 - a) + the rest -- which is valid exactly when
- * a + b > 10, which the dealer guarantees.
+ * hint is the two make-ten steps as subtractions (user correction
+ * 2026-11-08): need = 10 - big is what the big addend is short of
+ * 10, left = small - need is what remains of the small addend
+ * after giving need to big. big is 6..9 (a + b >= 11 forces the
+ * larger addend to at least 6), so need is 1..4; left is >= 1
+ * exactly when a + b > 10, which the dealer guarantees.
  *
  * A pick only ever adds: right is +1, wrong is +0. The round
  * ends only on the 30 s timer -- there is no early end and no lives.
@@ -51,20 +54,15 @@ static void next_question(muse_maketen_t *g)
         g->d = sum - delta;
         g->correct = MUSE_MAKETEN_CMP_GT;
     }
-    /* The hint: split one addend at random. Splitting a means
-     * y = 10 - b (the complement that makes ten with b) and
-     * z = a - y; splitting b is the mirror. Both are valid exactly
-     * when a + b > 10, which the dealer guarantees, so y >= 1 and
-     * z >= 1 on either side. */
-    if (rand() % 2 == 0) {
-        g->hint_x = g->a;
-        g->hint_y = 10 - g->b;
-        g->hint_z = g->a - g->hint_y;
-    } else {
-        g->hint_x = g->b;
-        g->hint_y = 10 - g->a;
-        g->hint_z = g->b - g->hint_y;
-    }
+    /* The hint: the two make-ten steps, as subtractions. big is the
+     * larger addend, small the smaller; need = 10 - big is what big
+     * is short of 10, left = small - need is what remains of small
+     * after giving need to big. The UI prints "10-big=need
+     * small-need=left" (e.g. 5 + 8 -> "10-8=2  5-2=3"). */
+    g->hint_big = g->a > g->b ? g->a : g->b;
+    g->hint_small = g->a > g->b ? g->b : g->a;
+    g->hint_need = 10 - g->hint_big;
+    g->hint_left = g->hint_small - g->hint_need;
 }
 
 static void reset_game(muse_maketen_t *g)

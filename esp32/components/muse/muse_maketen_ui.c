@@ -2,42 +2,55 @@
 /*
  * muse_maketen_ui.c -- 凑十法练习 subpage, see muse_maketen_ui.h.
  *
- * Layout (mockup v4, 360x360 round screen, dark theme like the other
- * games): the title "凑十法练习" sits in the top crescent (y=38, the
- * same slot and ACCENT colour the snake page uses for its name); the
- * question ("5 + 8 ? 13") is one large line at y=96, in Montserrat 28
- * (the digits and + = ? are ASCII, so they do not need the 16 px Noto
- * body font -- same choice as 加减练习, user 2026-11-08: "数字再大
- * 一些，16px 放到 20px", taken to 28 px); the make-ten hint
- * ("提示：2+3=5") sits under it at y=150, in the 16 px Noto body
- * font and DIM -- the mockup draws it larger (26 px), but the build
- * has no larger CJK font, so the hint renders at body size. The
- * three comparison buttons sit below it at y=210, 90x64 each -- >,
- * < and = in that order -- CARD fill with an ACCENT border and a
- * TEXT symbol. The line
+ * Layout (mockup v8 + states grid v3, 360x360 round screen, dark
+ * theme like the other games): the title "凑十法练习" sits in the
+ * top crescent (y=38, the same slot and ACCENT colour the snake page
+ * uses for its name); the question ("5 + 8 ? 13") is one large line
+ * at y=96, in Montserrat 28 (the digits and + = ? are ASCII, so
+ * they do not need the 16 px Noto body font -- same choice as 加减
+ * 练习, user 2026-11-08: "数字再大一些，16px 放到 20px", taken to
+ * 28 px); the make-ten hint ("10-8=2  5-2=3") sits under it at
+ * y=150, in Montserrat 28 and DIM -- the two subtraction steps
+ * (user 2026-11-08: "10-8=2，5-2=3，是不是这样好理解一些"),
+ * all ASCII since the "提示：" label was dropped, so the mockup's
+ * 26 px renders as Montserrat 28, the nearest size the build has.
+ * The three comparison buttons sit below it at y=210, 90x64 each --
+ * > at x=30, < at x=135, = at x=240, 15 px gaps so a finger does
+ * not catch the neighbour -- each a vivid solid fill (> amber,
+ * < green, = blue) with a white symbol, no border. The line
  * under the buttons (y=308, the slot the snake page prints its score
  * on) never rides on the bezel: while PLAYING or PAUSED it is white
  * and reads "本局 n 分 · 剩余 s 秒", and at OVER it turns GOLD and
- * reads "本局 n 分，+m 金币" with m the gross payout. There is no
- * pause button any more (2026-11-01, user request "参考贪吃蛇"):
- * pausing is a LONG HOLD on the question area (finger within ~12 px
- * for 500 ms, the doodle page's idiom), and the back arrow (which is
- * hidden while playing, as on snake) becomes reachable through it.
- * The START overlay is NOT dimmed (the question stays visible behind
- * it); the PAUSED and OVER overlays are 50% black dim.
+ * reads "本局 n 分，+m 金币" with m the gross payout. In START the
+ * line is hidden: the START overlay's 口诀 takes that slot instead.
+ * There is no pause button any more (2026-11-01, user request "参考
+ * 贪吃蛇"): pausing is a LONG HOLD on the question area (finger
+ * within ~12 px for 500 ms, the doodle page's idiom), and the back
+ * arrow (which is hidden while playing, as on snake) becomes
+ * reachable through it. The START overlay is NOT dimmed (the
+ * question stays visible behind it); the PAUSED and OVER overlays
+ * are 50% black dim.
  *
  * Overlays follow the snake page (2026-11-01, one style across the
- * mini games): the PAUSED card has an ACCENT title at y=100 and a
- * 98x66 ACCENT-bordered centre button, and the OVER card has the
- * price "- 5 金币" on its own line under the replay label -- on_restart
- * charges the fee the moment it is pressed, so the price belongs on
- * the button. The OVER card itself carries no title and no payout line
- * any more (UI polish 2026-11-01): both moved to the page-level title
- * and HUD slots. The PAUSED card carries no restart capsule: it
- * charged 5 coins on a single tap in the narrowest part of the bezel,
- * and leaving is the back arrow's job (same decision as snake). The
- * START overlay carries the hint line at y=304 (DIM, same slot as the
- * snake page's hint): "算出左边，再比大小".
+ * mini games): the PAUSED card has a 98x66 ACCENT-bordered centre
+ * button, and the OVER card has the price "- 5 金币" on its own
+ * line under the replay label -- on_restart charges the fee the
+ * moment it is pressed, so the price belongs on the button. The
+ * OVER card itself carries no title and no payout line any more (UI
+ * polish 2026-11-01): both moved to the page-level title and HUD
+ * slots. The PAUSED card carries no restart capsule: it charged 5
+ * coins on a single tap in the narrowest part of the bezel, and
+ * leaving is the back arrow's job (same decision as snake). The
+ * PAUSED card also carries no "已暂停" label any more (user
+ * 2026-11-08, "把'已暂停'换到最上面"): the page title itself
+ * becomes "已暂停" while paused, so the overlay is just the 继续
+ * button. The START overlay carries the 口诀 two lines at the
+ * bottom (DIM, 16 px Noto): "看大数，分小数" / "凑成十，加剩数"
+ * (user 2026-11-08; one line was tried and did not fit, and the
+ * trailing comma after 分小数 was dropped so both lines are seven
+ * characters, symmetric). The hint line and the HUD are both hidden
+ * in START: the "开始" centre button covers the hint line's slot,
+ * and the 口诀 takes the HUD's slot.
  *
  * Payout (same as snake / whack-a-mole / goldrain / doodle): at OVER
  * the HUD turns gold and reads "本局 n 分，+m 金币" with m the GROSS
@@ -88,23 +101,31 @@
 #include "muse_theme.h"
 #include "muse_maketen.h"
 
-/* Comparison button geometry (the mockup v4): 90x64, three in a row
- * at y=210 -- > at x=45, < at x=135, = at x=225. CARD fill with an
- * ACCENT border, like the make-ten v1 number buttons; the symbol is
- * TEXT, centred by lv_obj_center. */
+/* Comparison button geometry (mockup v8, user 2026-11-08): 90x64,
+ * three in a row at y=210 -- > at x=30, < at x=135, = at x=240.
+ * 15 px gaps between them (was edge-to-edge at x=45/135/225) so a
+ * first-grader's finger does not catch the neighbour. Each button
+ * has its own vivid solid fill (user: "填充一些颜色，看上去鲜艳
+ * 一些") -- > amber, < green, = blue -- with a white symbol, no
+ * border. */
 #define MUSE_MAKETEN_BTN_W 90
 #define MUSE_MAKETEN_BTN_H 64
 #define MUSE_MAKETEN_BTN_Y 210
-#define MUSE_MAKETEN_BTN_GT_X 45
+#define MUSE_MAKETEN_BTN_GT_X 30
 #define MUSE_MAKETEN_BTN_LT_X 135
-#define MUSE_MAKETEN_BTN_EQ_X 225
+#define MUSE_MAKETEN_BTN_EQ_X 240
+#define MUSE_MAKETEN_BTN_GT_FILL 0xf59e0b
+#define MUSE_MAKETEN_BTN_LT_FILL 0x2ec27a
+#define MUSE_MAKETEN_BTN_EQ_FILL 0x3b82f6
 /* Question line (the mockup v4): Montserrat 28 at y=96. The digits
  * and + = ? are ASCII, so they do not need the 16 px Noto body font. */
 #define MUSE_MAKETEN_EQ_Y 96
-/* Hint line (the mockup v4): the 16 px Noto body font, DIM, at
- * y=150 -- under the question, above the answer buttons. It carries
- * CJK ("提示："), so it cannot use a Montserrat size; the mockup's
- * 26 px is not available in the build. */
+/* Hint line (mockup v8): the two make-ten steps as subtractions
+ * ("10-8=2  5-2=3"), Montserrat 28, DIM, at y=150 -- under the
+ * question, above the answer buttons. All ASCII since the "提示："
+ * label was dropped (user 2026-11-08), so it no longer needs the
+ * 16 px Noto body font; the mockup's 26 px renders as Montserrat
+ * 28, the nearest size the build has. */
 #define MUSE_MAKETEN_HINT_Y 150
 /* Hold to pause: the finger stays within this radius for this long,
  * on the question area only (the doodle page's numbers). */
@@ -213,13 +234,23 @@ static void refresh_display(void)
     snprintf(eq_buf, sizeof(eq_buf), "%d + %d ? %d", s_game.a, s_game.b,
              s_game.d);
     set_label(s_eq, eq_buf);
-    /* Hint line: "提示：y+z=x" -- the make-ten split of one addend,
-     * smaller and DIM so it reads as a scaffold, not the question. */
+    /* Hint line: "10-big=need  small-need=left" -- the two make-ten
+     * steps as subtractions, Montserrat 28 and DIM so it reads as a
+     * scaffold, not the question. Hidden in START: the "开始" centre
+     * button covers its slot, so it only appears once the game
+     * starts. */
     char hint_buf[32];
-    snprintf(hint_buf, sizeof(hint_buf), "提示：%d+%d=%d", s_game.hint_y,
-             s_game.hint_z, s_game.hint_x);
+    snprintf(hint_buf, sizeof(hint_buf), "10-%d=%d  %d-%d=%d",
+             s_game.hint_big, s_game.hint_need, s_game.hint_small,
+             s_game.hint_need, s_game.hint_left);
     set_label(s_hint, hint_buf);
-    /* HUD: score + time while playing/paused, gross payout at OVER. */
+    if (s_game.phase == MUSE_MAKETEN_START) {
+        lv_obj_add_flag(s_hint, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_remove_flag(s_hint, LV_OBJ_FLAG_HIDDEN);
+    }
+    /* HUD: score + time while playing/paused, gross payout at OVER.
+     * Hidden in START: the 口诀 takes its slot on the START overlay. */
     char hud_buf[48];
     if (s_game.phase == MUSE_MAKETEN_OVER) {
         snprintf(hud_buf, sizeof(hud_buf), "本局 %u 分，+%u 金币",
@@ -234,9 +265,18 @@ static void refresh_display(void)
                                     LV_PART_MAIN);
     }
     set_label(s_hud, hud_buf);
-    /* Title: the game name, or "游戏结束" at OVER. */
-    set_label(s_name, s_game.phase == MUSE_MAKETEN_OVER ? "游戏结束"
-                                                             : "凑十法练习");
+    if (s_game.phase == MUSE_MAKETEN_START) {
+        lv_obj_add_flag(s_hud, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_remove_flag(s_hud, LV_OBJ_FLAG_HIDDEN);
+    }
+    /* Title: the game name, "已暂停" while paused, "游戏结束" at
+     * OVER. */
+    set_label(s_name, s_game.phase == MUSE_MAKETEN_OVER
+                          ? "游戏结束"
+                          : s_game.phase == MUSE_MAKETEN_PAUSED
+                                ? "已暂停"
+                                : "凑十法练习");
     /* Overlays: exactly one visible at a time. */
     if (s_game.phase == MUSE_MAKETEN_START) {
         lv_obj_remove_flag(s_start_ov, LV_OBJ_FLAG_HIDDEN);
@@ -501,22 +541,21 @@ static lv_obj_t *centre_btn(lv_obj_t *parent, lv_coord_t x, lv_coord_t y)
     return btn;
 }
 
-/* One comparison button: a 90x64 CARD fill with an ACCENT border and
- * a TEXT symbol (>, < or =) in Montserrat 28, centred by
+/* One comparison button: a 90x64 solid fill in `fill` (user
+ * 2026-11-08: each button its own vivid colour, no border) with a
+ * white symbol (>, < or =) in Montserrat 28, centred by
  * lv_obj_center -- the same centring the mockup uses (ink-box
  * centred on both axes). */
-static lv_obj_t *cmp_btn(lv_obj_t *page, lv_coord_t x, const char *symbol,
-                         lv_event_cb_t cb)
+static lv_obj_t *cmp_btn(lv_obj_t *page, lv_coord_t x, uint32_t fill,
+                         const char *symbol, lv_event_cb_t cb)
 {
     lv_obj_t *btn = lv_btn_create(page);
     lv_obj_remove_style_all(btn);
     lv_obj_set_size(btn, MUSE_MAKETEN_BTN_W, MUSE_MAKETEN_BTN_H);
     lv_obj_set_pos(btn, x, MUSE_MAKETEN_BTN_Y);
-    lv_obj_set_style_bg_color(btn, lv_color_hex(MUSE_THEME_CARD), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(btn, lv_color_hex(fill), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_style_radius(btn, 12, LV_PART_MAIN);
-    lv_obj_set_style_border_color(btn, lv_color_hex(MUSE_THEME_ACCENT), LV_PART_MAIN);
-    lv_obj_set_style_border_width(btn, 2, LV_PART_MAIN);
     lv_obj_remove_flag(btn, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_t *sym = label(btn, &lv_font_montserrat_28, MUSE_THEME_TEXT);
     lv_label_set_text(sym, symbol);
@@ -534,16 +573,20 @@ void muse_maketen_ui_build(lv_obj_t *page, lv_event_cb_t back_cb)
     s_eq = label(page, &lv_font_montserrat_28, MUSE_THEME_TEXT);
     lv_obj_align(s_eq, LV_ALIGN_TOP_MID, 0, MUSE_MAKETEN_EQ_Y);
 
-    /* Hint line: the 16 px Noto body font, DIM, centred at y=150
-     * (the mockup v4) -- the make-ten split, a scaffold not the
-     * question. */
-    s_hint = label(page, muse_font_cjk(), MUSE_THEME_DIM);
+    /* Hint line: Montserrat 28, DIM, centred at y=150 (mockup v8)
+     * -- the two make-ten steps as subtractions. All ASCII now, so
+     * it uses the Montserrat size, not the Noto body font. */
+    s_hint = label(page, &lv_font_montserrat_28, MUSE_THEME_DIM);
     lv_obj_align(s_hint, LV_ALIGN_TOP_MID, 0, MUSE_MAKETEN_HINT_Y);
 
-    /* Comparison buttons: > < = in that order (the mockup v4). */
-    s_gt_btn = cmp_btn(page, MUSE_MAKETEN_BTN_GT_X, ">", on_gt);
-    s_lt_btn = cmp_btn(page, MUSE_MAKETEN_BTN_LT_X, "<", on_lt);
-    s_eq_btn = cmp_btn(page, MUSE_MAKETEN_BTN_EQ_X, "=", on_eq);
+    /* Comparison buttons: > < = in that order (mockup v8), each its
+     * own vivid solid fill. */
+    s_gt_btn = cmp_btn(page, MUSE_MAKETEN_BTN_GT_X, MUSE_MAKETEN_BTN_GT_FILL,
+                       ">", on_gt);
+    s_lt_btn = cmp_btn(page, MUSE_MAKETEN_BTN_LT_X, MUSE_MAKETEN_BTN_LT_FILL,
+                       "<", on_lt);
+    s_eq_btn = cmp_btn(page, MUSE_MAKETEN_BTN_EQ_X, MUSE_MAKETEN_BTN_EQ_FILL,
+                       "=", on_eq);
 
     /* Hold-to-pause layer: transparent, over the question zone only
      * (y=60..190), UNDER the answer buttons -- it is created after the
@@ -570,19 +613,22 @@ void muse_maketen_ui_build(lv_obj_t *page, lv_event_cb_t back_cb)
     lv_label_set_text(start_lb, "开始");
     lv_obj_center(start_lb);
     lv_obj_add_event_cb(start_btn, on_start, LV_EVENT_CLICKED, NULL);
-    /* Hint line (mockup v3): same slot as the snake page's hint. */
+    /* Hint line (states grid v3): the 口诀, two lines, 16 px Noto,
+     * DIM, at the bottom (y=288 and y=310 in the mockup). One label
+     * with an embedded newline; the Noto line height is ~20 px, so
+     * the two lines land at y=288 and y=308. */
     lv_obj_t *hint_lb = label(s_start_ov, muse_font_cjk(), MUSE_THEME_DIM);
-    lv_label_set_text(hint_lb, "算出左边，再比大小");
-    lv_obj_align(hint_lb, LV_ALIGN_TOP_MID, 0, 304);
+    lv_label_set_text(hint_lb, "看大数，分小数\n凑成十，加剩数");
+    lv_obj_align(hint_lb, LV_ALIGN_TOP_MID, 0, 288);
 
-    /* PAUSED overlay: dim, ACCENT title, 继续 button with the PLAY symbol
-     * above the label (snake's card). No restart capsule: it charged 5
-     * coins on a single tap in the narrowest part of the bezel; the back
-     * arrow leaves, and 开始 charges again on the next visit. */
+    /* PAUSED overlay: dim, 继续 button with the PLAY symbol above
+     * the label (snake's card). No "已暂停" label on the card any
+     * more: the page title itself becomes "已暂停" while paused
+     * (user 2026-11-08), so the overlay is just the button. No
+     * restart capsule: it charged 5 coins on a single tap in the
+     * narrowest part of the bezel; the back arrow leaves, and 开始
+     * charges again on the next visit. */
     s_paused_ov = overlay(page, true);
-    lv_obj_t *paused_lb = label(s_paused_ov, muse_font_cjk(), MUSE_THEME_ACCENT);
-    lv_label_set_text(paused_lb, "已暂停");
-    lv_obj_align(paused_lb, LV_ALIGN_TOP_MID, 0, 100);
     lv_obj_t *resume_btn = centre_btn(s_paused_ov, 131, 147);
     lv_obj_t *resume_sym = label(resume_btn, &lv_font_montserrat_20, MUSE_THEME_TEXT);
     lv_label_set_text(resume_sym, LV_SYMBOL_PLAY);
@@ -622,7 +668,8 @@ void muse_maketen_ui_build(lv_obj_t *page, lv_event_cb_t back_cb)
      * font/colour) and the result line right under the buttons
      * (MUSE_MAKETEN_HUD_Y = 308, snake's score slot): page-level,
      * above the dim overlays, so they stay readable in every state.
-     * refresh_display() swaps the title to "游戏结束" at OVER. */
+     * refresh_display() swaps the title to "已暂停" while paused and
+     * to "游戏结束" at OVER. */
     s_name = muse_page_title(page, "凑十法练习", 38);
     s_hud = label(page, muse_font_cjk(), MUSE_THEME_TEXT);
     lv_obj_align(s_hud, LV_ALIGN_TOP_MID, 0, MUSE_MAKETEN_HUD_Y);
