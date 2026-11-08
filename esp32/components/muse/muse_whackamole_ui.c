@@ -69,6 +69,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "muse_audio.h"   /* game sound effects */
 #include "muse_font.h"
 #include "muse_widgets.h"
 #include "muse_pet.h"        /* snapshot + request: the entry fee */
@@ -276,6 +277,8 @@ static bool charge_for_game(void)
         snprintf(note, sizeof(note), "金币不够（需 %u 枚）",
                  (unsigned)MUSE_PET_GAME_STAKE);
         show_note(note);
+        /* Refused at the door: the low sound. */
+        muse_audio_sfx(MUSE_SFX_BAD);
         return false;
     }
     if (!muse_pet_request(PET_FEE)) {
@@ -301,6 +304,9 @@ static void begin_game(bool restart)
     if (!charge_for_game()) {
         return;
     }
+    /* Charged: the round starts with the start chirp (also on 再来一局,
+     * which comes through here with restart=true). */
+    muse_audio_sfx(MUSE_SFX_START);
     seed_once();
     /* A new round: its payout has not been settled yet. */
     s_settled = false;
@@ -377,6 +383,10 @@ static void settle_round(void)
     if (coins != 0 && muse_pet_request_play_reward(coins)) {
         s_round_coins = coins;
     }
+    /* Settlement sound: coins in means the round was won (WIN fanfare),
+     * 0 coins means 平. Keyed on what was actually credited, so the
+     * sound matches the "+m 金币" the OVER card shows. */
+    muse_audio_sfx(s_round_coins > 0 ? MUSE_SFX_WIN : MUSE_SFX_DRAW);
 }
 
 static void on_tick(lv_timer_t *timer)
@@ -423,6 +433,8 @@ static void on_touch(lv_event_t *e)
     }
     if (muse_whackamole_tap(&s_game, row * MUSE_WHACKAMOLE_COLS + col)) {
         s_press_hit = true;
+        /* A hit is a +1 moment. A miss stays silent (rapid taps). */
+        muse_audio_sfx(MUSE_SFX_GOOD);
         refresh_display();
     }
 }
