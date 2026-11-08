@@ -20,7 +20,7 @@
  * negative). The verdict stays on screen for
  * MUSE_MATHPRACTICE_FEEDBACK_MS (user 2026-11-08: 点击之后要提示正确
  * 还是错误), and during that window nothing is dealt and no answer is
- * taken -- a fast double tap can never skip a question. The 30 s
+ * taken -- a fast double tap can never skip a question. The round
  * clock keeps running through the verdict (it is round time).
  *
  * Score only ever goes up, so the settlement is
@@ -40,7 +40,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define MUSE_MATHPRACTICE_GAME_MS 30000u
+/* One round is 3 minutes (user 2026-11-08, was 30 s). */
+#define MUSE_MATHPRACTICE_GAME_MS 180000u
 #define MUSE_MATHPRACTICE_TICK_MS 50u
 /* How long the verdict stays up before the next question is dealt
  * (user 2026-11-08). Answer taps are ignored during it. */
@@ -106,8 +107,8 @@ void muse_mathpractice_resume(muse_mathpractice_t *g);
 void muse_mathpractice_restart(muse_mathpractice_t *g);
 
 /* Advance the game by `ms` milliseconds. No-op unless PLAYING. Runs
- * the 30 s clock and the verdict window: when the verdict's time is
- * up the next question is dealt. Ends the game at 30 s (phase OVER),
+ * the 3-minute clock and the verdict window: when the verdict time is
+ * up the next question is dealt. Ends the game at 3 minutes (OVER),
  * which also clears a pending verdict. */
 void muse_mathpractice_tick(muse_mathpractice_t *g, uint32_t ms);
 

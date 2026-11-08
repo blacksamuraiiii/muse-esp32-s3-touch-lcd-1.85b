@@ -15,7 +15,7 @@
  *   - a right pick is +1, a wrong one +0 (never negative);
  *   - the verdict holds for FEEDBACK_MS: no new question, no answer
  *     taken, then the next question lands;
- *   - the round is 30 s.
+ *   - the round is 3 minutes (MUSE_MATHPRACTICE_GAME_MS).
  */
 #include <assert.h>
 #include <stdbool.h>
@@ -88,7 +88,7 @@ int main(void)
     assert(g.score == 0 && g.answered == 0 && g.elapsed_ms == 0);
     assert(g.feedback_ms == 0);
     check_question(&g);
-    assert(muse_mathpractice_remaining_s(&g) == 30);
+    assert(muse_mathpractice_remaining_s(&g) == MUSE_MATHPRACTICE_GAME_MS / 1000);
 
     /* Phase guards before start: pause / resume / tick / answer are
      * all no-ops, the question does not change. */
@@ -112,7 +112,7 @@ int main(void)
     assert(g.phase == MUSE_MATHPRACTICE_PLAYING);
 
     /* Grading and the verdict window, over 10 short rounds (each
-     * round is restarted so the 30 s clock never ends it early):
+     * round is restarted so the 3-minute clock never ends it early):
      *   - a right pick is +1 and answered +1;
      *   - the verdict holds for the whole window: another tap is
      *     ignored (score and answered unchanged) and the question
@@ -193,13 +193,16 @@ int main(void)
     assert(gt_n > total_n * 28 / 100 && gt_n < total_n * 52 / 100);
     assert(lt_n > total_n * 28 / 100 && lt_n < total_n * 52 / 100);
 
-    /* Timer: 30 s ends the round. remaining_s counts down. */
+    /* Timer: the round ends at MUSE_MATHPRACTICE_GAME_MS. remaining_s
+     * counts down from the whole round in seconds. */
     muse_mathpractice_restart(&g);
-    assert(muse_mathpractice_remaining_s(&g) == 30);
+    const int round_s = (int)(MUSE_MATHPRACTICE_GAME_MS / 1000u);
+    const int round_ticks = (int)(MUSE_MATHPRACTICE_GAME_MS / MUSE_MATHPRACTICE_TICK_MS);
+    assert(muse_mathpractice_remaining_s(&g) == (uint32_t)round_s);
     tick_n(&g, 20); /* 1 s */
-    assert(muse_mathpractice_remaining_s(&g) == 29);
+    assert(muse_mathpractice_remaining_s(&g) == (uint32_t)(round_s - 1));
     assert(g.phase == MUSE_MATHPRACTICE_PLAYING);
-    tick_n(&g, 580); /* 29 s more: 30 s total */
+    tick_n(&g, round_ticks - 20); /* the rest of the round */
     assert(g.phase == MUSE_MATHPRACTICE_OVER);
     assert(muse_mathpractice_remaining_s(&g) == 0);
     /* Answering after OVER is a no-op. */
@@ -212,7 +215,7 @@ int main(void)
     muse_mathpractice_restart(&g);
     assert(muse_mathpractice_answer(&g, g.correct));
     assert(g.feedback_ms == MUSE_MATHPRACTICE_FEEDBACK_MS);
-    tick_n(&g, 600); /* 30 s */
+    tick_n(&g, round_ticks); /* the whole round */
     assert(g.phase == MUSE_MATHPRACTICE_OVER);
     assert(g.feedback_ms == 0);
 
@@ -232,7 +235,7 @@ int main(void)
     assert(g.elapsed_ms > elapsed0);
 
     /* Restart after OVER: fresh game, fee is the UI's job. */
-    tick_n(&g, 600); /* run the clock out */
+    tick_n(&g, round_ticks); /* run the clock out */
     assert(g.phase == MUSE_MATHPRACTICE_OVER);
     muse_mathpractice_restart(&g);
     assert(g.phase == MUSE_MATHPRACTICE_PLAYING);
