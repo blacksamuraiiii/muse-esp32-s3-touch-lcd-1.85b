@@ -42,7 +42,7 @@
  * Overlays follow the snake page (2026-11-01, one style across the
  * mini games): the PAUSED card is just the 98x66 ACCENT-bordered 继续
  * button (the page title becomes "已暂停"), and the OVER card is the
- * 再来一局 button with the price "- 5 金币" under its label -- the
+ * 再来一局 button with the price "- 10 金币" under its label -- the
  * moment it is pressed the fee is charged, so the price belongs on
  * the button. The START overlay is NOT dimmed (the question stays
  * visible behind it) and carries one hint line at y=296: "借十法，
@@ -56,7 +56,7 @@
  * Payout (same as snake / whack-a-mole / goldrain / doodle): at OVER
  * the HUD turns gold and reads "本局 n 分，+m 金币" with m the GROSS
  * payout the wallet actually accepted (s_round_coins, from
- * muse_pet_round_coins() -- 1 point per coin, 10 coins per round
+ * muse_pet_round_coins() -- 1 point per coin, 20 coins per round
  * ceiling; the score is settled once, at OVER). The net is
  * deliberately NOT printed: kids cannot tell net apart. The score
  * only ever goes up (a wrong pick is +0, never -1), so the HUD never
@@ -423,10 +423,10 @@ static void pause_game(void)
 }
 
 /* Score -> coins, once per round, at OVER (user decision 2026-11-01,
- * ceiling retuned to 10 the same day). muse_pet_round_coins() is the
- * only conversion curve -- 1 point per right pick, 10 coins per round
- * ceiling -- and the 5-coin entry fee was already charged at start, so
- * the round's net is payout minus 5. The score only ever goes up, so
+ * ceiling retuned to 20 on 2026-11-08). muse_pet_round_coins() is the
+ * only conversion curve -- 1 point per right pick, 20 coins per round
+ * ceiling -- and the 10-coin entry fee was already charged at start, so
+ * the round's net is payout minus 10. The score only ever goes up, so
  * no floor helper is needed. A refused request (worker not ready /
  * queue full) leaves s_round_coins at 0 so the card never claims coins
  * the wallet did not get. */

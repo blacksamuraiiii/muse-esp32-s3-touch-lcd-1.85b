@@ -31,7 +31,7 @@
  * Overlays follow the snake page (2026-11-01, one style across the
  * mini games): the PAUSED card has an ACCENT title at y=100 and a
  * 98x66 ACCENT-bordered centre button, and the OVER card has the
- * price "- 5 金币" on its own line under the replay label -- on_restart
+ * price "- 10 金币" on its own line under the replay label -- on_restart
  * charges the fee the moment it is pressed, so the price belongs on
  * the button. The OVER card itself carries no title and no payout line
  * any more (UI polish 2026-11-01): both moved to the page-level title
@@ -44,11 +44,11 @@
  * Payout (same as snake / whack-a-mole / goldrain): at OVER the HUD
  * turns gold and reads "本局 n 分，+m 金币" with m the GROSS payout
  * the wallet actually accepted (s_round_coins, from
- * muse_pet_round_coins() -- 1 point per coin, 10 coins per round
+ * muse_pet_round_coins() -- 1 point per coin, 20 coins per round
  * ceiling; the score is settled once, at OVER). The net is
  * deliberately NOT printed: the user said kids cannot tell net apart,
  * so the result shows what was added, not what was gained after the
- * 5-coin entry fee. Clouds give no points and coins are +1, so the
+ * 10-coin entry fee. Clouds give no points and coins are +1, so the
  * score only ever goes up and the HUD never shows a negative.
  *
  * Message slot: the band under the field (y=308) hosts exactly one
@@ -432,10 +432,10 @@ static void pause_game(void)
 }
 
 /* Score -> coins, once per round, at OVER (user decision 2026-11-01,
- * ceiling retuned to 10 the same day). muse_pet_round_coins() is the
- * only conversion curve -- 1 point (one coin) per coin, 10 coins per
- * round ceiling -- and the 5-coin entry fee was already charged at
- * start through PET_FEE, so the round's net is payout minus 5, shown
+ * ceiling retuned to 20 on 2026-11-08). muse_pet_round_coins() is the
+ * only conversion curve -- 1 point (one coin) per coin, 20 coins per
+ * round ceiling -- and the 10-coin entry fee was already charged at
+ * start through PET_FEE, so the round's net is payout minus 10, shown
  * on the OVER card. The score is the coins collected and can never go
  * negative (clouds give no points, there is no bomb), so no floor
  * helper is needed -- round_coins() takes an unsigned score. A refused

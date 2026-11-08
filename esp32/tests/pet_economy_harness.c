@@ -4,16 +4,20 @@
  * check aborts via assert.
  *
  * What it pins down (user decision 2026-11-01, retuned the same day after
- * 1.5f shipped the 5-coin ceiling as "v4"):
- *   - muse_pet_round_coins(): 1 point = 1 coin, 10 coins per round ceiling,
+ * 1.5f shipped the 5-coin ceiling as "v4"; entry fee and ceiling retuned
+ * to 10 / 20 on 2026-11-08):
+ *   - muse_pet_round_coins(): 1 point = 1 coin, 20 coins per round ceiling,
  *     and the same curve for every score-based game.
- *   - A full score round: 5-coin entry fee up front (PET_FEE) plus the
- *     payout at the end, so the net is payout minus 5 -- 10 points = +5,
- *     5 points = 0 (a draw), 0 points = -5 (a loss), 15 points = +5
+ *   - A full score round: 10-coin entry fee up front (PET_FEE) plus the
+ *     payout at the end, so the net is payout minus 10 -- 20 points = +10,
+ *     10 points = 0 (a draw), 0 points = -10 (a loss), 25 points = +10
  *     (capped), exactly the rock-paper-scissors outcomes.
- *   - PET_PLAY_REWARD: clamped to the 10-coin ceiling, additive, never
+ *   - PET_GAME (rock-paper-scissors): entry fee + outcome payout in one
+ *     action -- win 20, draw 10, loss 0 -- so the net is +10 / 0 / -10.
+ *   - PET_PLAY_REWARD: clamped to the 20-coin ceiling, additive, never
  *     above the wallet cap.
  *   - PET_SUDOKU_ENTRY: once per calendar day, idempotent, PET_POOR under 5.
+ *     Sudoku does not follow the 2026-11-08 retune (its ticket stays 5).
  *   - PET_SUDOKU_SOLVE: 10 coins for the day's first puzzle, PET_CAP after;
  *     a ledger already holding a nonzero reward -- including a v4 blob's 5
  *     -- counts as paid and is never topped up to 10.
@@ -45,7 +49,7 @@ static muse_pet_result_t apply(muse_pet_model_t *m, muse_pet_action_t a,
 int main(void)
 {
     /* --- the conversion curve ------------------------------------------ */
-    assert(MUSE_PET_ROUND_COIN_MAX == 10);
+    assert(MUSE_PET_ROUND_COIN_MAX == 20);
     assert(MUSE_PET_SUDOKU_DAILY_MAX == 10);
     assert(MUSE_PET_SUDOKU_SOLVE_COINS == 10);
     assert(MUSE_PET_SCORE_PER_COIN == 1);
@@ -56,20 +60,22 @@ int main(void)
     assert(muse_pet_round_coins(4) == 4);
     assert(muse_pet_round_coins(5) == 5);
     assert(muse_pet_round_coins(9) == 9);
-    /* 10 is the ceiling: an ordinary 30 s whack-a-mole round (~28 hits)
+    /* 20 is the ceiling: an ordinary 30 s whack-a-mole round (~28 hits)
      * and a long snake run both stop here, so the payout never exceeds
-     * twice the 5-coin entry fee. */
+     * twice the 10-coin entry fee. */
     assert(muse_pet_round_coins(10) == 10);
-    assert(muse_pet_round_coins(13) == 10);
-    assert(muse_pet_round_coins(15) == 10);
-    assert(muse_pet_round_coins(24) == 10);
-    assert(muse_pet_round_coins(25) == 10);
-    assert(muse_pet_round_coins(26) == 10);
-    assert(muse_pet_round_coins(28) == 10);
-    assert(muse_pet_round_coins(1000) == 10);
+    assert(muse_pet_round_coins(13) == 13);
+    assert(muse_pet_round_coins(15) == 15);
+    assert(muse_pet_round_coins(20) == 20);
+    assert(muse_pet_round_coins(24) == 20);
+    assert(muse_pet_round_coins(25) == 20);
+    assert(muse_pet_round_coins(26) == 20);
+    assert(muse_pet_round_coins(28) == 20);
+    assert(muse_pet_round_coins(1000) == 20);
     /* 加减练习 runs 3-minute rounds since 2026-11-08, so it pays against
-     * its own ceiling of 20 (user decision); the shared curve and every
-     * other game are untouched. */
+     * its own ceiling of 20 (user decision); the shared ceiling is now 20
+     * too, so the two constants are equal -- the math game's own knob is
+     * kept in case its 3-minute round ever wants a different ceiling. */
     assert(MUSE_PET_ROUND_COIN_MAX_MATHPRACTICE == 20);
     assert(MUSE_PET_ROUND_COIN_HARD_MAX == 20);
     assert(muse_pet_round_coins_cap(9, MUSE_PET_ROUND_COIN_MAX_MATHPRACTICE) == 9);
@@ -77,7 +83,7 @@ int main(void)
     assert(muse_pet_round_coins_cap(20, MUSE_PET_ROUND_COIN_MAX_MATHPRACTICE) == 20);
     assert(muse_pet_round_coins_cap(25, MUSE_PET_ROUND_COIN_MAX_MATHPRACTICE) == 20);
     /* the same call with the standard ceiling is the old behaviour. */
-    assert(muse_pet_round_coins_cap(13, MUSE_PET_ROUND_COIN_MAX) == 10);
+    assert(muse_pet_round_coins_cap(13, MUSE_PET_ROUND_COIN_MAX) == 13);
     assert(muse_pet_round_coins_cap(1000, 0) == 0);
 
     /* --- round payout -------------------------------------------------- */
@@ -108,40 +114,68 @@ int main(void)
     assert(m.coins == MUSE_PET_COINS_MAX);
 
     /* --- a full score round: fee up front, payout at the end ----------- */
-    /* 10 points: fee 5, payout 10, net +5 -- the rock-paper-scissors win. */
+    /* 20 points: fee 10, payout 20, net +10 -- the rock-paper-scissors win. */
     muse_pet_model_init(&m);
     m.coins = 20;
     assert(apply(&m, PET_FEE, d1, 0) == PET_OK);
-    assert(m.coins == 15);
+    assert(m.coins == 10);
+    assert(apply(&m, PET_PLAY_REWARD, d1,
+                 (int32_t)muse_pet_round_coins(20)) == PET_OK);
+    assert(m.coins == 30);
+    /* 10 points: fee 10, payout 10, net 0 -- the draw. */
+    muse_pet_model_init(&m);
+    m.coins = 20;
+    assert(apply(&m, PET_FEE, d1, 0) == PET_OK);
     assert(apply(&m, PET_PLAY_REWARD, d1,
                  (int32_t)muse_pet_round_coins(10)) == PET_OK);
-    assert(m.coins == 25);
-    /* 5 points: fee 5, payout 5, net 0 -- the draw. */
-    muse_pet_model_init(&m);
-    m.coins = 20;
-    assert(apply(&m, PET_FEE, d1, 0) == PET_OK);
-    assert(apply(&m, PET_PLAY_REWARD, d1,
-                 (int32_t)muse_pet_round_coins(5)) == PET_OK);
     assert(m.coins == 20);
-    /* 0 points: fee 5, payout 0, net -5 -- the loss. */
+    /* 0 points: fee 10, payout 0, net -10 -- the loss. */
     muse_pet_model_init(&m);
     m.coins = 20;
     assert(apply(&m, PET_FEE, d1, 0) == PET_OK);
     assert(apply(&m, PET_PLAY_REWARD, d1,
                  (int32_t)muse_pet_round_coins(0)) == PET_OK);
-    assert(m.coins == 15);
-    /* 15 points: fee 5, payout capped at 10, net +5 -- the ceiling binds. */
+    assert(m.coins == 10);
+    /* 25 points: fee 10, payout capped at 20, net +10 -- the ceiling binds. */
     muse_pet_model_init(&m);
     m.coins = 20;
     assert(apply(&m, PET_FEE, d1, 0) == PET_OK);
     assert(apply(&m, PET_PLAY_REWARD, d1,
-                 (int32_t)muse_pet_round_coins(15)) == PET_OK);
-    assert(m.coins == 25);
-    /* Under 5 coins the fee is refused and nothing is settled. */
+                 (int32_t)muse_pet_round_coins(25)) == PET_OK);
+    assert(m.coins == 30);
+    /* Under 10 coins the fee is refused and nothing is settled. 9 pins
+     * the new gate: under the old 5-coin rule 9 would have started. */
     muse_pet_model_init(&m);
-    m.coins = 4;
+    m.coins = 9;
     assert(apply(&m, PET_FEE, d1, 0) == PET_POOR);
-    assert(m.coins == 4);
+    assert(m.coins == 9);
+
+    /* --- rock-paper-scissors: fee + outcome payout in one action ------ */
+    /* Win (arg > 0): fee 10, payout 20, net +10. */
+    muse_pet_model_init(&m);
+    m.coins = 20;
+    assert(apply(&m, PET_GAME, d1, 1) == PET_OK);
+    assert(m.coins == 30);
+    /* Draw (arg == 0): fee 10, payout 10, net 0. */
+    muse_pet_model_init(&m);
+    m.coins = 20;
+    assert(apply(&m, PET_GAME, d1, 0) == PET_OK);
+    assert(m.coins == 20);
+    /* Loss (arg < 0): fee 10, payout 0, net -10. */
+    muse_pet_model_init(&m);
+    m.coins = 20;
+    assert(apply(&m, PET_GAME, d1, -1) == PET_OK);
+    assert(m.coins == 10);
+    /* Under 10 coins the round never starts. */
+    muse_pet_model_init(&m);
+    m.coins = 9;
+    assert(apply(&m, PET_GAME, d1, 1) == PET_POOR);
+    assert(m.coins == 9);
+    /* The wallet cap still applies to the win payout. */
+    muse_pet_model_init(&m);
+    m.coins = 95;
+    assert(apply(&m, PET_GAME, d1, 1) == PET_OK);
+    assert(m.coins == MUSE_PET_COINS_MAX);
 
     /* --- sudoku: one entry fee per day --------------------------------- */
     muse_pet_model_init(&m);
