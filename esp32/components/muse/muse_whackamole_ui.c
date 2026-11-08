@@ -201,8 +201,12 @@ static void refresh_display(void)
     }
     muse_whackamole_phase_t ph = s_game.phase;
     /* Title: "打地鼠" except at OVER, where the title slot itself
-     * becomes the result title (UI polish 2026-11-01, same as snake). */
-    set_label(s_name, ph == MUSE_WHACKAMOLE_OVER ? "游戏结束" : "打地鼠");
+     * becomes the result title (UI polish 2026-11-01, same as snake),
+     * and at PAUSED, where it becomes "已暂停" (user 2026-11-08: the
+     * pause title moves to the title slot on every game, so the pause
+     * card is just the 继续 button). */
+    set_label(s_name, ph == MUSE_WHACKAMOLE_OVER ? "游戏结束"
+                     : ph == MUSE_WHACKAMOLE_PAUSED ? "已暂停" : "打地鼠");
     /* HUD, same slot as the snake page's score line: while PLAYING or
      * PAUSED it is white, score plus the 30 s countdown, no coin
      * conversion mid-round (user request 2026-11-01: the countdown that
@@ -513,14 +517,13 @@ void muse_whackamole_ui_build(lv_obj_t *page, lv_event_cb_t back_cb)
     lv_obj_center(start_lb);
     lv_obj_add_event_cb(start_btn, on_start, LV_EVENT_CLICKED, NULL);
 
-    /* PAUSED overlay: dim, ACCENT title, 继续 button with the PLAY symbol
-     * above the label (snake's card). No restart capsule: it charged 5
-     * coins on a single tap in the narrowest part of the bezel; the back
+    /* PAUSED overlay: dim, 继续 button with the PLAY symbol above
+     * the label (snake's card). No "已暂停" label on the card any
+     * more: the page title itself becomes "已暂停" while paused
+     * (user 2026-11-08). No restart capsule: it charged 5 coins on
+     * a single tap in the narrowest part of the bezel; the back
      * arrow leaves, and 开始 charges again on the next visit. */
     s_paused_ov = overlay(page, true);
-    lv_obj_t *paused_lb = label(s_paused_ov, muse_font_cjk(), MUSE_THEME_ACCENT);
-    lv_label_set_text(paused_lb, "已暂停");
-    lv_obj_align(paused_lb, LV_ALIGN_TOP_MID, 0, 100);
     lv_obj_t *resume_btn = centre_btn(s_paused_ov, 131, 147);
     lv_obj_t *resume_sym = label(resume_btn, &lv_font_montserrat_20, MUSE_THEME_TEXT);
     lv_label_set_text(resume_sym, LV_SYMBOL_PLAY);

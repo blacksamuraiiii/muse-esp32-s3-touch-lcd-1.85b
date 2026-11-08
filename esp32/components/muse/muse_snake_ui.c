@@ -143,10 +143,6 @@
  * frame instead of gluing the text to it. The chord at its bottom (325)
  * is ~213px, so even the longer OVER line clears the bezel. */
 #define SN_SCORE_Y 308
-#define SN_TITLE_Y 100
-/* SN_TITLE_Y is the PAUSED title's slot only since the 2026-11-01 UI
- * polish: the OVER title moved to the page-name slot (see the file
- * header), so nothing on the OVER card sits at y = 100 any more. */
 /* START hint, ONE line since 2026-11-01 (user request): "点四周转向，长按
  * 中间暂停" is ~208 px wide and its bottom (321) sits where the chord is
  * still ~224 px, so it clears the bezel. The old second slot (322, for
@@ -462,8 +458,12 @@ static void settle_round(void)
 static void refresh_display(void)
 {
     /* Page name: "贪吃蛇" in every state except OVER, where the name
-     * slot itself becomes the result title (UI polish 2026-11-01). */
-    set_label(s_name, s_game.state == MUSE_SNAKE_OVER ? "游戏结束" : "贪吃蛇");
+     * slot itself becomes the result title (UI polish 2026-11-01),
+     * and PAUSED, where it becomes "已暂停" (user 2026-11-08: the
+     * pause title moves to the title slot on every game, so the pause
+     * card is just the 继续 button). */
+    set_label(s_name, s_game.state == MUSE_SNAKE_OVER ? "游戏结束"
+                     : s_game.state == MUSE_SNAKE_PAUSED ? "已暂停" : "贪吃蛇");
     /* One line under the board: the note wins the slot, the score line
      * takes it otherwise (and is hidden on START, where the hint sits there
      * instead). While PLAYING or PAUSED it is white and score-only --
@@ -733,11 +733,11 @@ void muse_snake_ui_build(lv_obj_t *page, lv_event_cb_t back_cb)
                    "点四周转向，长按中间暂停");
     lv_obj_align(s_hint, LV_ALIGN_TOP_MID, 0, SN_HINT_Y);
 
-    /* PAUSED overlay: dim + title + 继续 button + dashes. No restart:
-     * see the file header. */
+    /* PAUSED overlay: dim + 继续 button + dashes. No "已暂停" label
+     * on the card any more: the page name slot itself becomes
+     * "已暂停" while paused (user 2026-11-08). No restart: see the
+     * file header. */
     s_pause_ov = overlay(page, true);
-    lv_obj_t *pt = label(s_pause_ov, muse_font_cjk(), MUSE_THEME_ACCENT, "已暂停");
-    lv_obj_align(pt, LV_ALIGN_TOP_MID, 0, SN_TITLE_Y);
     lv_obj_t *resume_btn = centre_button(s_pause_ov, on_resume);
     lv_obj_t *sym = label(resume_btn, &lv_font_montserrat_20, MUSE_THEME_TEXT,
                           LV_SYMBOL_PLAY);
