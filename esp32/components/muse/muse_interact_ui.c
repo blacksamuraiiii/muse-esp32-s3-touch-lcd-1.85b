@@ -14,7 +14,7 @@
  *     three rows 330x58, radius 18, x = 15, y = 84 / 150 / 216
  *     (row 58 + gap 8): 喂饭, 小游戏, 今日运势. The middle row is a
  *     menu into the mini-game list page, not a game itself, so its
- *     copy ("小游戏 ｜ 每种扣5金币") is constant and it never dims
+ *     copy ("小游戏 ｜ 每种 -5金币") is constant and it never dims
  *     or intercepts -- the coin gate lives inside each game. Coin
  *     line at y = 302. The main page has NO back arrow (its header
  *     back callback is NULL); the face is one swipe away.
@@ -33,8 +33,8 @@
  *     Since 2026-11-01 every subpage also ends with the same coin line
  *     at y = 302 (user request "统一页面内容"), the sole exception being
  *     石头剪刀布 below.
- *     The 喂饭 subpage keeps its rule line ("喂饭不花币，每种食物每天
- *     +10") at the TOP slot (y = 84), above the three 100 px food cards
+ *     The 喂饭 subpage keeps its rule line ("每种食物每天 +10") at the
+ *     TOP slot (y = 84), above the three 100 px food cards
  *     (y = 120), and its result line ("喂了…") at y = 262 -- the slot
  *     the rule line used to own before the two swapped on 2026-11-01
  *     (user request); the food names sit at y = 228 between them.
@@ -451,7 +451,7 @@ static void refresh_status(void)
               feed_done ? "喂饭 ｜ 今日已领满" : "喂饭 ｜ 每种 +10金币");
     lv_obj_set_style_text_color(s_btn_feed_lbl,
                                 lv_color_hex(feed_done ? MUSE_THEME_DIM : MUSE_THEME_TEXT), 0);
-    set_label(s_btn_game_lbl, "小游戏 ｜ 每种扣5金币");
+    set_label(s_btn_game_lbl, "小游戏 ｜ 每种 -5金币");
     lv_obj_set_style_text_color(s_btn_game_lbl, lv_color_hex(MUSE_THEME_TEXT), 0);
     if (s_snap.fortune_day >= 0) {
         const char *grade = muse_pet_fortune_grade(s_snap.fortune);
@@ -1257,7 +1257,7 @@ static void build_main(void)
     s_btn_feed = main_button(s_main_page, IC_LIST_TOP, "喂饭 ｜ 每种 +10金币",
                              on_open_feed, &s_btn_feed_lbl);
     s_btn_game = main_button(s_main_page, IC_LIST_TOP + IC_ROW_H + IC_ROW_GAP,
-                             "小游戏 ｜ 每种扣5金币", on_open_minigame, &s_btn_game_lbl);
+                             "小游戏 ｜ 每种 -5金币", on_open_minigame, &s_btn_game_lbl);
     s_btn_fortune = main_button(s_main_page,
                                 IC_LIST_TOP + 2 * (IC_ROW_H + IC_ROW_GAP),
                                 "今日运势 ｜ 未抽", on_fortune_open,
@@ -1328,7 +1328,7 @@ static void build_feed(void)
      * -- only the y moved. 84 clears the title (centre y = 52, ends ~62)
      * and stops ~16 px above the card row (top y = 120). */
     lv_obj_t *hint = label(s_feed_page, muse_font_cjk(), MUSE_THEME_DIM,
-                           "喂饭不花币，每种食物每天 +10");
+                           "每种食物每天 +10");
     lv_obj_align(hint, LV_ALIGN_TOP_MID, 0, 84);
     /* Scrollable strip, 2026-11-07 (user request): ONE row with all six
      * foods, swipe left/right to choose -- NOT two pages. A single
@@ -1570,8 +1570,8 @@ static void build_fortune(void)
     lv_obj_set_style_text_align(s_fortune_body, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_align(s_fortune_body, LV_ALIGN_TOP_MID, 0, 97);
     /* Rule line: TOP slot (y = 84), the same slot the 喂饭 subpage's
-     * "喂饭不花币…" line uses (user request 2026-11-01: "同喂饭那句的
-     * 位置"). It is read before the card, and it keeps the bottom free
+     * rule line uses (user request 2026-11-01: "同喂饭那句的位置").
+     * It is read before the card, and it keeps the bottom free
      * for the coin line alone. Card sits at 114 (300x160, ends 274) --
      * 14 px under this line and 28 px above the coin row. Copy is the
      * shortened one, DIM colour unchanged; ~148 px wide, far inside the
