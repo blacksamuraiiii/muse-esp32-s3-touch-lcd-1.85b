@@ -64,8 +64,6 @@ if(CONFIG_MUSE_ENABLED)
         "muse_doodle_sprite.c"
         "muse_mathpractice.c"
         "muse_mathpractice_ui.c"
-        "muse_maketen.c"
-        "muse_maketen_ui.c"
         "muse_interact_hand_rock.c"
         "muse_interact_hand_paper.c"
         "muse_interact_hand_scissors.c"

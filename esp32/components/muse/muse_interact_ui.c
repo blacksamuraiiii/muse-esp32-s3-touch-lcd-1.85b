@@ -110,7 +110,6 @@
 #include "muse_goldrain_ui.h"
 #include "muse_doodle_ui.h"
 #include "muse_mathpractice_ui.h"
-#include "muse_maketen_ui.h"
 #include "muse_widgets.h" /* the shared back arrow / card / title (1.5g) */
 
 /* --- colours: muse_theme.h (see file header for the DANGER note) --- */
@@ -182,7 +181,6 @@ enum {
     IC_PAGE_GOLDRAIN,
     IC_PAGE_DOODLE,
     IC_PAGE_MATHPRACTICE,
-    IC_PAGE_MAKETEN,
 };
 
 enum {
@@ -195,14 +193,12 @@ enum {
 static lv_obj_t *s_tile;
 static lv_obj_t *s_main_page, *s_feed_page, *s_game_page, *s_fortune_page, *s_sudoku_page;
 static lv_obj_t *s_minigame_page, *s_snake_page, *s_whackamole_page,
-    *s_goldrain_page, *s_doodle_page, *s_mathpractice_page,
-    *s_maketen_page;
+    *s_goldrain_page, *s_doodle_page, *s_mathpractice_page;
 static lv_obj_t *s_btn_feed, *s_btn_game, *s_btn_fortune;
 static lv_obj_t *s_btn_feed_lbl, *s_btn_game_lbl, *s_btn_fortune_lbl;
 static lv_obj_t *s_minigame_coins;
 static lv_obj_t *s_mg_rps_lbl, *s_mg_snake_lbl, *s_mg_whack_lbl,
-    *s_mg_goldrain_lbl, *s_mg_doodle_lbl, *s_mg_mathpractice_lbl,
-    *s_mg_maketen_lbl;
+    *s_mg_goldrain_lbl, *s_mg_doodle_lbl, *s_mg_mathpractice_lbl;
 /* s_mg_sudoku_lbl was here: removed 2026-11-08 with the archived 数独
  * row (see build_minigame). Re-add it when restoring 数独. */
 static int s_last_feed_idx;
@@ -311,7 +307,6 @@ static void show_page(int page)
     lv_obj_add_flag(s_goldrain_page, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(s_doodle_page, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(s_mathpractice_page, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_add_flag(s_maketen_page, LV_OBJ_FLAG_HIDDEN);
     lv_obj_t *show = s_main_page;
     if (page == IC_PAGE_FEED) show = s_feed_page;
     if (page == IC_PAGE_GAME) show = s_game_page;
@@ -323,7 +318,6 @@ static void show_page(int page)
     if (page == IC_PAGE_GOLDRAIN) show = s_goldrain_page;
     if (page == IC_PAGE_DOODLE) show = s_doodle_page;
     if (page == IC_PAGE_MATHPRACTICE) show = s_mathpractice_page;
-    if (page == IC_PAGE_MAKETEN) show = s_maketen_page;
     lv_obj_remove_flag(show, LV_OBJ_FLAG_HIDDEN);
     /* The swipe lock takes effect here, not at the next 0.25 s chrome tick
      * (muse_ui.c): chrome polling left up to 250 ms after leaving a subpage
@@ -376,17 +370,13 @@ static void on_back(lv_event_t *e)
     if (s_page == IC_PAGE_MATHPRACTICE) {
         muse_mathpractice_ui_hide();
     }
-    if (s_page == IC_PAGE_MAKETEN) {
-        muse_maketen_ui_hide();
-    }
     if (s_page == IC_PAGE_MAIN) {
         muse_ui_show_face();
     } else if (s_page == IC_PAGE_GAME || s_page == IC_PAGE_SUDOKU ||
                s_page == IC_PAGE_SNAKE || s_page == IC_PAGE_WHACKAMOLE ||
                s_page == IC_PAGE_GOLDRAIN ||
                s_page == IC_PAGE_DOODLE ||
-               s_page == IC_PAGE_MATHPRACTICE ||
-               s_page == IC_PAGE_MAKETEN) {
+               s_page == IC_PAGE_MATHPRACTICE) {
         show_page(IC_PAGE_MINIGAME);
     } else {
         show_page(IC_PAGE_MAIN);
@@ -472,8 +462,8 @@ static void refresh_status(void)
         set_label(s_btn_fortune_lbl, "今日运势 ｜ 未抽");
     }
 
-    /* Mini-game rows: snake, whack-a-mole, goldrain, doodle and the
-     * two maths games cost 5 coins per start, so they dim together
+    /* Mini-game rows: snake, whack-a-mole, goldrain, doodle and
+     * 加减练习 cost 5 coins per start, so they dim together
      * when nothing can be started. (数独 used to cost 5 once per
      * calendar day -- a day's ticket already paid meant it stayed
      * bright even at 0 coins -- but it is ARCHIVED 2026-11-08, see
@@ -496,7 +486,6 @@ static void refresh_status(void)
     lv_obj_set_style_text_color(s_mg_goldrain_lbl, lv_color_hex(mg_color), 0);
     lv_obj_set_style_text_color(s_mg_doodle_lbl, lv_color_hex(mg_color), 0);
     lv_obj_set_style_text_color(s_mg_mathpractice_lbl, lv_color_hex(mg_color), 0);
-    lv_obj_set_style_text_color(s_mg_maketen_lbl, lv_color_hex(mg_color), 0);
 }
 
 /* One list row: full-width button with a single centred label, at the
@@ -1105,8 +1094,6 @@ static void drain_feedback(void)
                     muse_goldrain_ui_fee_refused();
                 } else if (s_page == IC_PAGE_MATHPRACTICE) {
                     muse_mathpractice_ui_fee_refused();
-                } else if (s_page == IC_PAGE_MAKETEN) {
-                    muse_maketen_ui_fee_refused();
                 }
                 write_pet_caption("金币不够，先摸摸 / 喂饭 / 抽运势");
             } else if (fb.result == PET_STORAGE) {
@@ -1120,8 +1107,6 @@ static void drain_feedback(void)
                     muse_goldrain_ui_fee_refused();
                 } else if (s_page == IC_PAGE_MATHPRACTICE) {
                     muse_mathpractice_ui_fee_refused();
-                } else if (s_page == IC_PAGE_MAKETEN) {
-                    muse_maketen_ui_fee_refused();
                 }
                 write_pet_caption("互动数据损坏");
             }
@@ -1227,13 +1212,6 @@ static void on_open_mathpractice(lv_event_t *e)
     muse_mathpractice_ui_show();
 }
 
-static void on_open_maketen(lv_event_t *e)
-{
-    (void)e;
-    show_page(IC_PAGE_MAKETEN);
-    muse_maketen_ui_show();
-}
-
 /* ARCHIVED 2026-11-08 with 数独 (see build_minigame). Uncomment
  * together with the 数独 row to restore it.
 static void on_open_sudoku(lv_event_t *e)
@@ -1314,9 +1292,10 @@ static void build_minigame(void)
     lv_obj_set_scroll_dir(list, LV_DIR_VER);
     lv_obj_set_scrollbar_mode(list, LV_SCROLLBAR_MODE_OFF);
 
-    /* List order (user 2026-11-08): the two maths games first
-     * (加减练习, then 凑十法练习), then 石头剪刀布, 贪吃蛇,
-     * 打地鼠, 金币雨, 毛毛跳跃. 数独 is ARCHIVED (same date):
+    /* List order (user 2026-11-08): 加减练习 first, then 石头剪刀布,
+     * 贪吃蛇, 打地鼠, 金币雨, 毛毛跳跃. 凑十法练习 was fused into
+     * 加减练习 the same day (one game, two kinds of question), so it is
+     * gone from the list and from the tree. 数独 is ARCHIVED (same date):
      * the 360px round screen is too small to read its 6x6 grid or
      * tap its cells comfortably. The game code stays in the tree
      * (muse_sudoku_ui.c, IC_PAGE_SUDOKU, muse_sudoku_ui_build);
@@ -1325,7 +1304,6 @@ static void build_minigame(void)
      * (plus its sudoku_paid lookup), and re-add *s_mg_sudoku_lbl
      * to the label declaration near the top of this file. */
     list_row(list, "加减练习", on_open_mathpractice, &s_mg_mathpractice_lbl);
-    list_row(list, "凑十法练习", on_open_maketen, &s_mg_maketen_lbl);
     list_row(list, "石头剪刀布", on_open_game, &s_mg_rps_lbl);
     /* ARCHIVED 2026-11-08: 数独 -- screen too small, grid unreadable
      * and hard to tap. See the restore note in the comment above. */
@@ -1625,7 +1603,6 @@ void muse_interact_ui_build(lv_obj_t *tile)
     s_goldrain_page = page_group(tile);
     s_doodle_page = page_group(tile);
     s_mathpractice_page = page_group(tile);
-    s_maketen_page = page_group(tile);
     build_main();
     build_feed();
     build_game();
@@ -1637,7 +1614,6 @@ void muse_interact_ui_build(lv_obj_t *tile)
     muse_goldrain_ui_build(s_goldrain_page, on_back);
     muse_doodle_ui_build(s_doodle_page, on_back);
     muse_mathpractice_ui_build(s_mathpractice_page, on_back);
-    muse_maketen_ui_build(s_maketen_page, on_back);
     show_page(IC_PAGE_MAIN);
     /* Main page is the only one shown at build; muse_ui.c's tileview
      * hides the whole tile when it is not the active tile, so no extra
@@ -1669,7 +1645,6 @@ void muse_interact_ui_on_hidden(void)
     muse_goldrain_ui_hide();
     muse_doodle_ui_hide();
     muse_mathpractice_ui_hide();
-    muse_maketen_ui_hide();
     show_page(IC_PAGE_MAIN);
 }
 

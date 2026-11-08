@@ -2,21 +2,26 @@
 /*
  * muse_mathpractice.h -- 加减练习 logic (no LVGL, no ESP-IDF).
  *
- * A 30-second round of 20以内加减法 judgement: the screen shows one
- * equation ("7 + 8 = 15") whose displayed answer is right about half
- * the time and wrong about half the time (user rule 2026-11-08, 1:1),
- * and the player taps the green check (right) or the red cross
- * (wrong). A correct judgement scores one point; a wrong judgement
- * scores nothing and never subtracts. The next equation appears at
- * once, so the round is as many questions as fit in 30 seconds.
+ * One 30-second round of two question kinds (user decision 2026-11-08,
+ * the round that fused 凑十法练习 into this game):
  *
- * Equations are always within 20 (user rule): addition a + b with
- * a + b <= 20, subtraction a - b with a >= b so the answer is >= 0.
- * A wrong displayed answer is a plausible near-miss of the true one
- * (off by 1, 2 or 10, staying inside 0..20), never an absurd value
- * like 100 -- a first-grader should have to compute, not spot a joke.
- * The 1:1 correct/wrong split is per-question coin flip (rand() % 2),
- * so over a round it averages 1:1.
+ *   - ADD_TEN: a + b with a, b in 2..9 and 11 <= a + b <= 18, so the
+ *     make-ten split always applies. The screen reads "8 + 5 ? 13".
+ *   - SUB_TEN: a - b with the minuend a in 11..18 and b in
+ *     (a % 10 + 1)..9, so the ones digit is smaller than b and the
+ *     subtraction must borrow ten: "14 - 6 ? 8".
+ *
+ * The two kinds are dealt by a coin flip, so a round averages 1:1.
+ * The comparison number d is the true value or a near-miss of it (off
+ * by 1 or 2, never equal), so the player has to compute and then
+ * compare; the player taps > < or =, and the statement is "left ? d".
+ *
+ * A pick is graded at once: right is +1, wrong is +0 (never
+ * negative). The verdict stays on screen for
+ * MUSE_MATHPRACTICE_FEEDBACK_MS (user 2026-11-08: 点击之后要提示正确
+ * 还是错误), and during that window nothing is dealt and no answer is
+ * taken -- a fast double tap can never skip a question. The 30 s
+ * clock keeps running through the verdict (it is round time).
  *
  * Score only ever goes up, so the settlement is
  * muse_pet_round_coins() directly (1 point per coin, 10 coins per
@@ -37,8 +42,19 @@
 
 #define MUSE_MATHPRACTICE_GAME_MS 30000u
 #define MUSE_MATHPRACTICE_TICK_MS 50u
-/* Operands and answers all live in 0..20 (user rule 2026-11-08). */
+/* How long the verdict stays up before the next question is dealt
+ * (user 2026-11-08). Answer taps are ignored during it. */
+#define MUSE_MATHPRACTICE_FEEDBACK_MS 600u
+/* Operands, values and the comparison number all live in 0..20. */
 #define MUSE_MATHPRACTICE_MAX_NUM 20
+/* ADD_TEN: addends are single digits 2..9, the sum 11..18 (a carry,
+ * so 凑十法 applies). SUB_TEN: the minuend is 11..18. */
+#define MUSE_MATHPRACTICE_ADDEND_MIN 2
+#define MUSE_MATHPRACTICE_ADDEND_MAX 9
+#define MUSE_MATHPRACTICE_SUM_MIN 11
+#define MUSE_MATHPRACTICE_SUM_MAX 18
+#define MUSE_MATHPRACTICE_MINUEND_MIN 11
+#define MUSE_MATHPRACTICE_MINUEND_MAX 18
 
 typedef enum {
     MUSE_MATHPRACTICE_START = 0,
@@ -47,22 +63,35 @@ typedef enum {
     MUSE_MATHPRACTICE_OVER,
 } muse_mathpractice_phase_t;
 
+typedef enum {
+    MUSE_MATHPRACTICE_KIND_ADD_TEN = 0, /* 个位数相加：a + b（凑十法） */
+    MUSE_MATHPRACTICE_KIND_SUB_TEN,     /* 十几减个位：a - b（借十法） */
+} muse_mathpractice_kind_t;
+
+typedef enum {
+    MUSE_MATHPRACTICE_CMP_GT = 0, /* 等式的值 > 比较数 */
+    MUSE_MATHPRACTICE_CMP_LT,     /* 等式的值 < 比较数 */
+    MUSE_MATHPRACTICE_CMP_EQ,     /* 等式的值 == 比较数 */
+} muse_mathpractice_cmp_t;
+
 typedef struct {
     muse_mathpractice_phase_t phase;
-    int a;           /* first operand, 0..20 */
-    int b;           /* second operand, 0..20 */
-    bool is_add;     /* true: a + b, false: a - b */
-    int shown;       /* the answer displayed, 0..20 */
-    bool is_correct; /* whether shown == the true answer */
-    uint32_t score;    /* +1 per correct judgement, never decreases */
-    uint32_t answered; /* questions judged so far */
+    muse_mathpractice_kind_t kind;
+    int a; /* ADD_TEN: first addend 2..9; SUB_TEN: minuend 11..18 */
+    int b; /* ADD_TEN: second addend 2..9; SUB_TEN: subtrahend 2..9 */
+    int d; /* the number "?" compares against, 0..20 */
+    muse_mathpractice_cmp_t correct; /* the comparison that is true */
+    uint32_t feedback_ms; /* > 0: verdict showing, no new question */
+    bool last_right;      /* how the last pick was graded (for the UI) */
+    uint32_t score;       /* +1 per right pick, never decreases */
+    uint32_t answered;    /* picks graded so far */
     uint32_t elapsed_ms;
 } muse_mathpractice_t;
 
 void muse_mathpractice_init(muse_mathpractice_t *g);
 
 /* START -> PLAYING, resetting the game and dealing the first
- * equation. No-op from any other phase (use restart for a new game
+ * question. No-op from any other phase (use restart for a new game
  * after OVER/PAUSED). */
 void muse_mathpractice_start(muse_mathpractice_t *g);
 
@@ -76,19 +105,22 @@ void muse_mathpractice_resume(muse_mathpractice_t *g);
  * charges the entry fee again before calling this). */
 void muse_mathpractice_restart(muse_mathpractice_t *g);
 
-/* Advance the game by `ms` milliseconds. No-op unless PLAYING.
- * Ends the game at 30 seconds (phase OVER). */
+/* Advance the game by `ms` milliseconds. No-op unless PLAYING. Runs
+ * the 30 s clock and the verdict window: when the verdict's time is
+ * up the next question is dealt. Ends the game at 30 s (phase OVER),
+ * which also clears a pending verdict. */
 void muse_mathpractice_tick(muse_mathpractice_t *g, uint32_t ms);
 
-/* Judge the current equation: `judged_correct` is true when the
- * player tapped the green check (thinks it is right), false for the
- * red cross. Returns true when the judgement was right (score +1),
- * false otherwise (score unchanged). Either way the next equation is
- * dealt at once. No-op (returns false) unless PLAYING. */
-bool muse_mathpractice_answer(muse_mathpractice_t *g, bool judged_correct);
+/* Pick a comparison: `cmp` is the button the player tapped (GT for
+ * >, LT for <, EQ for =). Returns true when the pick was right
+ * (score +1), false otherwise (score unchanged). Either way the
+ * verdict shows for MUSE_MATHPRACTICE_FEEDBACK_MS and the next
+ * question appears when it ends. No-op (returns false, nothing
+ * changes) unless PLAYING and no verdict is showing. */
+bool muse_mathpractice_answer(muse_mathpractice_t *g, muse_mathpractice_cmp_t cmp);
 
-/* The true answer of the current equation (a + b or a - b). */
-int muse_mathpractice_true_answer(const muse_mathpractice_t *g);
+/* The true value of the current equation (a + b or a - b). */
+int muse_mathpractice_value(const muse_mathpractice_t *g);
 
 /* Remaining whole seconds, rounded up (30 at start, 0 at the end). */
 uint32_t muse_mathpractice_remaining_s(const muse_mathpractice_t *g);
