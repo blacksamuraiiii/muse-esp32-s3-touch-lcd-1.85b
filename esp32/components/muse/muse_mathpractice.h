@@ -24,8 +24,10 @@
  * clock keeps running through the verdict (it is round time).
  *
  * Score only ever goes up, so the settlement is
- * muse_pet_round_coins() directly (1 point per coin, 10 coins per
- * round ceiling). The 5-coin entry fee was already charged at start.
+ * muse_pet_round_coins_cap() with this game's own 20-coin ceiling (1
+ * point per coin; raised from the shared 10 on 2026-11-08 because the
+ * round is 3 minutes now). The 5-coin entry fee was already charged at
+ * start.
  *
  * Timing is in milliseconds and advances only through
  * muse_mathpractice_tick(), so the host test drives it

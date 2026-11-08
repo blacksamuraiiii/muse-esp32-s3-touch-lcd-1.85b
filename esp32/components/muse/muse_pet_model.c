@@ -64,16 +64,21 @@ bool muse_pet_model_valid(const muse_pet_model_t *s)
            s->sudoku_reward_coins <= MUSE_PET_SUDOKU_DAILY_MAX;
 }
 
-uint32_t muse_pet_round_coins(uint32_t score)
+uint32_t muse_pet_round_coins_cap(uint32_t score, uint32_t cap)
 {
     /* Both guards are for retuning, not for today's constants: a 0 divisor
      * would fault and a cap of 0 would pay nothing, and -Werror builds must
      * stay warning-free whichever way the knobs move. */
-    if (MUSE_PET_SCORE_PER_COIN == 0u || MUSE_PET_ROUND_COIN_MAX == 0u) {
+    if (MUSE_PET_SCORE_PER_COIN == 0u || cap == 0u) {
         return 0;
     }
     uint32_t coins = score / MUSE_PET_SCORE_PER_COIN;
-    return coins > MUSE_PET_ROUND_COIN_MAX ? MUSE_PET_ROUND_COIN_MAX : coins;
+    return coins > cap ? cap : coins;
+}
+
+uint32_t muse_pet_round_coins(uint32_t score)
+{
+    return muse_pet_round_coins_cap(score, MUSE_PET_ROUND_COIN_MAX);
 }
 
 void muse_pet_sudoku_today(const muse_pet_model_t *s, int64_t now,
@@ -306,8 +311,8 @@ muse_pet_result_t muse_pet_model_apply(muse_pet_model_t *s, muse_pet_action_t ac
          * payout minus 5 and is the UI's to show, not the model's to
          * fold in. */
         uint32_t add = arg > 0 ? (uint32_t)arg : 0;
-        if (add > MUSE_PET_ROUND_COIN_MAX) {
-            add = MUSE_PET_ROUND_COIN_MAX;
+        if (add > MUSE_PET_ROUND_COIN_HARD_MAX) {
+            add = MUSE_PET_ROUND_COIN_HARD_MAX;
         }
         if (add != 0) {
             s->coins = capped_add(s->coins, add);

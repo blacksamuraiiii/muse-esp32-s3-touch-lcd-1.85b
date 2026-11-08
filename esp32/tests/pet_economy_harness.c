@@ -67,6 +67,18 @@ int main(void)
     assert(muse_pet_round_coins(26) == 10);
     assert(muse_pet_round_coins(28) == 10);
     assert(muse_pet_round_coins(1000) == 10);
+    /* 加减练习 runs 3-minute rounds since 2026-11-08, so it pays against
+     * its own ceiling of 20 (user decision); the shared curve and every
+     * other game are untouched. */
+    assert(MUSE_PET_ROUND_COIN_MAX_MATHPRACTICE == 20);
+    assert(MUSE_PET_ROUND_COIN_HARD_MAX == 20);
+    assert(muse_pet_round_coins_cap(9, MUSE_PET_ROUND_COIN_MAX_MATHPRACTICE) == 9);
+    assert(muse_pet_round_coins_cap(13, MUSE_PET_ROUND_COIN_MAX_MATHPRACTICE) == 13);
+    assert(muse_pet_round_coins_cap(20, MUSE_PET_ROUND_COIN_MAX_MATHPRACTICE) == 20);
+    assert(muse_pet_round_coins_cap(25, MUSE_PET_ROUND_COIN_MAX_MATHPRACTICE) == 20);
+    /* the same call with the standard ceiling is the old behaviour. */
+    assert(muse_pet_round_coins_cap(13, MUSE_PET_ROUND_COIN_MAX) == 10);
+    assert(muse_pet_round_coins_cap(1000, 0) == 0);
 
     /* --- round payout -------------------------------------------------- */
     const int32_t d1 = 20400; /* 2025-11-08-ish: above MUSE_PET_TIME_MIN */
@@ -76,17 +88,20 @@ int main(void)
     m.coins = 10;
     assert(apply(&m, PET_PLAY_REWARD, d1, 3) == PET_OK);
     assert(m.coins == 13);
-    /* Clamped to the per-round ceiling, even if the UI asks for more. */
+    /* Clamped to the hard maximum (20, 加减练习's own ceiling), even if
+     * the UI asks for more. */
     assert(apply(&m, PET_PLAY_REWARD, d1, 9) == PET_OK);
     assert(m.coins == 22);
     assert(apply(&m, PET_PLAY_REWARD, d1, 15) == PET_OK);
-    assert(m.coins == 32); /* 15 asked, 10 paid */
+    assert(m.coins == 37); /* 15 asked, 15 paid: below the hard maximum */
+    assert(apply(&m, PET_PLAY_REWARD, d1, 25) == PET_OK);
+    assert(m.coins == 57); /* 25 asked, 20 paid */
     /* A negative arg is a zero payout, not a refund. */
     assert(apply(&m, PET_PLAY_REWARD, d1, -4) == PET_OK);
-    assert(m.coins == 32);
+    assert(m.coins == 57);
     /* 0 is a valid settlement (a scoreless round) and changes nothing. */
     assert(apply(&m, PET_PLAY_REWARD, d1, 0) == PET_OK);
-    assert(m.coins == 32);
+    assert(m.coins == 57);
     /* The wallet cap still applies. */
     m.coins = MUSE_PET_COINS_MAX - 2;
     assert(apply(&m, PET_PLAY_REWARD, d1, 5) == PET_OK);
