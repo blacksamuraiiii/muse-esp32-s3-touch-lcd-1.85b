@@ -8,7 +8,8 @@
  * The rules under test are the ones the user settled on 2026-11-07:
  * she HOPS (nothing sends her up but a cloud), tilt steers and a tap
  * shoves, coins are +1 (no bombs: "取消炸弹惩罚"), and a restart puts
- * her back STANDING ON a cloud. */
+ * her back STANDING ON a cloud -- plus the 60 s round clock the user
+ * added 2026-11-08 ("加个60秒的时间限制，避免一直往下玩"). */
 #include <assert.h>
 #include <math.h>
 #include <stdbool.h>
@@ -294,6 +295,50 @@ int main(void)
     assert(fabsf(g.cy + HALF_H - (g.clouds[0].y - 1.0f)) < 0.01f);
     tick_n(&g, 40); /* 2 s of doing nothing: she must still be alive */
     assert(g.phase == MUSE_DOODLE_PLAYING);
+
+    /* 60 s round clock (user 2026-11-08): the round ends on the clock
+     * even if she never falls, and the HUD countdown reads it. A fresh
+     * restart resets the clock. The clock is driven by tick() only, so
+     * a single static cloud under her (the idle-survival setup) keeps
+     * her bouncing in place while the clock runs out. */
+    muse_doodle_restart(&g);
+    assert(g.phase == MUSE_DOODLE_PLAYING);
+    assert(g.elapsed_ms == 0);
+    assert(muse_doodle_remaining_s(&g) == 60);
+    clear_clouds(&g);
+    clear_coins(&g);
+    place_cloud(&g, 180.0f, 285.0f);
+    g.cx = 180.0f;
+    g.cy = 285.0f - HALF_H - 1.0f;
+    g.vx = 0.0f;
+    g.vy = 2.0f;
+    g.tilt = 0.0f;
+    g.shove = 0.0f;
+    tick_n(&g, 600); /* 30 s of bouncing in place */
+    assert(g.phase == MUSE_DOODLE_PLAYING);
+    assert(muse_doodle_remaining_s(&g) == 30);
+    /* Pause freezes the clock: 10 s of paused ticks change nothing. */
+    muse_doodle_pause(&g);
+    assert(g.phase == MUSE_DOODLE_PAUSED);
+    tick_n(&g, 200);
+    assert(muse_doodle_remaining_s(&g) == 30);
+    muse_doodle_resume(&g);
+    assert(g.phase == MUSE_DOODLE_PLAYING);
+    /* The last 30 s: at 59.95 s there is 1 s left, at 60 s it is over
+     * -- same end as falling out (OVER, field cleared). */
+    tick_n(&g, 599); /* 29.95 s, total 59.95 s */
+    assert(g.phase == MUSE_DOODLE_PLAYING);
+    assert(muse_doodle_remaining_s(&g) == 1);
+    tick_n(&g, 1); /* total 60.00 s */
+    assert(g.phase == MUSE_DOODLE_OVER);
+    assert(muse_doodle_remaining_s(&g) == 0);
+    assert(muse_doodle_cloud_count(&g) == 0);
+    assert(muse_doodle_coin_count(&g) == 0);
+    /* Restart resets the clock. */
+    muse_doodle_restart(&g);
+    assert(g.phase == MUSE_DOODLE_PLAYING);
+    assert(g.elapsed_ms == 0);
+    assert(muse_doodle_remaining_s(&g) == 60);
 
     printf("ok\n");
     return 0;

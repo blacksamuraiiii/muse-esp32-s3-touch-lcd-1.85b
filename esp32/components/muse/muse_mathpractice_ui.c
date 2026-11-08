@@ -216,8 +216,11 @@ static void refresh_display(void)
                                     LV_PART_MAIN);
     }
     set_label(s_hud, hud_buf);
-    /* Title: the game name, or "游戏结束" at OVER. */
+    /* Title: the game name, "已暂停" while paused, or "游戏结束"
+     * at OVER (user 2026-11-08: the pause title moves to the title
+     * slot on every game, so the pause card is just the 继续 button). */
     set_label(s_name, s_game.phase == MUSE_MATHPRACTICE_OVER ? "游戏结束"
+                     : s_game.phase == MUSE_MATHPRACTICE_PAUSED ? "已暂停"
                                                              : "加减练习");
     /* Overlays: exactly one visible at a time. */
     if (s_game.phase == MUSE_MATHPRACTICE_START) {
@@ -541,14 +544,13 @@ void muse_mathpractice_ui_build(lv_obj_t *page, lv_event_cb_t back_cb)
     lv_label_set_text(hint_lb, "绿勾是对，红叉是错");
     lv_obj_align(hint_lb, LV_ALIGN_TOP_MID, 0, 304);
 
-    /* PAUSED overlay: dim, ACCENT title, 继续 button with the PLAY symbol
-     * above the label (snake's card). No restart capsule: it charged 5
-     * coins on a single tap in the narrowest part of the bezel; the back
+    /* PAUSED overlay: dim, 继续 button with the PLAY symbol above
+     * the label (snake's card). No "已暂停" label on the card any
+     * more: the page title itself becomes "已暂停" while paused
+     * (user 2026-11-08). No restart capsule: it charged 5 coins on
+     * a single tap in the narrowest part of the bezel; the back
      * arrow leaves, and 开始 charges again on the next visit. */
     s_paused_ov = overlay(page, true);
-    lv_obj_t *paused_lb = label(s_paused_ov, muse_font_cjk(), MUSE_THEME_ACCENT);
-    lv_label_set_text(paused_lb, "已暂停");
-    lv_obj_align(paused_lb, LV_ALIGN_TOP_MID, 0, 100);
     lv_obj_t *resume_btn = centre_btn(s_paused_ov, 131, 147);
     lv_obj_t *resume_sym = label(resume_btn, &lv_font_montserrat_20, MUSE_THEME_TEXT);
     lv_label_set_text(resume_sym, LV_SYMBOL_PLAY);

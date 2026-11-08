@@ -105,6 +105,7 @@ static void spawn_coin_above(muse_doodle_t *g, float cloud_x, float cloud_y)
 static void reset_game(muse_doodle_t *g)
 {
     clear_all(g);
+    g->elapsed_ms = 0;
     g->score = 0;
     g->caught = 0;
     g->height_px = 0;
@@ -205,6 +206,14 @@ int muse_doodle_cloud_count(const muse_doodle_t *g)
     return n;
 }
 
+uint32_t muse_doodle_remaining_s(const muse_doodle_t *g)
+{
+    if (g->elapsed_ms >= MUSE_DOODLE_GAME_MS) {
+        return 0;
+    }
+    return (MUSE_DOODLE_GAME_MS - g->elapsed_ms + 999u) / 1000u;
+}
+
 int muse_doodle_coin_count(const muse_doodle_t *g)
 {
     int n = 0;
@@ -279,6 +288,17 @@ static bool touches(const muse_doodle_t *g, float px, float py, int size)
 void muse_doodle_tick(muse_doodle_t *g, uint32_t ms)
 {
     if (g->phase != MUSE_DOODLE_PLAYING) {
+        return;
+    }
+    /* The 60 s round clock (user 2026-11-08): the whole `ms` counts,
+     * before any physics step, so the clock is exact even when the
+     * caller passes a step other than 50 ms. Time out and the round
+     * ends exactly as if she had fallen out of the bottom -- OVER,
+     * field cleared, coins settled once by the UI. */
+    g->elapsed_ms += ms;
+    if (g->elapsed_ms >= MUSE_DOODLE_GAME_MS) {
+        g->phase = MUSE_DOODLE_OVER;
+        clear_all(g);
         return;
     }
     /* Physics is per 50 ms tick; a caller passing a different step
