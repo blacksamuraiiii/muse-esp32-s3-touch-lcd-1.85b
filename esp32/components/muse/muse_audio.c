@@ -501,3 +501,26 @@ void muse_audio_chirp(int rising)
     }
     muse_audio_write(buf, N);
 }
+
+void muse_audio_sfx(muse_sfx_t sfx)
+{
+    if (sfx == MUSE_SFX_START) {
+        /* The start sound is the existing rising chirp, not a table entry. */
+        muse_audio_chirp(1);
+        return;
+    }
+    /* Same PSRAM idiom as chirp: one buffer kept between calls, sized
+     * for the longest table sound (WIN, 330 ms). */
+    static int16_t *buf;
+    if (!buf) {
+        buf = (int16_t *)heap_caps_malloc(MUSE_SFX_MAX_SAMPLES * sizeof(int16_t),
+                                          MALLOC_CAP_SPIRAM);
+        if (!buf) {
+            return;
+        }
+    }
+    size_t n = muse_audio_sfx_render(sfx, buf, MUSE_SFX_MAX_SAMPLES);
+    if (n != 0) {
+        muse_audio_write(buf, n);
+    }
+}

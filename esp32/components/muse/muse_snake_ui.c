@@ -93,6 +93,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "muse_audio.h"   /* game sound effects */
 #include "muse_font.h"
 #include "muse_widgets.h"
 #include "muse_pet.h"
@@ -358,6 +359,8 @@ static bool charge_for_game(void)
         snprintf(note, sizeof(note), "金币不够（需 %u 枚）",
                  (unsigned)MUSE_PET_GAME_STAKE);
         show_note(note);
+        /* Refused at the door: the low sound. */
+        muse_audio_sfx(MUSE_SFX_BAD);
         return false;
     }
     if (!muse_pet_request(PET_FEE)) {
@@ -453,6 +456,10 @@ static void settle_round(void)
     if (coins != 0 && muse_pet_request_play_reward(coins)) {
         s_round_coins = coins;
     }
+    /* Settlement sound: coins in means the round was won (WIN fanfare),
+     * 0 coins means 平. Keyed on what was actually credited, so the
+     * sound matches the "+m 金币" the OVER card shows. */
+    muse_audio_sfx(s_round_coins > 0 ? MUSE_SFX_WIN : MUSE_SFX_DRAW);
 }
 
 static void refresh_display(void)
@@ -514,6 +521,8 @@ static void on_start(lv_event_t *e)
     if (!charge_for_game()) {
         return;
     }
+    /* Charged: the round starts with the start chirp. */
+    muse_audio_sfx(MUSE_SFX_START);
     seed_once();
     s_settled = false;
     s_round_coins = 0;
@@ -529,6 +538,8 @@ static void on_restart(lv_event_t *e)
     if (!charge_for_game()) {
         return;
     }
+    /* Charged: same start chirp as on_start. */
+    muse_audio_sfx(MUSE_SFX_START);
     seed_once();
     s_settled = false;
     s_round_coins = 0;
@@ -620,7 +631,14 @@ static void on_tick(lv_timer_t *t)
     if (s_game.state != MUSE_SNAKE_PLAYING) {
         return;
     }
+    uint16_t score_before = s_game.score;
     muse_snake_tick(&s_game);
+    if (s_game.state == MUSE_SNAKE_PLAYING && s_game.score > score_before) {
+        /* Ate on this tick. Death and eating cannot land on the same
+         * tick (one cell per move), and the OVER branch below plays the
+         * settlement sound instead. */
+        muse_audio_sfx(MUSE_SFX_GOOD);
+    }
     if (s_game.state == MUSE_SNAKE_OVER) {
         lv_timer_pause(s_timer);
         /* The round is over: convert the score once, here and nowhere else,
