@@ -149,8 +149,13 @@ void muse_pet_model_decay(muse_pet_model_t *s, int64_t now)
     uint32_t elapsed = (uint32_t)(day - s->decay_day);
     uint32_t due = elapsed * MUSE_PET_DECAY_PER_DAY;
     /* Floor at zero, never negative (design §4.2). The notice is the amount
-     * actually taken, so the announced number always matches the deduction. */
-    s->decay_notice = due >= s->coins ? s->coins : due;
+     * actually taken, so the announced number always matches the deduction.
+     * It ACCUMULATES across un-ACKed days (audit 2026-11-08): a plain
+     * assignment overwrote yesterday's un-announced notice with today's,
+     * so the earlier day's deduction was never announced. capped_add keeps
+     * it within the wallet cap, so muse_pet_model_valid() still holds. */
+    uint32_t taken = due >= s->coins ? s->coins : due;
+    s->decay_notice = capped_add(s->decay_notice, taken);
     s->coins = due >= s->coins ? 0 : s->coins - due;
     s->decay_day = day;
 }
@@ -236,25 +241,29 @@ muse_pet_result_t muse_pet_model_apply(muse_pet_model_t *s, muse_pet_action_t ac
     }
 
     if (action == PET_GAME) {
-        /* 1.5a (user decision 2026-10-25): the stake is 5 either way -- a win
-         * pays 5, a loss costs 5, a draw costs nothing. `arg` is the outcome
-         * the UI already decided at click time; a round still cannot start
-         * with fewer than 5 coins on hand, so PET_POOR keeps its meaning. */
+        /* Rock-paper-scissors, unified with the other games (user decision
+         * 2026-11-08): a round costs the entry fee up front, then pays back
+         * by outcome -- win MUSE_PET_ROUND_COIN_MAX (20), draw
+         * MUSE_PET_GAME_STAKE (10), loss nothing. Net: win +10, draw 0,
+         * loss -10. `arg` is the outcome the UI already decided at click
+         * time; a round still cannot start with fewer than the entry fee
+         * on hand, so PET_POOR keeps its meaning. */
         if (s->coins < MUSE_PET_GAME_STAKE) {
             return PET_POOR; /* not settled, no round started */
         }
+        s->coins -= MUSE_PET_GAME_STAKE;
         if (arg > 0) {
+            s->coins = capped_add(s->coins, MUSE_PET_ROUND_COIN_MAX);
+        } else if (arg == 0) {
             s->coins = capped_add(s->coins, MUSE_PET_GAME_STAKE);
-        } else if (arg < 0) {
-            s->coins -= MUSE_PET_GAME_STAKE;
         }
         return PET_OK;
     }
 
     if (action == PET_FEE) {
-        /* Entry fee for one snake or whack-a-mole game (user decision
+        /* Entry fee for one of the five games (user decision
          * 2026-10-31; sudoku moved to PET_SUDOKU_ENTRY on 2026-11-01 because
-         * its fee is daily, not per puzzle): same 5-coin gate as PET_GAME, no
+         * its fee is daily, not per puzzle): same 10-coin gate as PET_GAME, no
          * outcome, no refund path -- the UI only sends it after its own
          * snapshot gate passed, so PET_POOR here means the snapshot was stale.
          * `arg` is unused. */
@@ -269,15 +278,17 @@ muse_pet_result_t muse_pet_model_apply(muse_pet_model_t *s, muse_pet_action_t ac
         /* One ticket per calendar day (user decision 2026-11-01): the first
          * entry pays 5, every later entry / 上一题 / 下一题 / 再玩一次 that
          * day is free. Idempotent, so the UI can call it on every action
-         * without a local "already paid" flag to get wrong. */
+         * without a local "already paid" flag to get wrong. The fee is
+         * MUSE_PET_SUDOKU_ENTRY_COINS, decoupled from the other games'
+         * entry fee: sudoku does not follow the 2026-11-08 retune. */
         sudoku_roll(s, day);
         if (s->sudoku_entry_paid) {
             return PET_OK; /* today's ticket is already in hand */
         }
-        if (s->coins < MUSE_PET_GAME_STAKE) {
+        if (s->coins < MUSE_PET_SUDOKU_ENTRY_COINS) {
             return PET_POOR; /* not settled, nothing unlocks */
         }
-        s->coins -= MUSE_PET_GAME_STAKE;
+        s->coins -= MUSE_PET_SUDOKU_ENTRY_COINS;
         s->sudoku_entry_paid = 1;
         return PET_OK;
     }
@@ -301,15 +312,15 @@ muse_pet_result_t muse_pet_model_apply(muse_pet_model_t *s, muse_pet_action_t ac
     }
 
     if (action == PET_PLAY_REWARD) {
-        /* End-of-round payout for snake / whack-a-mole (user decision
-         * 2026-11-01, ceiling retuned to 10 the same day). The UI converts
-         * its own score with muse_pet_round_coins(); the worker clamps
-         * again so a UI bug cannot mint coins, and 0 is a valid settlement
-         * (a scoreless round earns nothing) that still returns PET_OK.
-         * This is the GROSS payout: the 5-coin entry fee was already
-         * charged at round start through PET_FEE, so the round's net is
-         * payout minus 5 and is the UI's to show, not the model's to
-         * fold in. */
+        /* End-of-round payout for any of the five games (user decision
+         * 2026-11-01, ceiling retuned to 10 the same day, then to 20 on
+         * 2026-11-08). The UI converts its own score with
+         * muse_pet_round_coins(); the worker clamps again so a UI bug
+         * cannot mint coins, and 0 is a valid settlement (a scoreless
+         * round earns nothing) that still returns PET_OK. This is the
+         * GROSS payout: the 10-coin entry fee was already charged at round
+         * start through PET_FEE, so the round's net is payout minus 10
+         * and is the UI's to show, not the model's to fold in. */
         uint32_t add = arg > 0 ? (uint32_t)arg : 0;
         if (add > MUSE_PET_ROUND_COIN_HARD_MAX) {
             add = MUSE_PET_ROUND_COIN_HARD_MAX;
@@ -334,7 +345,7 @@ muse_pet_result_t muse_pet_model_apply(muse_pet_model_t *s, muse_pet_action_t ac
         s->fortune = random % MUSE_PET_FORTUNES;
         /* 1.5a (user decision 2026-10-25): a new card pays 20. A same-day
          * repeat returns PET_FORTUNE_SAME above and pays nothing, so the
-         * daily total is touch 50 + feed 30 + fortune 20 = 100. */
+         * daily total is touch 50 + feed 60 + fortune 20 = 130. */
         s->coins = capped_add(s->coins, MUSE_PET_FORTUNE_COINS);
         return PET_FORTUNE_NEW;
     }

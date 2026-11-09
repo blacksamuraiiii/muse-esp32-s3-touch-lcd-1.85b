@@ -138,7 +138,7 @@ int main(void)
     assert(g.score == -9 && g.phase == MUSE_GOLDRAIN_PLAYING);
 
     /* Settlement floor: a negative final score pays 0 coins (the
-     * 10-coin ceiling is muse_pet_round_coins()' job, not this one). */
+     * 20-coin ceiling is muse_pet_round_coins()' job, not this one). */
     assert(muse_goldrain_settle_score(-5) == 0u);
     assert(muse_goldrain_settle_score(0) == 0u);
     assert(muse_goldrain_settle_score(7) == 7u);

@@ -55,11 +55,10 @@
 #include <stdint.h>
 
 #define MUSE_DOODLE_TICK_MS 50u
-/* One round lasts 60 s (user 2026-11-08: a time limit, so a round
- * cannot run on forever). The clock runs only while PLAYING -- the
+/* One round lasts 60 s of PLAYING time (user 2026-11-08: a time limit, so
+ * a round cannot run on forever). The clock runs only while PLAYING -- the
  * UI pauses its timer while paused, so tick() also no-ops unless
- * PLAYING, and the limit is a wall-clock round length, not play
- * time. When it runs out the round ends the same way as falling
+ * PLAYING. When it runs out the round ends the same way as falling
  * out of the bottom (OVER, field cleared, coins settled once). */
 #define MUSE_DOODLE_GAME_MS 60000u
 /* Field geometry, same 240x240 square the other games use. */

@@ -31,12 +31,12 @@
  * Overlays follow the snake page (2026-11-01, one style across the
  * mini games): the PAUSED card has an ACCENT title at y=100 and a
  * 98x66 ACCENT-bordered centre button, and the OVER card has the
- * price "- 5 金币" on its own line under the replay label -- on_restart
+ * price "- 10 金币" on its own line under the replay label -- on_restart
  * charges the fee the moment it is pressed, so the price belongs on
  * the button. The OVER card itself carries no title and no payout line
  * any more (UI polish 2026-11-01): both moved to the page-level title
  * and HUD slots. The PAUSED card carries no restart capsule: it
- * charged 5 coins on a single tap in the narrowest part of the bezel,
+ * charged 10 coins on a single tap in the narrowest part of the bezel,
  * and leaving is the back arrow's job (same decision as snake). The
  * START overlay carries the hint line at y=304 (DIM, same slot as the
  * snake page's hint): "倾斜左右移动，长按中间暂停".
@@ -44,11 +44,11 @@
  * Payout (same as snake / whack-a-mole / goldrain): at OVER the HUD
  * turns gold and reads "本局 n 分，+m 金币" with m the GROSS payout
  * the wallet actually accepted (s_round_coins, from
- * muse_pet_round_coins() -- 1 point per coin, 10 coins per round
+ * muse_pet_round_coins() -- 1 point per coin, 20 coins per round
  * ceiling; the score is settled once, at OVER). The net is
  * deliberately NOT printed: the user said kids cannot tell net apart,
  * so the result shows what was added, not what was gained after the
- * 5-coin entry fee. Clouds give no points and coins are +1, so the
+ * 10-coin entry fee. Clouds give no points and coins are +1, so the
  * score only ever goes up and the HUD never shows a negative.
  *
  * Message slot: the band under the field (y=308) hosts exactly one
@@ -432,11 +432,12 @@ static void pause_game(void)
 }
 
 /* Score -> coins, once per round, at OVER (user decision 2026-11-01,
- * ceiling retuned to 10 the same day). muse_pet_round_coins() is the
- * only conversion curve -- 1 point (one coin) per coin, 10 coins per
- * round ceiling -- and the 5-coin entry fee was already charged at
- * start through PET_FEE, so the round's net is payout minus 5, shown
- * on the OVER card. The score is the coins collected and can never go
+ * ceiling retuned to 20 on 2026-11-08). muse_pet_round_coins() is the
+ * only conversion curve -- 1 point (one coin) per coin, 20 coins per
+ * round ceiling -- and the 10-coin entry fee was already charged at
+ * start through PET_FEE, so the round's net is payout minus 10, computed
+ * on the OVER card, never printed (kids cannot tell net apart: the card
+ * shows what was added, not what was gained). The score is the coins
  * negative (clouds give no points, there is no bomb), so no floor
  * helper is needed -- round_coins() takes an unsigned score. A refused
  * request (worker not ready / queue full) leaves s_round_coins at 0 so
@@ -705,7 +706,7 @@ void muse_doodle_ui_build(lv_obj_t *page, lv_event_cb_t back_cb)
     /* PAUSED overlay: dim, 继续 button with the PLAY symbol above
      * the label (snake's card). No "已暂停" label on the card any
      * more: the page title itself becomes "已暂停" while paused
-     * (user 2026-11-08). No restart capsule: it charged 5 coins on
+     * (user 2026-11-08). No restart capsule: it charged 10 coins on
      * a single tap in the narrowest part of the bezel; the back
      * arrow leaves, and 开始 charges again on the next visit. */
     s_paused_ov = overlay(page, true);

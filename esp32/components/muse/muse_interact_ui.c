@@ -14,27 +14,27 @@
  *     three rows 330x58, radius 18, x = 15, y = 84 / 150 / 216
  *     (row 58 + gap 8): 喂饭, 小游戏, 今日运势. The middle row is a
  *     menu into the mini-game list page, not a game itself, so its
- *     copy ("小游戏 ｜ 每种 -5金币") is constant and it never dims
+ *     copy ("小游戏 ｜ 每种 -10金币") is constant and it never dims
  *     or intercepts -- the coin gate lives inside each game. Coin
  *     line at y = 302. The main page has NO back arrow (its header
  *     back callback is NULL); the face is one swipe away.
  *   - Mini-game list page: title "小游戏" with a back arrow, and a
  *     VERTICALLY SCROLLING column like the settings page's list
- *     (2026-11-01, user request): four 330x58 cards in a flex column,
+ *     (2026-11-01, user request): six 330x58 cards in a flex column,
  *     10px gaps, with the coin line as the column's last item. The
  *     rows keep the main list's 58px height -- the earlier 48px
  *     "compressed" pitch is gone -- and the column scrolls instead,
  *     with a 110px bottom pad so the last row can clear the bottom
- *     curve of the bezel. All four games cost 5 coins per start (user
- *     decision 2026-10-31); the rows only dim when poor, they are
- *     never disabled.
+ *     curve of the bezel. All six games cost 10 coins per start (user
+ *     decision 2026-10-31, retuned 2026-11-08); the rows only dim when
+ *     poor, they are never disabled.
  *   - Subpages are groups inside the interaction tile, all with the same
  *     title/back pattern (title centred y = 52, "<" at centre x = 68).
  *     Since 2026-11-01 every subpage also ends with the same coin line
  *     at y = 302 (user request "统一页面内容"), the sole exception being
  *     石头剪刀布 below.
  *     The 喂饭 subpage keeps its rule line ("每种食物每天 +10") at the
- *     TOP slot (y = 84), above the three 100 px food cards
+ *     TOP slot (y = 84), above the six-food single-row sliding strip
  *     (y = 120), and its result line ("喂了…") at y = 262 -- the slot
  *     the rule line used to own before the two swapped on 2026-11-01
  *     (user request); the food names sit at y = 228 between them.
@@ -43,11 +43,11 @@
  *     with its content centred (grade 36, 28x2 gold rule 66, body 84),
  *     coin line at y = 302.
  *     The 石头剪刀布 game page is the one exception to the coin-slot
- *     rule: its coin line sits at y = 300 and the "点一张手出拳，每局
- *     -5 金币" cost hint at y = 84 (swapped, 2026-11-01, user request),
+ *     rule: its coin line sits at y = 302 and the "点一张手出拳，每局
+ *     -10 金币" cost hint at y = 84 (swapped, 2026-11-01, user request),
  *     because the result / streak lines already own y = 240 / 272.
  *     Tile swipe is DISABLED on every interaction subpage (feed,
- *     fortune, minigame list and the four game boards): a subpage
+ *     fortune, minigame list and the six game boards): a subpage
  *     leaves only through its "<" back arrow, one level up, and the
  *     interaction main page is the only one that swipes (right to the
  *     face). The lock started with the four GAME pages on 2026-10-31
@@ -55,7 +55,7 @@
  *     default 10px scroll limit turned a slightly drifting press into
  *     a tile scroll, which swallowed the click and dropped the player
  *     out of the round) and was extended to the feed, fortune and
- * was extended to the feed, fortune and minigame-list pages on 2026-11-04.
+ *     minigame-list pages on 2026-11-04.
  * muse_interact_ui_swipe_locked() reports that state for muse_ui.c (backstop,
  * and the rule chrome already uses for settings subpages); since 1.5.1d
  * show_page() also toggles it directly, so leaving a subpage re-enables the
@@ -330,7 +330,7 @@ static void show_page(int page)
 bool muse_interact_ui_swipe_locked(void)
 {
     /* Any interaction subpage: 喂食, 今日运势, 小游戏 (the minigame list)
-     * and the six game boards (小游戏 / 贪吃蛇 / 数独 / 打地鼠 /
+     * and the six game boards (加减练习 / 石头剪刀布 / 贪吃蛇 / 打地鼠 /
      * 金币雨 / 毛毛跳跃). Only the
      * main page swipes, right to the face. A subpage leaves through its
      * "<" back arrow, one level up; BOOT is the exception, and it does not
@@ -348,13 +348,13 @@ static void on_back(lv_event_t *e)
      * menu) to the menu, from the menu and the other subpages to the
      * main page, and from the main page to the face. A subpage back that
      * skipped a level would break the "left < = one level up" rule. The
-     * six menu games (game, sudoku, snake, whack-a-mole, goldrain,
+     * six menu games (game, mathpractice, snake, whack-a-mole, goldrain,
      * doodle) all land on the menu; feed and fortune are main-page rows,
      * so they still land on the main page. Leaving a game page pauses a
      * running game through its hide hook (snake keeps its board,
-     * whack-a-mole, goldrain and doodle resume from their pause
-     * overlays), so none plays on off-screen; the other subpages keep
-     * their own return-visit rules. */
+     * whack-a-mole, goldrain, doodle and mathpractice resume from their
+     * pause overlays), so none plays on off-screen; the other subpages
+     * keep their own return-visit rules. */
     if (s_page == IC_PAGE_SNAKE) {
         muse_snake_ui_hide();
     }
@@ -451,7 +451,7 @@ static void refresh_status(void)
               feed_done ? "喂饭 ｜ 今日已领满" : "喂饭 ｜ 每种 +10金币");
     lv_obj_set_style_text_color(s_btn_feed_lbl,
                                 lv_color_hex(feed_done ? MUSE_THEME_DIM : MUSE_THEME_TEXT), 0);
-    set_label(s_btn_game_lbl, "小游戏 ｜ 每种 -5金币");
+    set_label(s_btn_game_lbl, "小游戏 ｜ 每种 -10金币");
     lv_obj_set_style_text_color(s_btn_game_lbl, lv_color_hex(MUSE_THEME_TEXT), 0);
     if (s_snap.fortune_day >= 0) {
         const char *grade = muse_pet_fortune_grade(s_snap.fortune);
@@ -463,7 +463,7 @@ static void refresh_status(void)
     }
 
     /* Mini-game rows: snake, whack-a-mole, goldrain, doodle and
-     * 加减练习 cost 5 coins per start, so they dim together
+     * 加减练习 cost 10 coins per start, so they dim together
      * when nothing can be started. (数独 used to cost 5 once per
      * calendar day -- a day's ticket already paid meant it stayed
      * bright even at 0 coins -- but it is ARCHIVED 2026-11-08, see
@@ -637,8 +637,8 @@ static void on_feed_food(lv_event_t *e)
 {
     /* Feed is the one subpage that closes on choice (design §5.2): the
      * feedback is the subtitle + the coin balance, not a feed-page state.
-     * The food index is the action value: PET_FEED_RICE/CAKE/COFFEE
-     * settle identically, but the subtitle needs to know WHICH food was
+     * The food index is the action value: the six PET_FEED_* food
+     * actions settle identically, but the subtitle needs to know WHICH
      * fed, so it is remembered here and matched against the feedback's
      * action in drain_feedback(). */
     int idx = (int)(intptr_t)lv_event_get_user_data(e);
@@ -681,9 +681,10 @@ static const lv_image_dsc_t *hand_img(int choice)
 
 /* 1 beats 0, 2 beats 1, 0 beats 2 (paper wraps rock, scissors cut paper,
  * rock crushes scissors). Returns +1 player wins, -1 player loses,
- * 0 draw. This is UI-local: the model never settles win/loss (design
- * §5.2 -- the model only deducts the 5 coins; the random result is
- * decided at click time, in this file, and never enters NVS). */
+ * 0 draw. This is UI-local: the random result is decided at click time,
+ * in this file, and passed to the model as PET_GAME's arg; the model then
+ * settles it as entry fee + outcome payout (win 20 / draw 10 / loss 0),
+ * and the result itself never enters NVS. */
 static int game_result(int player, int house)
 {
     if (player == house) {
@@ -785,19 +786,21 @@ static void game_start(int choice)
     if (s_game_phase == IC_GAME_SHAKE) {
         return; /* shake: buttons are dimmed and not re-clickable */
     }
-    if (!s_have_snap || s_snap.coins < 5) {
+    if (!s_have_snap || s_snap.coins < MUSE_PET_GAME_STAKE) {
         /* Poor, checked against the last snapshot before any settlement
-         * (design §5.2: coins < 5 never settles, never starts a round). */
+         * (design §5.2: coins under the entry fee never settle, never
+         * start a round). */
         write_pet_caption("金币不够，先摸摸 / 喂饭 / 抽运势");
         game_hint("金币不够，先摸摸 / 喂饭 / 抽运势");
         return;
     }
-    /* The result is decided NOW, at click time (design §5.2), and 1.5a
-     * settles by result (+5 win / -5 loss / 0 draw), so the worker needs it
-     * before it can apply anything. The animation that follows only reveals
-     * this already-decided outcome. If the feedback later comes back
-     * PET_POOR (snapshot was stale and the balance actually was < 5), the
-     * round is cancelled in drain_feedback() and nothing was settled. */
+    /* The result is decided NOW, at click time (design §5.2), and PET_GAME
+     * settles it as entry fee + outcome payout (win 20 / draw 10 / loss 0),
+     * so the worker needs it before it can apply anything. The animation
+     * that follows only reveals this already-decided outcome. If the
+     * feedback later comes back PET_POOR (snapshot was stale and the
+     * balance actually was under the entry fee), the round is cancelled
+     * in drain_feedback() and nothing was settled. */
     int player = choice;
     int house = (int)(esp_random() % 3);
     int outcome = game_result(player, house);
@@ -896,7 +899,7 @@ static void game_tick(void)
             /* Reveal hold ends: hands leave, choice row returns, result
              * text + streak stay. No auto-leave, no power lock
              * (design §5.2). A click on a choice now starts the next
-             * round (and re-checks the 5-coin balance first). */
+             * round (and re-checks the entry-fee balance first). */
             lv_obj_add_flag(s_game_you_img, LV_OBJ_FLAG_HIDDEN);
             lv_obj_add_flag(s_game_house_img, LV_OBJ_FLAG_HIDDEN);
             for (int i = 0; i < 3; i++) {
@@ -1060,7 +1063,7 @@ static void drain_feedback(void)
         }
         case PET_GAME:
             if (fb.result == PET_POOR) {
-                /* Snapshot was stale: the 5 coins were never deducted,
+                /* Snapshot was stale: the 10 coins were never deducted,
                  * so there is nothing to refund -- cancel the animation
                  * (which was only a reveal of a never-started game). */
                 reset_game_view();
@@ -1078,12 +1081,13 @@ static void drain_feedback(void)
             break;
         case PET_FEE:
             if (fb.result == PET_POOR) {
-                /* Snapshot was stale: the 5 coins were never deducted,
+                /* Snapshot was stale: the 10 coins were never deducted,
                  * so there is nothing to refund -- cancel the game
                  * (which was only a start of a never-settled game).
-                 * Snake, whack-a-mole, goldrain and doodle share PET_FEE; all
-                 * four expose a cancel hook, so route by the visible page so a
-                 * refusal for one game never touches another's overlay. */
+                 * Snake, whack-a-mole, goldrain, doodle and mathpractice
+                 * share PET_FEE; all five expose a cancel hook, so route
+                 * by the visible page so a refusal for one game never
+                 * touches another's overlay. */
                 if (s_page == IC_PAGE_WHACKAMOLE) {
                     muse_whackamole_ui_fee_refused();
                 } else if (s_page == IC_PAGE_DOODLE) {
@@ -1122,7 +1126,7 @@ static void drain_feedback(void)
             if (fb.result == PET_POOR) {
                 char cap[48];
                 snprintf(cap, sizeof(cap), "金币不够（数独入场 %u 枚）",
-                         (unsigned)MUSE_PET_GAME_STAKE);
+                         (unsigned)MUSE_PET_SUDOKU_ENTRY_COINS);
                 write_pet_caption(cap);
             } else if (fb.result == PET_STORAGE) {
                 write_pet_caption("互动数据损坏");
@@ -1257,7 +1261,7 @@ static void build_main(void)
     s_btn_feed = main_button(s_main_page, IC_LIST_TOP, "喂饭 ｜ 每种 +10金币",
                              on_open_feed, &s_btn_feed_lbl);
     s_btn_game = main_button(s_main_page, IC_LIST_TOP + IC_ROW_H + IC_ROW_GAP,
-                             "小游戏 ｜ 每种 -5金币", on_open_minigame, &s_btn_game_lbl);
+                             "小游戏 ｜ 每种 -10金币", on_open_minigame, &s_btn_game_lbl);
     s_btn_fortune = main_button(s_main_page,
                                 IC_LIST_TOP + 2 * (IC_ROW_H + IC_ROW_GAP),
                                 "今日运势 ｜ 未抽", on_fortune_open,
@@ -1419,11 +1423,11 @@ static void build_game(void)
     /* Rock-paper-scissors page: its own title now that "小游戏" is the
      * mini-game menu (2026-10-31), so the two pages never share a name. */
     page_header(s_game_page, "石头剪刀布", on_back);
-    /* Coin line sits in the BOTTOM slot (y = 300) since 2026-11-01: it
+    /* Coin line sits in the BOTTOM slot (y = 302) since 2026-11-01: it
      * traded places with the "点一张手出拳" instruction line, which now
      * takes this page's top slot (y = 84). Text, colour and refresh
      * logic are unchanged -- only the y offset moved, so the coin line
-     * still lines up with the other pages' coin slot (y = 302). */
+     * lines up with the other pages' coin slot. */
     lv_obj_t *coins = label(s_game_page, muse_font_cjk(), MUSE_THEME_TEXT, "金币 --/100");
     lv_obj_align(coins, LV_ALIGN_TOP_MID, 0, 302);
     /* The coin line is a live status, not a static label: refresh_status
@@ -1507,7 +1511,7 @@ static void build_game(void)
      * 2026-11-01. Same copy and DIM colour as before; 84 is the main
      * page's first-row y, so it clears the title (centre y = 52) and
      * stops ~1 px above the reveal hands (top y = 105). */
-    s_game_hint_lbl = label(s_game_page, muse_font_cjk(), MUSE_THEME_DIM, "点一张手出拳，每局 -5 金币");
+    s_game_hint_lbl = label(s_game_page, muse_font_cjk(), MUSE_THEME_DIM, "点一张手出拳，每局 -10 金币");
     lv_obj_align(s_game_hint_lbl, LV_ALIGN_TOP_MID, 0, 84);
 }
 
