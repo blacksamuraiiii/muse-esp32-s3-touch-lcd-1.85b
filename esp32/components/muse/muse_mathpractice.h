@@ -2,7 +2,7 @@
 /*
  * muse_mathpractice.h -- 加减练习 logic (no LVGL, no ESP-IDF).
  *
- * One 3-minute round of two question kinds (user decision 2026-11-08,
+ * One 2-minute round of two question kinds (user decision 2026-11-08,
  * the round that fused 凑十法练习 into this game):
  *
  *   - ADD_TEN: a + b with a, b in 2..9 and 11 <= a + b <= 18, so the
@@ -42,8 +42,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-/* One round is 3 minutes (user 2026-11-08, was 30 s). */
-#define MUSE_MATHPRACTICE_GAME_MS 180000u
+/* One round is 2 minutes (user 2026-11-09, was 3 minutes). */
+#define MUSE_MATHPRACTICE_GAME_MS 120000u
 #define MUSE_MATHPRACTICE_TICK_MS 50u
 /* How long the verdict stays up before the next question is dealt
  * (user 2026-11-08). Answer taps are ignored during it. */
@@ -109,8 +109,8 @@ void muse_mathpractice_resume(muse_mathpractice_t *g);
 void muse_mathpractice_restart(muse_mathpractice_t *g);
 
 /* Advance the game by `ms` milliseconds. No-op unless PLAYING. Runs
- * the 3-minute clock and the verdict window: when the verdict time is
- * up the next question is dealt. Ends the game at 3 minutes (OVER),
+ * the 2-minute clock and the verdict window: when the verdict time is
+ * up the next question is dealt. Ends the game at 2 minutes (OVER),
  * which also clears a pending verdict. */
 void muse_mathpractice_tick(muse_mathpractice_t *g, uint32_t ms);
 
@@ -125,5 +125,5 @@ bool muse_mathpractice_answer(muse_mathpractice_t *g, muse_mathpractice_cmp_t cm
 /* The true value of the current equation (a + b or a - b). */
 int muse_mathpractice_value(const muse_mathpractice_t *g);
 
-/* Remaining whole seconds, rounded up (180 at start, 0 at the end). */
+/* Remaining whole seconds, rounded up (120 at start, 0 at the end). */
 uint32_t muse_mathpractice_remaining_s(const muse_mathpractice_t *g);

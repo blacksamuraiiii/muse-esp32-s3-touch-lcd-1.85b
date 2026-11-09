@@ -15,7 +15,7 @@
  *   - a right pick is +1, a wrong one +0 (never negative);
  *   - the verdict holds for FEEDBACK_MS: no new question, no answer
  *     taken, then the next question lands;
- *   - the round is 3 minutes (MUSE_MATHPRACTICE_GAME_MS).
+ *   - the round is 2 minutes (MUSE_MATHPRACTICE_GAME_MS).
  */
 #include <assert.h>
 #include <stdbool.h>
