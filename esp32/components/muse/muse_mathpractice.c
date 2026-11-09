@@ -54,12 +54,12 @@ static void deal(muse_mathpractice_t *g)
         g->b = lo + rand() % (MUSE_MATHPRACTICE_ADDEND_MAX - lo + 1);
     }
     int value = eq_value(g);
-    /* The comparison number: true value, or a near-miss +-1 / +-2. */
+    /* The comparison number: true value, or a near-miss +-1 / +-2.
+     * value is >= 2 in both kinds (ADD_TEN sums to 11..18, SUB_TEN
+     * differences are 2..9), and the smallest delta is -2, so d >= 0
+     * always -- no clamp needed (audit 2026-11-08 removed a dead one). */
     static const int deltas[] = {0, 1, -1, 2, -2};
     g->d = value + deltas[rand() % (int)(sizeof(deltas) / sizeof(deltas[0]))];
-    if (g->d < 0) {
-        g->d = 0;
-    }
     g->correct = value > g->d ? MUSE_MATHPRACTICE_CMP_GT
                 : value < g->d ? MUSE_MATHPRACTICE_CMP_LT
                                : MUSE_MATHPRACTICE_CMP_EQ;

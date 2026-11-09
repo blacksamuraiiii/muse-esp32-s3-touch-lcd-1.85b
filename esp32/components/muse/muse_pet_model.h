@@ -19,15 +19,16 @@
  *  - No hunger / mood / energy / sfx / last_time fields at all (design §4.1
  *    allows keeping them inert, but dropping them is stronger: they cannot
  *    silently affect coins).
- *  - Feed is three action values (rice / cake / coffee) that settle
- *    identically. The design calls feed one action; the three UI buttons need
- *    a way for phase-2 UI to know which food was fed for its subtitle
- *    ("喂了<食物名>"), and the command queue carries only an action value,
- *    so the food is encoded in the action. Reward is identical for all three.
+ *  - Feed is six action values (rice / cake / coffee / hamburger / pizza /
+ *    milk tea) that settle identically. The design calls feed one action;
+ *    the six UI buttons need a way for phase-2 UI to know which food was fed
+ *    for its subtitle ("喂了<食物名>"), and the command queue carries only an
+ *    action value, so the food is encoded in the action. Reward is identical
+ *    for all six.
  *  - Day numbers come from muse_pet_day(), which is a UTC day
  *    (epoch / 86400 + MUSE_PET_DAY_OFFSET_SECONDS, TZ-independent,
- *    user decision 2026-10-25). The boundary is 08:00 Beijing time
- *    with the default offset 0, not local midnight.
+ *    user decision 2026-10-25). The boundary is local midnight
+ *    (offset 8*3600, retuned 2026-11-05), not 08:00 Beijing time.
  */
 #pragma once
 
@@ -44,8 +45,11 @@
 #define MUSE_PET_FEED_COINS 10u        /* per food, once per food per day */
 #define MUSE_PET_FEED_KINDS 6u         /* rice / cake / coffee / burger / pizza / milk tea */
 #define MUSE_PET_FEED_DAILY_MAX 60u    /* six foods x 10 (user decision 2026-11-07) */
-#define MUSE_PET_GAME_STAKE 5u         /* win +5, lose -5, draw 0; also the entry fee
-                                        * of every mini-game (PET_FEE / PET_SUDOKU_ENTRY) */
+#define MUSE_PET_GAME_STAKE 10u        /* entry fee of every mini-game
+                                        * (PET_FEE) and the rock-paper-
+                                        * scissors round: win +10 net,
+                                        * draw 0, loss -10 (user decision
+                                        * 2026-11-08, retuned from 5) */
 #define MUSE_PET_FORTUNE_COINS 20u     /* once a day, paid with the new card */
 #define MUSE_PET_DECAY_PER_DAY 20u     /* living cost, per calendar day */
 #define MUSE_PET_FORTUNES 20u          /* fortune cards in muse_pet_text.c */
@@ -54,24 +58,28 @@
  * Score -> coin conversion (user decision 2026-11-01, corrected the same
  * day; retuned 2026-11-01 again after 1.5f shipped the 5-coin ceiling as
  * "v4": the two score games follow the rock-paper-scissors rule -- a
- * round costs the 5-coin entry fee up front (PET_FEE) and pays back
+ * round costs the 10-coin entry fee up front (PET_FEE) and pays back
  * 1 coin per point, so the round's NET is payout minus fee:
  *
- *   payout = min(MUSE_PET_ROUND_COIN_MAX, score) = min(10, score)
- *   net    = payout - 5     ->  10 points = +5, 5 points = 0 (a draw),
- *                               0 points = -5 (a loss), exactly the
- *                               win / draw / loss of rock-paper-scissors.
+ *   payout = min(MUSE_PET_ROUND_COIN_MAX, score) = min(20, score)
+ *   net    = payout - 10    ->  20 points = +10, 10 points = 0 (a draw),
+ *                               0 points = -10 (a loss), exactly the
+ *                               win / draw / loss of rock-paper-scissors
+ *                               (retuned from 5 / 10 on 2026-11-08).
  *
- * The conversion lives in muse_pet_round_coins() and nowhere else, so
- * snake and whack-a-mole cannot drift apart. The 10-coin ceiling is what
- * keeps games from minting coins -- not the curve, which is 1:1.
+ * The conversion lives in muse_pet_round_coins() (and its capped variant
+ * muse_pet_round_coins_cap(), which the math game uses with its own
+ * ceiling), so the five games cannot drift apart. The 20-coin ceiling is
+ * what keeps games from minting coins -- not the curve, which is 1:1.
  */
 #define MUSE_PET_SCORE_PER_COIN 1u     /* points per coin (1:1) */
-#define MUSE_PET_ROUND_COIN_MAX 10u    /* per-round payout ceiling */
+#define MUSE_PET_ROUND_COIN_MAX 20u    /* per-round payout ceiling */
 /* 加减练习 is a 3-minute round since 2026-11-08 (user decision), so its
  * per-round ceiling was raised to 20 the same day -- a 3-minute round
- * would otherwise top out in its first third. Every other game stays at
- * MUSE_PET_ROUND_COIN_MAX (10). The worker clamps PET_PLAY_REWARD to the
+ * would otherwise top out in its first third. Every other game now also
+ * uses 20 (MUSE_PET_ROUND_COIN_MAX, retuned 2026-11-08), so this constant
+ * is the same value; it stays as its own knob in case the 3-minute game
+ * ever wants a different ceiling. The worker clamps PET_PLAY_REWARD to the
  * hard maximum below, so a UI bug still cannot mint more than any game's
  * ceiling. */
 #define MUSE_PET_ROUND_COIN_MAX_MATHPRACTICE 20u
@@ -87,8 +95,14 @@
  * up to 10 (user decision 2026-11-01, transition edge). The entry fee
  * itself is charged ONCE per day (PET_SUDOKU_ENTRY), no matter how many
  * puzzles the player flips through afterwards, so a sudoku day nets at
- * most +5 (ticket 5, first win 10).
+ * most +5 (ticket 5, first win 10). The entry fee is its own constant
+ * (MUSE_PET_SUDOKU_ENTRY_COINS, 5): sudoku does NOT follow the 2026-11-08
+ * economy retune (user decision, "数独不跟" -- it is archived for now
+ * because its 6x6 grid is too small to read on the 360px round screen),
+ * so it stays 5 even though the other games' entry fee is now 10.
  */
+#define MUSE_PET_SUDOKU_ENTRY_COINS 5u  /* sudoku's daily ticket, decoupled
+                                        * from MUSE_PET_GAME_STAKE */
 #define MUSE_PET_SUDOKU_SOLVE_COINS 10u /* the day's first completed puzzle */
 #define MUSE_PET_SUDOKU_DAILY_MAX 10u   /* per day: the first completion pays */
 
@@ -106,18 +120,19 @@
  * UI clears it with PET_DECAY_ACK after showing it (design §4.2).
  * The sudoku_* trio is the mini-game daily ledger (v4, user decision
  * 2026-11-01; grant retuned 2026-11-01, layout unchanged so the version
- * stays 4): sudoku_entry_paid is 1 once that day's 5-coin entry fee has
- * been settled, and sudoku_reward_coins is the coins this day's solved
- * puzzles have paid (0, or 10 once the day's first completion has paid;
- * a v4 blob's stored 5 also counts as paid, never topped up). Both roll
- * when sudoku_day advances; see muse_pet_sudoku_today(). */
+ * stays 4): sudoku_entry_paid is 1 once that day's 5-coin sudoku entry
+ * fee (MUSE_PET_SUDOKU_ENTRY_COINS) has been settled, and
+ * sudoku_reward_coins is the coins this day's solved puzzles have paid
+ * (0, or 10 once the day's first completion has paid; a v4 blob's stored
+ * 5 also counts as paid, never topped up). Both roll when sudoku_day
+ * advances; see muse_pet_sudoku_today(). */
 typedef struct {
     uint32_t version;
     uint32_t coins;              /* 0..100 */
     int32_t touch_day;           /* day of the current touch cap, -1 = none */
     uint32_t daily_touch_coins;  /* 0..50 */
     int32_t feed_day;            /* day of the current feed cap, -1 = none */
-    uint32_t feed_mask;          /* bits 0..2: that food already paid today */
+    uint32_t feed_mask;          /* bits 0..5: that food already paid today */
     int32_t fortune_day;         /* day of the current fortune, -1 = never */
     uint32_t fortune;            /* 0..19, valid only if fortune_day >= 0 */
     int32_t decay_day;           /* last day living cost was settled, -1 = none */
@@ -136,14 +151,14 @@ typedef struct {
  * may send it (see the muse_input.c patch note).
  * PET_FEE deducts one round's entry fee (MUSE_PET_GAME_STAKE) for a snake
  * or whack-a-mole game (user decision 2026-10-31): the UI gates on the
- * snapshot first, and the worker re-checks -- under 5 coins it returns
- * PET_POOR and settles nothing, exactly like PET_GAME's gate. It never
- * changes the persisted layout.
+ * snapshot first, and the worker re-checks -- under MUSE_PET_GAME_STAKE
+ * coins it returns PET_POOR and settles nothing, exactly like PET_GAME's
+ * gate. It never changes the persisted layout.
  * PET_SUDOKU_ENTRY is the sudoku page's entry fee (user decision 2026-11-01):
  * charged at most ONCE per calendar day, idempotent -- a second request on
  * the same day is PET_OK and moves nothing, so flipping puzzles (上一题 /
- * 下一题) and 再玩一次 are all free. Under 5 coins and unpaid it returns
- * PET_POOR, again without settling.
+ * 下一题) and 再玩一次 are all free. Under MUSE_PET_SUDOKU_ENTRY_COINS
+ * and unpaid it returns PET_POOR, again without settling.
  * PET_SUDOKU_SOLVE is the completion reward (arg unused): it pays
  * MUSE_PET_SUDOKU_SOLVE_COINS (10) for the day's first completion and
  * PET_CAP for every later puzzle -- and for any day whose ledger already
@@ -151,9 +166,10 @@ typedef struct {
  * paid and never topped up to 10.
  * PET_PLAY_REWARD settles a finished score-based round: arg is the coin
  * amount the UI converted with muse_pet_round_coins(), clamped here to
- * 0..MUSE_PET_ROUND_COIN_MAX (10) so a UI bug cannot mint coins. The
- * round's net is that payout minus the 5-coin entry fee the UI already
- * charged with PET_FEE; the model never nets the two itself. */
+ * 0..MUSE_PET_ROUND_COIN_HARD_MAX (20, the absolute ceiling across all
+ * games) so a UI bug cannot mint coins. The round's net is that payout
+ * minus the 10-coin entry fee the UI already charged with PET_FEE; the
+ * model never nets the two itself. */
 typedef enum {
     PET_TOUCH = 0,
     PET_FEED_RICE,
@@ -181,8 +197,9 @@ typedef enum {
     PET_OK = 0,
     PET_COIN,          /* touch paid */
     PET_CAP,           /* daily cap reached: touch = happy only, no coins;
-                        * sudoku = today's 5 coins already paid, no coins */
-    PET_POOR,          /* game/fee: coins < 5, not settled, no round started */
+                        * sudoku = today's 10 coins already paid, no coins */
+    PET_POOR,          /* game/fee: coins < the entry fee, not settled,
+                        * no round started */
     PET_FORTUNE_NEW,   /* new card drawn */
     PET_FORTUNE_SAME,  /* same-day (or prior) card shown again */
     PET_STORAGE,       /* NVS write failed: state was NOT changed */
@@ -196,10 +213,10 @@ typedef enum {
 void muse_pet_model_init(muse_pet_model_t *s);
 bool muse_pet_model_valid(const muse_pet_model_t *s);
 
-/* Coins a finished round's score converts to: min(10, score), i.e. 1:1 with
- * the 10-coin ceiling. The only place the conversion curve lives, so snake
+/* Coins a finished round's score converts to: min(20, score), i.e. 1:1 with
+ * the 20-coin ceiling. The only place the conversion curve lives, so snake
  * and whack-a-mole cannot drift apart. Call it with the round's final score
- * at OVER, never per point. The entry fee (5, charged at start through
+ * at OVER, never per point. The entry fee (10, charged at start through
  * PET_FEE) is NOT subtracted here: the UI shows payout and net separately,
  * so the conversion must stay the gross payout. */
 uint32_t muse_pet_round_coins(uint32_t score);
@@ -271,9 +288,10 @@ void muse_pet_model_roll_daily(muse_pet_model_t *s, int64_t now);
 muse_pet_result_t muse_pet_model_apply(muse_pet_model_t *s, muse_pet_action_t action,
                                        int64_t now, uint32_t random, int32_t arg);
 
-/* True for the three feed actions. */
+/* True for the six feed actions. */
 bool muse_pet_action_is_feed(muse_pet_action_t action);
 
-/* 0..2 (rice / cake / coffee) for a feed action, -1 for anything else. The
+/* 0..5 (rice / cake / coffee / hamburger / pizza / milk tea) for a feed
+ * action, -1 for anything else. The
  * index is the bit in feed_mask, so each food pays once per day on its own. */
 int muse_pet_feed_index(muse_pet_action_t action);

@@ -24,13 +24,18 @@
  *
  * Per-state animation: boot fade, idle bob + blink, listening lean-in,
  * thinking glance, speaking mouth, error wobble, off dim, pet "happy"
- * reaction (big grin + floating heart).
+ * reaction (big grin + floating heart). Speaking also runs the upstream
+ * choreography (muse_speaking.h, bd7ea66) -- mouth by speech energy with a
+ * syllable rhythm for caption-paced replies, gaze toward the active
+ * gesture, a small nod. No hands or brows: those engine outputs have no
+ * target on this face.
  *
  * Drop this file at:  components/muse/avatar/muse_pixel.c
  * (that directory is gitignored; delete the file to go back to default)
  */
 
 #include "muse_pixel.h"
+#include "muse_speaking.h" /* upstream bd7ea66: speaking choreography; face outputs only (mouth/gaze/nod) -- MaoMao has no hands or brows */
 
 #include <math.h>
 #include <string.h>
@@ -334,12 +339,20 @@ static void draw_eye(int cx, int cy, float open, int look_dx, int look_dy)
  * has the rows around 39..43 and the columns cx-4..cx+4 to itself: anything
  * wider or lower draws over the chin outline or the hair behind it. Every
  * mouth is one pixel thick for the same reason - two rows read as a smear at
- * three screen pixels a cell - and none of them use teeth. */
+ * three screen pixels a cell - and none of them use teeth.
+ * `mouth_o`: when speaking, a mid-range mouth with no voice heard yet
+ * (caption-paced reply) draws the small rounded "o" instead of the open
+ * ellipse -- upstream bd7ea66's MOUTH_O, same shape as LISTENING's. */
 static void draw_mouth(int cx, int my, muse_mode_t mode, float level,
-                       float happy)
+                       float happy, bool mouth_o)
 {
     switch (mode) {
     case MUSE_MODE_SPEAKING: {
+        if (mouth_o) {
+            /* Rounded "o": a syllable shape, not a wide-open mouth. */
+            ellipse_o(cx, my - 1, 2, 2, C_MOUTH, C_OUT);
+            break;
+        }
         /* Opens with the audio level; tongue once it is wide open. Kept to
          * h <= 3 so the chin outline at row 44 stays clear of the mouth. */
         int h = 1 + (int)(level * 2);
@@ -396,6 +409,24 @@ void muse_pixel_render(const muse_pose_t *p)
     float happy = clampf(p->happy, 0, 1);
     float level = clampf(p->level, 0, 1);
 
+    /* Speaking choreography (upstream bd7ea66, face outputs only).
+     * frame_tick runs at frame_ms (40 ms on S3 boards), so dt is 0.04 s --
+     * the same step the blink/bob timers below already assume. */
+    static muse_speaking_t s_speech;
+    muse_speaking_update(&s_speech, mode == MUSE_MODE_SPEAKING, 0.04f,
+                         p->mode_t, level);
+    /* Mouth: the engine's smoothed mouth replaces the raw level while
+     * speaking (voice-driven when heard, syllable rhythm + breaths when the
+     * reply is caption-paced). Mid-range + no voice yet -> rounded "o". */
+    float mouth_level = level;
+    bool mouth_o = false;
+    if (mode == MUSE_MODE_SPEAKING) {
+        mouth_level = s_speech.mouth;
+        if (mouth_level > 0.16f && mouth_level < 0.55f &&
+            (!s_speech.heard_voice || level < s_speech.energy * 0.8f))
+            mouth_o = true;
+    }
+
     /* Boot: fade the whole figure in over ~1s. */
     float fade = mode == MUSE_MODE_BOOT ? clampf(p->mode_t / 1.0f, 0, 1) : 1.0f;
 
@@ -423,6 +454,10 @@ void muse_pixel_render(const muse_pose_t *p)
         look_dy = (int)roundf(cosf(t * 2.3f) * 1.0f);
     } else if (mode == MUSE_MODE_LISTENING) {
         look_dy = -1;
+    } else if (mode == MUSE_MODE_SPEAKING) {
+        /* Gaze follows the speaking choreography: pupils drift toward the
+         * side of the active gesture (same +-2.5-cell scale as thinking). */
+        look_dx = (int)roundf(s_speech.gaze * 2.5f);
     }
 
     memset(s_fb, C_BG, sizeof(s_fb));
@@ -430,7 +465,13 @@ void muse_pixel_render(const muse_pose_t *p)
         return;
 
     int cx = 32;
-    int cy = 28 + bob + lean;
+    /* Nod: the choreography's nod shifts the whole face. The engine's nod
+     * is scaled x2 here -- upstream's float renderer uses x0.8 on sub-pixel
+     * shifts, but this grid is integer cells, so x0.8 would round to 0 and
+     * the nod would never be visible. x2 keeps it to +-1 cell at the peaks,
+     * the same amplitude as the idle bob. */
+    int nod = mode == MUSE_MODE_SPEAKING ? (int)roundf(s_speech.nod * 2.0f) : 0;
+    int cy = 28 + bob + lean + nod;
 
     /* -- Dress (bottom of frame) --
      * The UI keeps the grid's bottom three rows clear for the mic level meter
@@ -478,7 +519,7 @@ void muse_pixel_render(const muse_pose_t *p)
     fill_ellipse(cx + 16, cy + 11, 3, 2, C_BLUSH);
 
     /* -- Mouth -- */
-    draw_mouth(cx, cy + 12, mode, level, happy);
+    draw_mouth(cx, cy + 12, mode, mouth_level, happy, mouth_o);
 
     /* v8: no hair rim. v7 traced the hair's outer boundary in C_HAIRR so the
      * head would not vanish on a black screen, but that stroke drew the hair as
