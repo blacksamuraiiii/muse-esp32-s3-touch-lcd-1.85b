@@ -444,7 +444,8 @@ static void pause_game(void)
  * start through PET_FEE, so the round's net is payout minus 10, computed
  * on the OVER card, never printed (kids cannot tell net apart: the card
  * shows what was added, not what was gained). The score is the coins
- * negative (clouds give no points, there is no bomb), so no floor
+ * collected and can never go negative (clouds give no points, there is
+ * no bomb), so no floor
  * helper is needed -- round_coins() takes an unsigned score. A refused
  * request (worker not ready / queue full) leaves s_round_coins at 0 so
  * the card never claims coins the wallet did not get. */
