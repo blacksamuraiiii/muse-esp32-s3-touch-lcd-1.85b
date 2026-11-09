@@ -70,7 +70,7 @@ void muse_audio_chirp(int rising);
  * the volume slider, so there is no separate game-volume setting. */
 typedef enum {
     MUSE_SFX_GOOD,   /* score / coin / correct answer: 880 -> 1318 Hz, 120 ms */
-    MUSE_SFX_BAD,    /* bomb / wrong answer / loss / fee refused: 200 -> 100 Hz, 120 ms */
+    MUSE_SFX_BAD,    /* bomb / wrong answer / loss / fee refused: 300 -> 150 Hz, 120 ms */
     MUSE_SFX_DRAW,   /* draw / 0-coin settlement: 660 Hz, 120 ms */
     MUSE_SFX_PLACE,  /* tic-tac-toe placement / RPS punch: 900 Hz, 45 ms */
     MUSE_SFX_WIN,    /* won the round: 523 -> 659 -> 784 Hz arpeggio, 330 ms */
@@ -109,10 +109,15 @@ static inline size_t muse_audio_sfx_render(muse_sfx_t sfx, int16_t *out, size_t 
      * and FORTUNE are two/three notes back to back, each with its own
      * envelope and phase -- the same shape as the reference renders in
      * sfx-demo/gen-v4.py (one note() call per note, concatenated). EAT's
-     * middle note is a 40 ms silent gap (amp 0), not a tone. */
+     * middle note is a 40 ms silent gap (amp 0), not a tone.
+     * BAD is the loudest entry on purpose (user 2026-11-09: the wrong
+     * answer / bomb sound was too quiet). Its old 200 -> 100 Hz sat in
+     * the band where this small speaker gives almost no output, so the
+     * glide was moved up to 300 -> 150 Hz and the peak raised 9000 ->
+     * 18000 (peak 1.3 x amp = 23400, 71% of full scale, no clipping). */
     static const muse_sfx_note_t notes[] = {
         /* GOOD  */ {880.0f, 880.0f, 60, 7000}, {1318.0f, 1318.0f, 60, 7000},
-        /* BAD   */ {200.0f, 100.0f, 120, 9000},
+        /* BAD   */ {300.0f, 150.0f, 120, 18000},
         /* DRAW  */ {660.0f, 660.0f, 120, 7000},
         /* PLACE */ {900.0f, 900.0f, 45, 5000},
         /* WIN   */ {523.0f, 523.0f, 110, 7000}, {659.0f, 659.0f, 110, 7000},

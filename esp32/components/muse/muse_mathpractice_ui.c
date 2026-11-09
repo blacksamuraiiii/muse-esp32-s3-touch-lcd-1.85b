@@ -443,7 +443,7 @@ static void settle_round(void)
         return;
     }
     s_settled = true;
-    /* 3-minute round: the ceiling is this game's own 20, not the
+    /* 2-minute round: the ceiling is this game's own 20, not the
      * standard 10 (user decision 2026-11-08). */
     uint32_t coins = muse_pet_round_coins_cap(
         s_game.score, MUSE_PET_ROUND_COIN_MAX_MATHPRACTICE);
