@@ -20,12 +20,12 @@
  *     back callback is NULL); the face is one swipe away.
  *   - Mini-game list page: title "小游戏" with a back arrow, and a
  *     VERTICALLY SCROLLING column like the settings page's list
- *     (2026-11-01, user request): six 330x58 cards in a flex column,
+ *     (2026-11-01, user request): seven 330x58 cards in a flex column,
  *     10px gaps, with the coin line as the column's last item. The
  *     rows keep the main list's 58px height -- the earlier 48px
  *     "compressed" pitch is gone -- and the column scrolls instead,
  *     with a 110px bottom pad so the last row can clear the bottom
- *     curve of the bezel. All six games cost 10 coins per start (user
+ *     curve of the bezel. All seven games cost 10 coins per start (user
  *     decision 2026-10-31, retuned 2026-11-08); the rows only dim when
  *     poor, they are never disabled.
  *   - Subpages are groups inside the interaction tile, all with the same
@@ -47,7 +47,7 @@
  *     -10 金币" cost hint at y = 84 (swapped, 2026-11-01, user request),
  *     because the result / streak lines already own y = 240 / 272.
  *     Tile swipe is DISABLED on every interaction subpage (feed,
- *     fortune, minigame list and the six game boards): a subpage
+ *     fortune, minigame list and the seven game boards): a subpage
  *     leaves only through its "<" back arrow, one level up, and the
  *     interaction main page is the only one that swipes (right to the
  *     face). The lock started with the four GAME pages on 2026-10-31
@@ -110,6 +110,7 @@
 #include "muse_goldrain_ui.h"
 #include "muse_doodle_ui.h"
 #include "muse_mathpractice_ui.h"
+#include "muse_tictactoe_ui.h"
 #include "muse_widgets.h" /* the shared back arrow / card / title (1.5g) */
 
 /* --- colours: muse_theme.h (see file header for the DANGER note) --- */
@@ -181,6 +182,7 @@ enum {
     IC_PAGE_GOLDRAIN,
     IC_PAGE_DOODLE,
     IC_PAGE_MATHPRACTICE,
+    IC_PAGE_TICTACTOE,
 };
 
 enum {
@@ -193,12 +195,13 @@ enum {
 static lv_obj_t *s_tile;
 static lv_obj_t *s_main_page, *s_feed_page, *s_game_page, *s_fortune_page, *s_sudoku_page;
 static lv_obj_t *s_minigame_page, *s_snake_page, *s_whackamole_page,
-    *s_goldrain_page, *s_doodle_page, *s_mathpractice_page;
+    *s_goldrain_page, *s_doodle_page, *s_mathpractice_page, *s_tictactoe_page;
 static lv_obj_t *s_btn_feed, *s_btn_game, *s_btn_fortune;
 static lv_obj_t *s_btn_feed_lbl, *s_btn_game_lbl, *s_btn_fortune_lbl;
 static lv_obj_t *s_minigame_coins;
 static lv_obj_t *s_mg_rps_lbl, *s_mg_snake_lbl, *s_mg_whack_lbl,
-    *s_mg_goldrain_lbl, *s_mg_doodle_lbl, *s_mg_mathpractice_lbl;
+    *s_mg_goldrain_lbl, *s_mg_doodle_lbl, *s_mg_mathpractice_lbl,
+    *s_mg_tictactoe_lbl;
 /* s_mg_sudoku_lbl was here: removed 2026-11-08 with the archived 数独
  * row (see build_minigame). Re-add it when restoring 数独. */
 static int s_last_feed_idx;
@@ -307,6 +310,7 @@ static void show_page(int page)
     lv_obj_add_flag(s_goldrain_page, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(s_doodle_page, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(s_mathpractice_page, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(s_tictactoe_page, LV_OBJ_FLAG_HIDDEN);
     lv_obj_t *show = s_main_page;
     if (page == IC_PAGE_FEED) show = s_feed_page;
     if (page == IC_PAGE_GAME) show = s_game_page;
@@ -318,6 +322,7 @@ static void show_page(int page)
     if (page == IC_PAGE_GOLDRAIN) show = s_goldrain_page;
     if (page == IC_PAGE_DOODLE) show = s_doodle_page;
     if (page == IC_PAGE_MATHPRACTICE) show = s_mathpractice_page;
+    if (page == IC_PAGE_TICTACTOE) show = s_tictactoe_page;
     lv_obj_remove_flag(show, LV_OBJ_FLAG_HIDDEN);
     /* The swipe lock takes effect here, not at the next 0.25 s chrome tick
      * (muse_ui.c): chrome polling left up to 250 ms after leaving a subpage
@@ -330,8 +335,8 @@ static void show_page(int page)
 bool muse_interact_ui_swipe_locked(void)
 {
     /* Any interaction subpage: 喂食, 今日运势, 小游戏 (the minigame list)
-     * and the six game boards (加减练习 / 石头剪刀布 / 贪吃蛇 / 打地鼠 /
-     * 金币雨 / 毛毛跳跃). Only the
+     * and the seven game boards (加减练习 / 石头剪刀布 / 贪吃蛇 / 打地鼠 /
+     * 金币雨 / 毛毛跳跃 / OX棋). Only the
      * main page swipes, right to the face. A subpage leaves through its
      * "<" back arrow, one level up; BOOT is the exception, and it does not
      * go through here (the voice task switches to the face and starts a
@@ -348,11 +353,11 @@ static void on_back(lv_event_t *e)
      * menu) to the menu, from the menu and the other subpages to the
      * main page, and from the main page to the face. A subpage back that
      * skipped a level would break the "left < = one level up" rule. The
-     * six menu games (game, mathpractice, snake, whack-a-mole, goldrain,
-     * doodle) all land on the menu; feed and fortune are main-page rows,
+     * seven menu games (game, mathpractice, snake, whack-a-mole, goldrain,
+     * doodle, tictactoe) all land on the menu; feed and fortune are main-page rows,
      * so they still land on the main page. Leaving a game page pauses a
      * running game through its hide hook (snake keeps its board,
-     * whack-a-mole, goldrain, doodle and mathpractice resume from their
+     * whack-a-mole, goldrain, doodle, mathpractice and tictactoe resume from their
      * pause overlays), so none plays on off-screen; the other subpages
      * keep their own return-visit rules. */
     if (s_page == IC_PAGE_SNAKE) {
@@ -370,13 +375,17 @@ static void on_back(lv_event_t *e)
     if (s_page == IC_PAGE_MATHPRACTICE) {
         muse_mathpractice_ui_hide();
     }
+    if (s_page == IC_PAGE_TICTACTOE) {
+        muse_tictactoe_ui_hide();
+    }
     if (s_page == IC_PAGE_MAIN) {
         muse_ui_show_face();
     } else if (s_page == IC_PAGE_GAME || s_page == IC_PAGE_SUDOKU ||
                s_page == IC_PAGE_SNAKE || s_page == IC_PAGE_WHACKAMOLE ||
                s_page == IC_PAGE_GOLDRAIN ||
                s_page == IC_PAGE_DOODLE ||
-               s_page == IC_PAGE_MATHPRACTICE) {
+               s_page == IC_PAGE_MATHPRACTICE ||
+               s_page == IC_PAGE_TICTACTOE) {
         show_page(IC_PAGE_MINIGAME);
     } else {
         show_page(IC_PAGE_MAIN);
@@ -462,8 +471,8 @@ static void refresh_status(void)
         set_label(s_btn_fortune_lbl, "今日运势 ｜ 未抽");
     }
 
-    /* Mini-game rows: snake, whack-a-mole, goldrain, doodle and
-     * 加减练习 cost 10 coins per start, so they dim together
+    /* Mini-game rows: snake, whack-a-mole, goldrain, doodle,
+     * 加减练习 and OX棋 cost 10 coins per start, so they dim together
      * when nothing can be started. (数独 used to cost 5 once per
      * calendar day -- a day's ticket already paid meant it stayed
      * bright even at 0 coins -- but it is ARCHIVED 2026-11-08, see
@@ -486,6 +495,7 @@ static void refresh_status(void)
     lv_obj_set_style_text_color(s_mg_goldrain_lbl, lv_color_hex(mg_color), 0);
     lv_obj_set_style_text_color(s_mg_doodle_lbl, lv_color_hex(mg_color), 0);
     lv_obj_set_style_text_color(s_mg_mathpractice_lbl, lv_color_hex(mg_color), 0);
+    lv_obj_set_style_text_color(s_mg_tictactoe_lbl, lv_color_hex(mg_color), 0);
 }
 
 /* One list row: full-width button with a single centred label, at the
@@ -1084,10 +1094,10 @@ static void drain_feedback(void)
                 /* Snapshot was stale: the 10 coins were never deducted,
                  * so there is nothing to refund -- cancel the game
                  * (which was only a start of a never-settled game).
-                 * Snake, whack-a-mole, goldrain, doodle and mathpractice
-                 * share PET_FEE; all five expose a cancel hook, so route
-                 * by the visible page so a refusal for one game never
-                 * touches another's overlay. */
+                 * Snake, whack-a-mole, goldrain, doodle, mathpractice
+                 * and tictactoe share PET_FEE; all six expose a cancel
+                 * hook, so route by the visible page so a refusal for
+                 * one game never touches another's overlay. */
                 if (s_page == IC_PAGE_WHACKAMOLE) {
                     muse_whackamole_ui_fee_refused();
                 } else if (s_page == IC_PAGE_DOODLE) {
@@ -1098,6 +1108,8 @@ static void drain_feedback(void)
                     muse_goldrain_ui_fee_refused();
                 } else if (s_page == IC_PAGE_MATHPRACTICE) {
                     muse_mathpractice_ui_fee_refused();
+                } else if (s_page == IC_PAGE_TICTACTOE) {
+                    muse_tictactoe_ui_fee_refused();
                 }
                 write_pet_caption("金币不够，先摸摸 / 喂饭 / 抽运势");
             } else if (fb.result == PET_STORAGE) {
@@ -1111,6 +1123,8 @@ static void drain_feedback(void)
                     muse_goldrain_ui_fee_refused();
                 } else if (s_page == IC_PAGE_MATHPRACTICE) {
                     muse_mathpractice_ui_fee_refused();
+                } else if (s_page == IC_PAGE_TICTACTOE) {
+                    muse_tictactoe_ui_fee_refused();
                 }
                 write_pet_caption("互动数据损坏");
             }
@@ -1216,6 +1230,13 @@ static void on_open_mathpractice(lv_event_t *e)
     muse_mathpractice_ui_show();
 }
 
+static void on_open_tictactoe(lv_event_t *e)
+{
+    (void)e;
+    show_page(IC_PAGE_TICTACTOE);
+    muse_tictactoe_ui_show();
+}
+
 /* ARCHIVED 2026-11-08 with 数独 (see build_minigame). Uncomment
  * together with the 数独 row to restore it.
 static void on_open_sudoku(lv_event_t *e)
@@ -1297,7 +1318,9 @@ static void build_minigame(void)
     lv_obj_set_scrollbar_mode(list, LV_SCROLLBAR_MODE_OFF);
 
     /* List order (user 2026-11-08): 加减练习 first, then 石头剪刀布,
-     * 贪吃蛇, 打地鼠, 金币雨, 毛毛跳跃. 凑十法练习 was fused into
+     * 贪吃蛇, 打地鼠, 金币雨, 毛毛跳跃, OX棋 last (user 2026-11-08:
+     * the new game appends at the end, it does not jump the queue).
+     * 凑十法练习 was fused into
      * 加减练习 the same day (one game, two kinds of question), so it is
      * gone from the list and from the tree. 数独 is ARCHIVED (same date):
      * the 360px round screen is too small to read its 6x6 grid or
@@ -1316,6 +1339,7 @@ static void build_minigame(void)
     list_row(list, "打地鼠", on_open_whackamole, &s_mg_whack_lbl);
     list_row(list, "金币雨", on_open_goldrain, &s_mg_goldrain_lbl);
     list_row(list, "毛毛跳跃", on_open_doodle, &s_mg_doodle_lbl);
+    list_row(list, "OX棋", on_open_tictactoe, &s_mg_tictactoe_lbl);
 
     /* Coin line: the column's last item, so it scrolls with the list
      * instead of sitting in a fixed slot the scroller would run under.
@@ -1607,6 +1631,7 @@ void muse_interact_ui_build(lv_obj_t *tile)
     s_goldrain_page = page_group(tile);
     s_doodle_page = page_group(tile);
     s_mathpractice_page = page_group(tile);
+    s_tictactoe_page = page_group(tile);
     build_main();
     build_feed();
     build_game();
@@ -1618,6 +1643,7 @@ void muse_interact_ui_build(lv_obj_t *tile)
     muse_goldrain_ui_build(s_goldrain_page, on_back);
     muse_doodle_ui_build(s_doodle_page, on_back);
     muse_mathpractice_ui_build(s_mathpractice_page, on_back);
+    muse_tictactoe_ui_build(s_tictactoe_page, on_back);
     show_page(IC_PAGE_MAIN);
     /* Main page is the only one shown at build; muse_ui.c's tileview
      * hides the whole tile when it is not the active tile, so no extra
@@ -1649,6 +1675,7 @@ void muse_interact_ui_on_hidden(void)
     muse_goldrain_ui_hide();
     muse_doodle_ui_hide();
     muse_mathpractice_ui_hide();
+    muse_tictactoe_ui_hide();
     show_page(IC_PAGE_MAIN);
 }
 
