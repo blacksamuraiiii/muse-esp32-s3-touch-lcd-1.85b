@@ -369,9 +369,9 @@ static void on_touch_hold(lv_event_t *e)
  * per coin, 20 coins per round ceiling -- and the 10-coin entry fee was
  * already charged at start through PET_FEE, so the round's net is payout
  * minus 10, computed on the OVER card, never printed (kids cannot tell
- * net apart: the card shows what was added, not what was gained). A
- * queue full) leaves s_round_coins at 0 so the card never claims coins the
- * wallet did not get. */
+ * net apart: the card shows what was added, not what was gained).
+ * A refused request (worker not ready / queue full) leaves s_round_coins
+ * at 0 so the card never claims coins the wallet did not get. */
 static void settle_round(void)
 {
     if (s_settled) {
