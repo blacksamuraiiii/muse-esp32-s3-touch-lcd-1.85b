@@ -98,6 +98,7 @@
 #include "esp_random.h"
 #include "muse_interact_food_art.h"
 #include "muse_interact_hand_assets.h"
+#include "muse_audio.h"   /* game sound effects */
 #include "muse_font.h"    /* muse_font_cjk() / muse_font_btn(), the one CJK chain (1.5b) */
 #include "muse_theme.h"   /* MUSE_THEME_*, the one colour table (1.5b) */
 #include "muse_pet.h"
@@ -752,6 +753,15 @@ static void show_game_result(void)
         lv_obj_set_style_text_color(s_game_result_lbl, lv_color_hex(MUSE_THEME_DIM), 0);
         lv_label_set_text(s_game_result_lbl, "平局，再来一局");
     }
+    /* The reveal is the result moment: win gets the fanfare, draw the
+     * neutral tone, loss the low one. */
+    if (s_game_result > 0) {
+        muse_audio_sfx(MUSE_SFX_WIN);
+    } else if (s_game_result < 0) {
+        muse_audio_sfx(MUSE_SFX_BAD);
+    } else {
+        muse_audio_sfx(MUSE_SFX_DRAW);
+    }
     lv_obj_remove_flag(s_game_result_lbl, LV_OBJ_FLAG_HIDDEN);
     lv_obj_remove_flag(s_game_streak_lbl, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(s_game_chant_lbl, LV_OBJ_FLAG_HIDDEN);
@@ -802,6 +812,8 @@ static void game_start(int choice)
          * start a round). */
         write_pet_caption("金币不够，先摸摸 / 喂饭 / 抽运势");
         game_hint("金币不够，先摸摸 / 喂饭 / 抽运势");
+        /* Refused at the door: the low sound. */
+        muse_audio_sfx(MUSE_SFX_BAD);
         return;
     }
     /* The result is decided NOW, at click time (design §5.2), and PET_GAME
@@ -821,6 +833,9 @@ static void game_start(int choice)
     s_game_player = player;
     s_game_house = house;
     s_game_result = outcome;
+    /* The punch landed: a short "placed" tick, not a judgement -- the
+     * result sounds at the reveal, a second later. */
+    muse_audio_sfx(MUSE_SFX_PLACE);
     s_game_phase = IC_GAME_SHAKE;
     s_game_phase_ms = lv_tick_get();
     ESP_LOGI(TAG, "game armed: you=%d house=%d result=%d tick=%lu", s_game_player,
@@ -1028,6 +1043,12 @@ static void drain_feedback(void)
             } else {
                 snprintf(buf, sizeof(buf), "互动未就绪");
             }
+            /* A registered tap sounds whether or not coins moved: the
+             * petting is the point, not the payout (the cap-reached tap
+             * still sounds). Storage / not-ready taps never registered. */
+            if (fb.result == PET_COIN || fb.result == PET_CAP) {
+                muse_audio_sfx(MUSE_SFX_PET);
+            }
             write_pet_caption(buf);
             break;
         case PET_FEED_RICE:
@@ -1057,6 +1078,9 @@ static void drain_feedback(void)
                     snprintf(buf, sizeof(buf), "喂了%s +10 金币", food);
                     muse_state_make_happy();
                     feed_note(buf);
+                    /* First feed of this food today: two chewing peeps.
+                     * Already-fed-today stays silent. */
+                    muse_audio_sfx(MUSE_SFX_EAT);
                 } else {
                     snprintf(buf, sizeof(buf), "喂了%s（今天已经喂过）", food);
                     feed_note(buf);
@@ -1165,6 +1189,8 @@ static void drain_feedback(void)
                 if (fb.result == PET_FORTUNE_NEW) {
                     snprintf(buf, sizeof(buf), "今日运势：%s +20 金币",
                              grade ? grade : "吉");
+                    /* Fresh draw only: re-viewing today's card stays silent. */
+                    muse_audio_sfx(MUSE_SFX_FORTUNE);
                 } else {
                     snprintf(buf, sizeof(buf), "今日已抽过：%s",
                              grade ? grade : "吉");
