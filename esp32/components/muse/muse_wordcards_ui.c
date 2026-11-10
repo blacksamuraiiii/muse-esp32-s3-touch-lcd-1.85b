@@ -1,0 +1,736 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+/*
+ * muse_wordcards_ui.c -- 英语单词卡片 subpage, see muse_wordcards_ui.h.
+ *
+ * Layout (mockup v4, user decision 2026-11-10): the set title in the
+ * shared title slot (y=38), a 2x2 grid of 116x116 cards at (60,60)
+ * with an 8 px gap, and the HUD at y=308 (the snake / OX棋 slot).
+ * A card's front is only its picture (the A8 game-icons master,
+ * recoloured per fruit at runtime, scaled to 72 px from the 128 px
+ * master). Its back is three centred lines: the English word in gold
+ * Montserrat 20, the Chinese in Noto 16, and the speaker logo
+ * (LV_SYMBOL_VOLUME_MAX, the face speaker button's glyph) in white --
+ * the v3 ~31x18 logo, not the v2 48x30 one.
+ *
+ * The flip is a fake: 120 ms of horizontal squash (scale_x 256 -> 0
+ * in 60 ms), swap the front/back at the midpoint, expand back
+ * (0 -> 256 in 60 ms). The pivot is the card's own centre, so it
+ * squeezes in place instead of sliding. While a card is flipping it
+ * ignores taps, so a double tap cannot queue two swaps.
+ *
+ * The clock is the 2-minute round from muse_wordcards.c: the timer
+ * only advances while PLAYING, so a pause never eats learning time
+ * (the doodle 60 s rule). The HUD reads "已翻 n 张 · 剩余 s 秒" while
+ * playing or paused, and turns gold at OVER, where the title slot
+ * becomes "时间到" and the summary line reads "本次学了 X 张".
+ * The OVER overlay carries only the "再来一局" button (free restart:
+ * same set again, a fresh prefetch, no charge -- this game is free).
+ *
+ * Pronunciation: the UI never fetches on a tap. The prefetch (started
+ * on entering the page) fills the PSRAM cache in the background; the
+ * 50 ms tick drains the logic's pending_audio mark -- when the word
+ * is READY it plays at once, when it is still FETCHING the mark waits
+ * for the next tick, when it FAILED the mark is dropped silently and
+ * the card simply stays silent. Flipping a card back, pausing, or
+ * leaving the page drops a pending mark, so audio is never played for
+ * a card the player is no longer looking at.
+ */
+#include "muse_wordcards_ui.h"
+
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <string.h>
+
+#include "muse_audio.h" /* game sound effects */
+#include "muse_font.h"
+#include "muse_state.h" /* poke: no auto-sleep while a round runs */
+#include "muse_theme.h"
+#include "muse_widgets.h"
+#include "muse_wordcards.h"
+#include "muse_wordcards_art.h"
+#include "muse_wordcards_audio.h"
+
+/* Hold to pause: the finger stays within this radius for this long. */
+#define MUSE_WORDCARDS_HOLD_MS 500u
+#define MUSE_WORDCARDS_HOLD_MOVE_PX 12
+/* Timer period: the hold check, the clock and the audio drain ride on it. */
+#define MUSE_WORDCARDS_TICK_MS 50u
+/* Flip: 60 ms squash + 60 ms expand (mockup: 120 ms total). */
+#define MUSE_WORDCARDS_FLIP_HALF_MS 60u
+#define MUSE_WORDCARDS_FLIP_SCALE 256
+/* Card geometry (mockup v4): 116x116 cards, 8 px gap, origin (60,60). */
+#define MUSE_WORDCARDS_CARD 116
+#define MUSE_WORDCARDS_GAP 8
+#define MUSE_WORDCARDS_ORIGIN_X 60
+#define MUSE_WORDCARDS_ORIGIN_Y 60
+/* Front picture: the 128 px A8 master drawn at 72 px. */
+#define MUSE_WORDCARDS_PIC_PX 72
+#define MUSE_WORDCARDS_PIC_SCALE \
+    (256 * MUSE_WORDCARDS_PIC_PX / MUSE_WORDCARDS_ART_PX)
+/* Back lines, centred, as offsets from the card's top edge (mockup v4):
+ * English (Montserrat 20) top at 22, Chinese (Noto 16) top at 52,
+ * speaker glyph (~18 px tall) centred at 89, so its label top is 80.
+ * A flipped card also takes the mockup's pressed fill (CARD_PRESSED)
+ * and a 2 px GOLD border, so the flipped state is visible at a glance. */
+#define MUSE_WORDCARDS_BACK_EN_Y 22
+#define MUSE_WORDCARDS_BACK_ZH_Y 52
+#define MUSE_WORDCARDS_BACK_SP_Y 80
+#define MUSE_WORDCARDS_BACK_SP_CY 89
+/* The speaker logo's tap target: a 48x30 box around its centre, so a
+ * finger lands on it even though the glyph itself is only ~31x18. */
+#define MUSE_WORDCARDS_SP_HALF_W 24
+#define MUSE_WORDCARDS_SP_HALF_H 15
+/* Status / message slot under the cards (cards end at y=300). */
+#define MUSE_WORDCARDS_HUD_Y 308
+
+static muse_wordcards_t s_game;
+/* Press tracking for the tap-to-flip and the hold-to-pause. */
+static bool s_press_active = false;
+static bool s_press_moved = false;
+static uint32_t s_press_start_ms = 0;
+static lv_coord_t s_press_x = 0;
+static lv_coord_t s_press_y = 0;
+static int s_press_card = -1;
+/* One card's flip animation in flight: taps on that card wait. */
+static bool s_flip_anim[MUSE_WORDCARDS_WORDS];
+static bool s_flip_target[MUSE_WORDCARDS_WORDS];
+
+static lv_obj_t *s_card[MUSE_WORDCARDS_WORDS];
+static lv_obj_t *s_front_img[MUSE_WORDCARDS_WORDS];
+static lv_obj_t *s_back[MUSE_WORDCARDS_WORDS];
+static lv_obj_t *s_touch;
+static lv_obj_t *s_start_ov;
+static lv_obj_t *s_paused_ov;
+static lv_obj_t *s_over_ov;
+static lv_obj_t *s_back_btn;
+static lv_obj_t *s_name;
+static lv_obj_t *s_hud;
+static lv_obj_t *s_page;
+static lv_timer_t *s_timer;
+
+/* --- small helpers, same shapes as the OX棋 page ------------------ */
+
+static lv_obj_t *label(lv_obj_t *parent, const lv_font_t *font,
+                       uint32_t color)
+{
+    lv_obj_t *obj = lv_label_create(parent);
+    lv_obj_set_style_text_font(obj, font, LV_PART_MAIN);
+    lv_obj_set_style_text_color(obj, lv_color_hex(color), LV_PART_MAIN);
+    lv_obj_remove_flag(obj, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_remove_flag(obj, LV_OBJ_FLAG_CLICKABLE);
+    return obj;
+}
+
+static lv_obj_t *fill(lv_obj_t *parent, uint32_t bg)
+{
+    lv_obj_t *obj = lv_obj_create(parent);
+    lv_obj_set_style_bg_color(obj, lv_color_hex(bg), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(obj, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_border_width(obj, 0, LV_PART_MAIN);
+    lv_obj_set_style_radius(obj, 0, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(obj, 0, LV_PART_MAIN);
+    lv_obj_remove_flag(obj, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_remove_flag(obj, LV_OBJ_FLAG_CLICKABLE);
+    return obj;
+}
+
+/* lv_label_set_text has no same-text short circuit in LVGL 9.5: every
+ * call frees, reallocs and re-lays-out the label. refresh_display()
+ * runs every 50 ms tick, so skip when nothing changed (same trick as
+ * muse_menu's set_text). */
+static void set_label(lv_obj_t *l, const char *text)
+{
+    if (strcmp(lv_label_get_text(l), text) != 0) {
+        lv_label_set_text(l, text);
+    }
+}
+
+/* --- card geometry ------------------------------------------------ */
+
+static void card_origin(int i, int *x, int *y)
+{
+    *x = MUSE_WORDCARDS_ORIGIN_X +
+         (i % 2) * (MUSE_WORDCARDS_CARD + MUSE_WORDCARDS_GAP);
+    *y = MUSE_WORDCARDS_ORIGIN_Y +
+         (i / 2) * (MUSE_WORDCARDS_CARD + MUSE_WORDCARDS_GAP);
+}
+
+static int card_at(lv_coord_t x, lv_coord_t y)
+{
+    for (int i = 0; i < MUSE_WORDCARDS_WORDS; i++) {
+        int cx, cy;
+        card_origin(i, &cx, &cy);
+        if (x >= cx && x < cx + MUSE_WORDCARDS_CARD && y >= cy &&
+            y < cy + MUSE_WORDCARDS_CARD) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+static bool point_on_speaker(int i, lv_coord_t x, lv_coord_t y)
+{
+    int cx, cy;
+    card_origin(i, &cx, &cy);
+    int scx = cx + MUSE_WORDCARDS_CARD / 2;
+    int scy = cy + MUSE_WORDCARDS_BACK_SP_CY;
+    return x >= scx - MUSE_WORDCARDS_SP_HALF_W &&
+           x < scx + MUSE_WORDCARDS_SP_HALF_W &&
+           y >= scy - MUSE_WORDCARDS_SP_HALF_H &&
+           y < scy + MUSE_WORDCARDS_SP_HALF_H;
+}
+
+/* --- flip animation ----------------------------------------------- */
+
+static void flip_scale_cb(void *var, int32_t v)
+{
+    lv_obj_set_style_transform_scale_x((lv_obj_t *)var, (int16_t)v,
+                                       LV_PART_MAIN);
+}
+
+static void flip_start(int i, int32_t from, int32_t to,
+                       lv_anim_completed_cb_t done)
+{
+    lv_anim_t a;
+    lv_anim_init(&a);
+    lv_anim_set_var(&a, s_card[i]);
+    lv_anim_set_values(&a, from, to);
+    lv_anim_set_duration(&a, MUSE_WORDCARDS_FLIP_HALF_MS);
+    lv_anim_set_exec_cb(&a, flip_scale_cb);
+    lv_anim_set_completed_cb(&a, done);
+    lv_anim_start(&a);
+}
+
+static void flip_done_cb(lv_anim_t *a)
+{
+    lv_obj_t *card = (lv_obj_t *)a->var;
+    int i = (int)(intptr_t)lv_obj_get_user_data(card);
+    s_flip_anim[i] = false;
+}
+
+static void flip_mid_cb(lv_anim_t *a)
+{
+    lv_obj_t *card = (lv_obj_t *)a->var;
+    int i = (int)(intptr_t)lv_obj_get_user_data(card);
+    /* Midpoint: the card is a vertical line, so the swap is invisible.
+     * Show the side the flip is going to. */
+    if (s_flip_target[i]) {
+        lv_obj_add_flag(s_front_img[i], LV_OBJ_FLAG_HIDDEN);
+        lv_obj_clear_flag(s_back[i], LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_clear_flag(s_front_img[i], LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(s_back[i], LV_OBJ_FLAG_HIDDEN);
+    }
+    flip_start(i, 0, MUSE_WORDCARDS_FLIP_SCALE, flip_done_cb);
+}
+
+static void start_flip(int i, bool to_back)
+{
+    if (s_flip_anim[i]) {
+        return;
+    }
+    s_flip_anim[i] = true;
+    s_flip_target[i] = to_back;
+    flip_start(i, MUSE_WORDCARDS_FLIP_SCALE, 0, flip_mid_cb);
+}
+
+/* --- display sync ------------------------------------------------- */
+
+static void refresh_display(void)
+{
+    for (int i = 0; i < MUSE_WORDCARDS_WORDS; i++) {
+        /* The flip animation owns the swap while it runs; otherwise
+         * the shown side follows the logic state. A flipped card also
+         * takes the mockup's pressed fill and 2 px GOLD border, so
+         * the flipped state is visible at a glance. */
+        if (!s_flip_anim[i]) {
+            if (s_game.flipped[i]) {
+                lv_obj_add_flag(s_front_img[i], LV_OBJ_FLAG_HIDDEN);
+                lv_obj_clear_flag(s_back[i], LV_OBJ_FLAG_HIDDEN);
+                lv_obj_set_style_bg_color(s_card[i],
+                                          lv_color_hex(MUSE_THEME_CARD_PRESSED),
+                                          LV_PART_MAIN);
+                lv_obj_set_style_border_color(s_card[i],
+                                              lv_color_hex(MUSE_THEME_GOLD),
+                                              LV_PART_MAIN);
+                lv_obj_set_style_border_width(s_card[i], 2, LV_PART_MAIN);
+            } else {
+                lv_obj_clear_flag(s_front_img[i], LV_OBJ_FLAG_HIDDEN);
+                lv_obj_add_flag(s_back[i], LV_OBJ_FLAG_HIDDEN);
+                lv_obj_set_style_bg_color(s_card[i],
+                                          lv_color_hex(MUSE_THEME_CARD),
+                                          LV_PART_MAIN);
+                lv_obj_set_style_border_color(s_card[i],
+                                              lv_color_hex(MUSE_THEME_RULE),
+                                              LV_PART_MAIN);
+                lv_obj_set_style_border_width(s_card[i], 1, LV_PART_MAIN);
+            }
+            lv_obj_set_style_transform_scale_x(
+                s_card[i], MUSE_WORDCARDS_FLIP_SCALE, LV_PART_MAIN);
+        }
+    }
+    muse_wordcards_phase_t ph = s_game.phase;
+    /* Title: the set name, except at OVER, where the title slot
+     * itself becomes the summary (the OX棋 idiom), and at PAUSED,
+     * where it becomes "已暂停" (user 2026-11-08: the pause title
+     * moves to the title slot on every game). */
+    const char *title =
+        MUSE_WORDCARDS_SETS_TABLE[s_game.set].title;
+    uint32_t title_color = MUSE_THEME_ACCENT;
+    if (ph == MUSE_WORDCARDS_OVER) {
+        title = "时间到";
+        title_color = MUSE_THEME_GOLD;
+    } else if (ph == MUSE_WORDCARDS_PAUSED) {
+        title = "已暂停";
+    }
+    set_label(s_name, title);
+    lv_obj_set_style_text_color(s_name, lv_color_hex(title_color),
+                                LV_PART_MAIN);
+    /* HUD, same slot as the snake page's score line: while PLAYING or
+     * PAUSED it is white and reads how many cards were flipped and
+     * how long is left; at OVER it turns GOLD and reads the summary
+     * count. On START there is no round to report, so it stays
+     * hidden. */
+    char hud[48];
+    if (ph == MUSE_WORDCARDS_OVER) {
+        snprintf(hud, sizeof(hud), "本次学了 %d 张",
+                 s_game.flipped_count);
+        lv_obj_set_style_text_color(s_hud, lv_color_hex(MUSE_THEME_GOLD),
+                                    LV_PART_MAIN);
+        lv_obj_clear_flag(s_hud, LV_OBJ_FLAG_HIDDEN);
+    } else if (ph == MUSE_WORDCARDS_START) {
+        lv_obj_add_flag(s_hud, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        snprintf(hud, sizeof(hud), "已翻 %d 张 · 剩余 %lu 秒",
+                 s_game.flipped_count,
+                 (unsigned long)muse_wordcards_remaining_s(&s_game));
+        lv_obj_set_style_text_color(s_hud, lv_color_hex(MUSE_THEME_TEXT),
+                                    LV_PART_MAIN);
+        lv_obj_clear_flag(s_hud, LV_OBJ_FLAG_HIDDEN);
+    }
+    set_label(s_hud, hud);
+    if (ph == MUSE_WORDCARDS_START) {
+        lv_obj_clear_flag(s_start_ov, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_add_flag(s_start_ov, LV_OBJ_FLAG_HIDDEN);
+    }
+    if (ph == MUSE_WORDCARDS_PAUSED) {
+        lv_obj_clear_flag(s_paused_ov, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_add_flag(s_paused_ov, LV_OBJ_FLAG_HIDDEN);
+    }
+    if (ph == MUSE_WORDCARDS_OVER) {
+        lv_obj_clear_flag(s_over_ov, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_add_flag(s_over_ov, LV_OBJ_FLAG_HIDDEN);
+    }
+    /* Touch only while playing. The back arrow is visible on every
+     * overlay and hidden while playing (snake's rule): leaving
+     * mid-round means holding the page to pause first, so a stray tap
+     * on the rim can never abandon a round. */
+    if (ph == MUSE_WORDCARDS_PLAYING) {
+        lv_obj_clear_flag(s_touch, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(s_back_btn, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_add_flag(s_touch, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_clear_flag(s_back_btn, LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
+/* --- game actions ------------------------------------------------- */
+
+static void begin_game(bool restart)
+{
+    /* Free game: no charge, no fee sound -- just the start chirp
+     * (the shared game-start sound). */
+    muse_audio_sfx(MUSE_SFX_START);
+    if (restart) {
+        muse_wordcards_restart(&s_game);
+    } else {
+        muse_wordcards_start(&s_game);
+    }
+    muse_wordcards_audio_prefetch(&s_game);
+    lv_timer_resume(s_timer);
+    refresh_display();
+}
+
+static void on_start(lv_event_t *e)
+{
+    (void)e;
+    begin_game(false);
+}
+
+static void on_restart(lv_event_t *e)
+{
+    (void)e;
+    begin_game(true);
+}
+
+static void on_resume(lv_event_t *e)
+{
+    (void)e;
+    muse_wordcards_resume(&s_game);
+    lv_timer_resume(s_timer);
+    refresh_display();
+}
+
+static void pause_game(void)
+{
+    muse_wordcards_pause(&s_game);
+    muse_wordcards_audio_stop();
+    muse_wordcards_clear_pending_audio(&s_game);
+    lv_timer_pause(s_timer);
+    refresh_display();
+}
+
+/* The 50 ms tick: the clock, the hold-to-pause, and the audio drain.
+ * Pending audio is drained here and nowhere else, so a word plays at
+ * most once per flip/replay: when READY it plays and the mark is
+ * cleared; when still FETCHING the mark waits for the next tick;
+ * when FAILED it is dropped silently (the card stays silent). A play
+ * that could not start (no task) is dropped the same way -- the user
+ * can tap the speaker again. */
+static void drain_pending_audio(void)
+{
+    int p = muse_wordcards_pending_audio(&s_game);
+    if (p < 0) {
+        return;
+    }
+    if (muse_wordcards_cache_is_ready(&s_game, p)) {
+        /* Play, then drop the mark either way: a play that could not
+         * start (no task) is not retried every tick -- the user can
+         * tap the speaker again. */
+        muse_wordcards_audio_play(&s_game, p);
+        muse_wordcards_clear_pending_audio(&s_game);
+    } else if (s_game.cache[p] == MUSE_WORDCARDS_CACHE_FAILED) {
+        muse_wordcards_clear_pending_audio(&s_game);
+    }
+}
+
+static void on_tick(lv_timer_t *timer)
+{
+    (void)timer;
+    if (s_game.phase == MUSE_WORDCARDS_PLAYING) {
+        /* A running round is activity: playing by taps alone still
+         * touches the screen, but a round with no tap for a while
+         * must not let the idle timer sleep the screen mid-round
+         * (same idiom as video playback and a voice turn). */
+        muse_state_poke();
+        muse_wordcards_tick(&s_game, MUSE_WORDCARDS_TICK_MS);
+        if (s_game.phase == MUSE_WORDCARDS_OVER) {
+            /* Time: stop the clock and the audio, show the summary. */
+            muse_wordcards_audio_stop();
+            muse_wordcards_clear_pending_audio(&s_game);
+            lv_timer_pause(s_timer);
+            refresh_display();
+            return;
+        }
+        /* Hold to pause: the finger stayed within ~12 px for 500 ms.
+         * A press that moved never reaches this branch
+         * (s_press_moved), and the release after a hold flips nothing
+         * (see on_touch_released): the hold wins over the tap by
+         * duration, which is what keeps a held card from flipping
+         * when it is held to pause. */
+        if (s_press_active && !s_press_moved &&
+            lv_tick_get() - s_press_start_ms >= MUSE_WORDCARDS_HOLD_MS) {
+            s_press_active = false;
+            pause_game();
+            return;
+        }
+        drain_pending_audio();
+    }
+    refresh_display();
+}
+
+/* --- touch (tap to flip, hold to pause) --------------------------- */
+
+static void on_touch_pressed(lv_event_t *e)
+{
+    (void)e;
+    lv_point_t point;
+    lv_indev_get_point(lv_indev_active(), &point);
+    s_press_active = true;
+    s_press_moved = false;
+    s_press_start_ms = lv_tick_get();
+    s_press_x = point.x;
+    s_press_y = point.y;
+    s_press_card = card_at(point.x, point.y);
+    /* Nothing flips here: the flip fires on release-after-a-short-
+     * press, never on press-down, so a hold-to-pause never flips a
+     * card. */
+}
+
+static void on_touch_pressing(lv_event_t *e)
+{
+    (void)e;
+    if (!s_press_active || s_game.phase != MUSE_WORDCARDS_PLAYING) {
+        return;
+    }
+    lv_point_t point;
+    lv_indev_get_point(lv_indev_active(), &point);
+    int dx = point.x - s_press_x;
+    int dy = point.y - s_press_y;
+    if (dx * dx + dy * dy >
+        MUSE_WORDCARDS_HOLD_MOVE_PX * MUSE_WORDCARDS_HOLD_MOVE_PX) {
+        s_press_moved = true;
+    }
+}
+
+static void on_touch_released(lv_event_t *e)
+{
+    (void)e;
+    bool was_active = s_press_active;
+    int press_card = s_press_card;
+    s_press_active = false;
+    if (!was_active || s_game.phase != MUSE_WORDCARDS_PLAYING) {
+        return;
+    }
+    /* A hold already paused (the tick fired pause_game, and the touch
+     * layer is hidden while paused): the release flips nothing. A slow
+     * release past the hold time without the tick having fired yet is
+     * the same -- the press was a hold, not a tap. */
+    if (s_press_moved ||
+        lv_tick_get() - s_press_start_ms >= MUSE_WORDCARDS_HOLD_MS) {
+        return;
+    }
+    lv_point_t point;
+    lv_indev_get_point(lv_indev_active(), &point);
+    int card = card_at(point.x, point.y);
+    /* A tap flips only when press and release agree on the card: a
+     * swipe across the grid never flips the wrong card. A tap between
+     * cards (card < 0) flips nothing. */
+    if (card < 0 || card != press_card || s_flip_anim[card]) {
+        return;
+    }
+    if (!s_game.flipped[card]) {
+        if (muse_wordcards_flip_to_back(&s_game, card)) {
+            start_flip(card, true);
+            refresh_display();
+        }
+    } else if (point_on_speaker(card, point.x, point.y)) {
+        /* The speaker logo: replay the pronunciation. The tick
+         * drains the mark, so the replay waits for the cache the
+         * same way a first flip does. */
+        if (muse_wordcards_replay(&s_game, card)) {
+            refresh_display();
+        }
+    } else {
+        /* Anywhere else on a flipped card: flip it back. A pending
+         * pronunciation for this card is dropped -- the player is no
+         * longer looking at it. */
+        if (muse_wordcards_pending_audio(&s_game) == card) {
+            muse_wordcards_clear_pending_audio(&s_game);
+        }
+        if (muse_wordcards_flip_to_front(&s_game, card)) {
+            start_flip(card, false);
+            refresh_display();
+        }
+    }
+}
+
+/* --- build -------------------------------------------------------- */
+
+static lv_obj_t *overlay(lv_obj_t *page, bool dim)
+{
+    lv_obj_t *ov = fill(page, MUSE_THEME_CARD);
+    lv_obj_set_size(ov, 360, 360);
+    lv_obj_set_pos(ov, 0, 0);
+    if (dim) {
+        lv_obj_set_style_bg_color(ov, lv_color_hex(MUSE_THEME_BG), LV_PART_MAIN);
+        lv_obj_set_style_bg_opa(ov, LV_OPA_50, LV_PART_MAIN);
+    } else {
+        /* Undimmed START overlay: transparent, so the cards stay
+         * visible behind the start button. */
+        lv_obj_set_style_bg_opa(ov, LV_OPA_TRANSP, LV_PART_MAIN);
+    }
+    lv_obj_add_flag(ov, LV_OBJ_FLAG_HIDDEN);
+    return ov;
+}
+
+static lv_obj_t *centre_btn(lv_obj_t *parent, lv_coord_t x, lv_coord_t y)
+{
+    /* The shared card, a 98x66 rounded rect (user decision 2026-11-01,
+     * was a 110 px circle): the ACCENT ring is this page's own accent on
+     * top of the shared CARD / CARD_PRESSED base. */
+    lv_obj_t *btn = muse_card(parent, 98, 66, 14);
+    lv_obj_set_pos(btn, x, y);
+    lv_obj_set_style_border_color(btn, lv_color_hex(MUSE_THEME_ACCENT), LV_PART_MAIN);
+    lv_obj_set_style_border_width(btn, 2, LV_PART_MAIN);
+    return btn;
+}
+
+void muse_wordcards_ui_build(lv_obj_t *page, lv_event_cb_t back_cb)
+{
+    muse_wordcards_init(&s_game);
+    s_page = page;
+
+    /* Cards: a 116x116 CARD rounded rect with a RULE outline (mockup
+     * v4). The front picture is the A8 master, recoloured per fruit
+     * at runtime and drawn at 72 px; the back is three centred lines,
+     * built once per card and hidden until that card is flipped. */
+    for (int i = 0; i < MUSE_WORDCARDS_WORDS; i++) {
+        int cx, cy;
+        card_origin(i, &cx, &cy);
+        const muse_wordcards_word_t *w =
+            &MUSE_WORDCARDS_SETS_TABLE[s_game.set].words[i];
+        lv_obj_t *card = lv_obj_create(page);
+        lv_obj_set_size(card, MUSE_WORDCARDS_CARD, MUSE_WORDCARDS_CARD);
+        lv_obj_set_pos(card, cx, cy);
+        lv_obj_set_style_bg_color(card, lv_color_hex(MUSE_THEME_CARD),
+                                  LV_PART_MAIN);
+        lv_obj_set_style_bg_opa(card, LV_OPA_COVER, LV_PART_MAIN);
+        lv_obj_set_style_border_width(card, 1, LV_PART_MAIN);
+        lv_obj_set_style_border_color(card, lv_color_hex(MUSE_THEME_RULE),
+                                      LV_PART_MAIN);
+        lv_obj_set_style_radius(card, 14, LV_PART_MAIN);
+        lv_obj_set_style_pad_all(card, 0, LV_PART_MAIN);
+        lv_obj_set_style_transform_pivot_x(card, LV_PCT(50), LV_PART_MAIN);
+        lv_obj_set_style_transform_pivot_y(card, LV_PCT(50), LV_PART_MAIN);
+        lv_obj_remove_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_remove_flag(card, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_set_user_data(card, (void *)(intptr_t)i);
+        s_card[i] = card;
+        /* Front: the A8 master, recoloured per fruit (the RPS hands'
+         * image_recolor idiom) and scaled to 72 px. The 128 px image
+         * object is centred on the card, so its centre is the card's
+         * centre. */
+        lv_obj_t *img = lv_image_create(card);
+        lv_image_set_src(img, MUSE_WORDCARDS_ART[w->art]);
+        lv_image_set_scale(img, MUSE_WORDCARDS_PIC_SCALE);
+        lv_obj_set_style_image_recolor(img, lv_color_hex(w->color),
+                                       LV_PART_MAIN);
+        lv_obj_set_style_image_recolor_opa(img, LV_OPA_COVER,
+                                           LV_PART_MAIN);
+        lv_obj_set_pos(img, (MUSE_WORDCARDS_CARD - MUSE_WORDCARDS_ART_PX) / 2,
+                       (MUSE_WORDCARDS_CARD - MUSE_WORDCARDS_ART_PX) / 2);
+        lv_obj_remove_flag(img, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_remove_flag(img, LV_OBJ_FLAG_CLICKABLE);
+        s_front_img[i] = img;
+        /* Back: three centred lines (mockup v4). The container is a
+         * transparent box over the whole card; the lines are aligned
+         * TOP_MID at their fixed offsets. */
+        lv_obj_t *back = lv_obj_create(card);
+        lv_obj_set_size(back, MUSE_WORDCARDS_CARD, MUSE_WORDCARDS_CARD);
+        lv_obj_set_pos(back, 0, 0);
+        lv_obj_set_style_bg_opa(back, LV_OPA_TRANSP, LV_PART_MAIN);
+        lv_obj_set_style_border_width(back, 0, LV_PART_MAIN);
+        lv_obj_set_style_pad_all(back, 0, LV_PART_MAIN);
+        lv_obj_remove_flag(back, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_remove_flag(back, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_add_flag(back, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_t *en = label(back, &lv_font_montserrat_20,
+                             MUSE_THEME_GOLD);
+        lv_label_set_text(en, w->en);
+        lv_obj_align(en, LV_ALIGN_TOP_MID, 0, MUSE_WORDCARDS_BACK_EN_Y);
+        lv_obj_t *zh = label(back, muse_font_cjk(), MUSE_THEME_TEXT);
+        lv_label_set_text(zh, w->zh);
+        lv_obj_align(zh, LV_ALIGN_TOP_MID, 0, MUSE_WORDCARDS_BACK_ZH_Y);
+        lv_obj_t *sp = label(back, &lv_font_montserrat_20,
+                             MUSE_THEME_TEXT);
+        lv_label_set_text(sp, LV_SYMBOL_VOLUME_MAX);
+        lv_obj_align(sp, LV_ALIGN_TOP_MID, 0, MUSE_WORDCARDS_BACK_SP_Y);
+        s_back[i] = back;
+    }
+
+    /* Touch layer: full page, only while playing, above the cards.
+     * fill() strips CLICKABLE, so it is added back: without it the
+     * layer would never receive PRESSED events. */
+    s_touch = fill(page, MUSE_THEME_BG);
+    lv_obj_set_style_bg_opa(s_touch, LV_OPA_TRANSP, LV_PART_MAIN);
+    lv_obj_set_size(s_touch, 360, 360);
+    lv_obj_set_pos(s_touch, 0, 0);
+    lv_obj_add_flag(s_touch, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_flag(s_touch, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_event_cb(s_touch, on_touch_pressed, LV_EVENT_PRESSED, NULL);
+    lv_obj_add_event_cb(s_touch, on_touch_pressing, LV_EVENT_PRESSING, NULL);
+    lv_obj_add_event_cb(s_touch, on_touch_released, LV_EVENT_RELEASED, NULL);
+
+    /* START overlay: not dimmed, the cards stay visible behind it. */
+    s_start_ov = overlay(page, false);
+    lv_obj_t *start_btn = centre_btn(s_start_ov, 131, 147);
+    lv_obj_t *start_lb = label(start_btn, muse_font_cjk(), MUSE_THEME_TEXT);
+    lv_label_set_text(start_lb, "开始");
+    lv_obj_center(start_lb);
+    lv_obj_add_event_cb(start_btn, on_start, LV_EVENT_CLICKED, NULL);
+    /* Hint line (mockup v4): same slot as the snake page's hint. The
+     * action keeps the mockup's wording ("翻面读一读"), and the pause
+     * is a hold anywhere on the page, not just the middle, so the copy
+     * says 长按暂停 (the other games document their hold here too). */
+    lv_obj_t *hint_lb = label(s_start_ov, muse_font_cjk(), MUSE_THEME_DIM);
+    lv_label_set_text(hint_lb, "点卡片翻面读一读，长按暂停");
+    lv_obj_align(hint_lb, LV_ALIGN_TOP_MID, 0, 304);
+
+    /* PAUSED overlay: dim, 继续 button with the PLAY symbol above
+     * the label (goldrain's card). No "已暂停" label on the card any
+     * more: the page title itself becomes "已暂停" while paused
+     * (user 2026-11-08). No restart capsule: a single tap in the
+     * narrowest part of the bezel must not restart a free round
+     * by accident either; the back arrow leaves, and 开始 starts
+     * again on the next visit. */
+    s_paused_ov = overlay(page, true);
+    lv_obj_t *resume_btn = centre_btn(s_paused_ov, 131, 147);
+    lv_obj_t *resume_sym = label(resume_btn, &lv_font_montserrat_20, MUSE_THEME_TEXT);
+    lv_label_set_text(resume_sym, LV_SYMBOL_PLAY);
+    lv_obj_align(resume_sym, LV_ALIGN_TOP_MID, 0, 12);
+    lv_obj_t *resume_lb = label(resume_btn, muse_font_cjk(), MUSE_THEME_TEXT);
+    lv_label_set_text(resume_lb, "继续");
+    lv_obj_align(resume_lb, LV_ALIGN_TOP_MID, 0, 34);
+    lv_obj_add_event_cb(resume_btn, on_resume, LV_EVENT_CLICKED, NULL);
+
+    /* OVER overlay: dim + 再来一局 button only (UI polish 2026-11-01).
+     * The result title lives in the page-title slot and the summary
+     * line under the cards -- both page-level, above the dim -- so the
+     * overlay itself carries no title and no count line any more. No
+     * price on the button: the game is free. */
+    s_over_ov = overlay(page, true);
+    lv_obj_t *again_btn = centre_btn(s_over_ov, 131, 147);
+    lv_obj_t *again_lb = label(again_btn, muse_font_cjk(), MUSE_THEME_TEXT);
+    lv_label_set_text(again_lb, "再来一局");
+    lv_obj_align(again_lb, LV_ALIGN_TOP_MID, 0, 12);
+    lv_obj_add_event_cb(again_btn, on_restart, LV_EVENT_CLICKED, NULL);
+
+    /* Back arrow: the shared transparent one (no filled background, user
+     * request 2026-11-01), same geometry and symbol as snake / goldrain.
+     * Hidden while playing. Created after the overlays so it stays
+     * clickable on them. */
+    s_back_btn = muse_back_button(page, back_cb);
+
+    /* Title (top crescent, y=38: snake's name slot, shared subpage title
+     * font/colour) and the HUD right under the cards
+     * (MUSE_WORDCARDS_HUD_Y = 308, snake's score slot): page-level, above
+     * the dim overlays, so they stay readable in every state.
+     * refresh_display() swaps the title to the summary at OVER. */
+    s_name = muse_page_title(page,
+                             MUSE_WORDCARDS_SETS_TABLE[s_game.set].title,
+                             38);
+    s_hud = label(page, muse_font_cjk(), MUSE_THEME_TEXT);
+    lv_obj_align(s_hud, LV_ALIGN_TOP_MID, 0, MUSE_WORDCARDS_HUD_Y);
+
+    s_timer = lv_timer_create(on_tick, MUSE_WORDCARDS_TICK_MS, NULL);
+    lv_timer_pause(s_timer);
+
+    refresh_display();
+}
+
+void muse_wordcards_ui_show(void)
+{
+    /* Entering the set: prefetch its 4 MP3s in the background, so a
+     * flip plays from the PSRAM cache at once. Safe to call again on
+     * a return visit: only one prefetch runs per set generation. */
+    muse_wordcards_audio_prefetch(&s_game);
+    refresh_display();
+}
+
+void muse_wordcards_ui_hide(void)
+{
+    if (s_game.phase == MUSE_WORDCARDS_PLAYING) {
+        muse_wordcards_pause(&s_game);
+        lv_timer_pause(s_timer);
+    }
+    muse_wordcards_audio_stop();
+    muse_wordcards_audio_prefetch_abort();
+    muse_wordcards_clear_pending_audio(&s_game);
+    s_press_active = false;
+    refresh_display();
+}

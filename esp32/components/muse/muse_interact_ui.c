@@ -113,6 +113,7 @@
 #include "muse_mathpractice_ui.h"
 #include "muse_tictactoe_ui.h"
 #include "muse_widgets.h" /* the shared back arrow / card / title (1.5g) */
+#include "muse_wordcards_ui.h"
 
 /* --- colours: muse_theme.h (see file header for the DANGER note) --- */
 
@@ -184,6 +185,7 @@ enum {
     IC_PAGE_DOODLE,
     IC_PAGE_MATHPRACTICE,
     IC_PAGE_TICTACTOE,
+    IC_PAGE_WORDCARDS,
 };
 
 enum {
@@ -196,7 +198,8 @@ enum {
 static lv_obj_t *s_tile;
 static lv_obj_t *s_main_page, *s_feed_page, *s_game_page, *s_fortune_page, *s_sudoku_page;
 static lv_obj_t *s_minigame_page, *s_snake_page, *s_whackamole_page,
-    *s_goldrain_page, *s_doodle_page, *s_mathpractice_page, *s_tictactoe_page;
+    *s_goldrain_page, *s_doodle_page, *s_mathpractice_page, *s_tictactoe_page,
+    *s_wordcards_page;
 static lv_obj_t *s_btn_feed, *s_btn_game, *s_btn_fortune;
 static lv_obj_t *s_btn_feed_lbl, *s_btn_game_lbl, *s_btn_fortune_lbl;
 static lv_obj_t *s_minigame_coins;
@@ -312,6 +315,7 @@ static void show_page(int page)
     lv_obj_add_flag(s_doodle_page, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(s_mathpractice_page, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(s_tictactoe_page, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(s_wordcards_page, LV_OBJ_FLAG_HIDDEN);
     lv_obj_t *show = s_main_page;
     if (page == IC_PAGE_FEED) show = s_feed_page;
     if (page == IC_PAGE_GAME) show = s_game_page;
@@ -324,6 +328,7 @@ static void show_page(int page)
     if (page == IC_PAGE_DOODLE) show = s_doodle_page;
     if (page == IC_PAGE_MATHPRACTICE) show = s_mathpractice_page;
     if (page == IC_PAGE_TICTACTOE) show = s_tictactoe_page;
+    if (page == IC_PAGE_WORDCARDS) show = s_wordcards_page;
     lv_obj_remove_flag(show, LV_OBJ_FLAG_HIDDEN);
     /* The swipe lock takes effect here, not at the next 0.25 s chrome tick
      * (muse_ui.c): chrome polling left up to 250 ms after leaving a subpage
@@ -336,8 +341,8 @@ static void show_page(int page)
 bool muse_interact_ui_swipe_locked(void)
 {
     /* Any interaction subpage: 喂食, 今日运势, 小游戏 (the minigame list)
-     * and the seven game boards (加减练习 / 石头剪刀布 / 贪吃蛇 / 打地鼠 /
-     * 金币雨 / 毛毛跳跃 / OX棋). Only the
+     * and the eight game boards (加减练习 / 石头剪刀布 / 贪吃蛇 / 打地鼠 /
+     * 金币雨 / 毛毛跳跃 / OX棋 / 单词卡片). Only the
      * main page swipes, right to the face. A subpage leaves through its
      * "<" back arrow, one level up; BOOT is the exception, and it does not
      * go through here (the voice task switches to the face and starts a
@@ -354,11 +359,11 @@ static void on_back(lv_event_t *e)
      * menu) to the menu, from the menu and the other subpages to the
      * main page, and from the main page to the face. A subpage back that
      * skipped a level would break the "left < = one level up" rule. The
-     * seven menu games (game, mathpractice, snake, whack-a-mole, goldrain,
-     * doodle, tictactoe) all land on the menu; feed and fortune are main-page rows,
+     * eight menu games (game, mathpractice, snake, whack-a-mole, goldrain,
+     * doodle, tictactoe, wordcards) all land on the menu; feed and fortune are main-page rows,
      * so they still land on the main page. Leaving a game page pauses a
      * running game through its hide hook (snake keeps its board,
-     * whack-a-mole, goldrain, doodle, mathpractice and tictactoe resume from their
+     * whack-a-mole, goldrain, doodle, mathpractice, tictactoe and wordcards resume from their
      * pause overlays), so none plays on off-screen; the other subpages
      * keep their own return-visit rules. */
     if (s_page == IC_PAGE_SNAKE) {
@@ -379,6 +384,9 @@ static void on_back(lv_event_t *e)
     if (s_page == IC_PAGE_TICTACTOE) {
         muse_tictactoe_ui_hide();
     }
+    if (s_page == IC_PAGE_WORDCARDS) {
+        muse_wordcards_ui_hide();
+    }
     if (s_page == IC_PAGE_MAIN) {
         muse_ui_show_face();
     } else if (s_page == IC_PAGE_GAME || s_page == IC_PAGE_SUDOKU ||
@@ -386,7 +394,8 @@ static void on_back(lv_event_t *e)
                s_page == IC_PAGE_GOLDRAIN ||
                s_page == IC_PAGE_DOODLE ||
                s_page == IC_PAGE_MATHPRACTICE ||
-               s_page == IC_PAGE_TICTACTOE) {
+               s_page == IC_PAGE_TICTACTOE ||
+               s_page == IC_PAGE_WORDCARDS) {
         show_page(IC_PAGE_MINIGAME);
     } else {
         show_page(IC_PAGE_MAIN);
@@ -1263,6 +1272,13 @@ static void on_open_tictactoe(lv_event_t *e)
     muse_tictactoe_ui_show();
 }
 
+static void on_open_wordcards(lv_event_t *e)
+{
+    (void)e;
+    show_page(IC_PAGE_WORDCARDS);
+    muse_wordcards_ui_show();
+}
+
 /* ARCHIVED 2026-11-08 with 数独 (see build_minigame). Uncomment
  * together with the 数独 row to restore it.
 static void on_open_sudoku(lv_event_t *e)
@@ -1366,6 +1382,12 @@ static void build_minigame(void)
     list_row(list, "金币雨", on_open_goldrain, &s_mg_goldrain_lbl);
     list_row(list, "毛毛跳跃", on_open_doodle, &s_mg_doodle_lbl);
     list_row(list, "OX棋", on_open_tictactoe, &s_mg_tictactoe_lbl);
+    /* Free learning game (user decision 2026-11-10): no entry fee, so
+     * no dimming label -- refresh_status() leaves this row bright even
+     * at 0 coins. NULL label: a static row (see list_row). The main
+     * page's "小游戏 ｜ 每种 -10金币" copy is now inexact for this row;
+     * whether to reword it is the user's call, not this change's. */
+    list_row(list, "单词卡片", on_open_wordcards, NULL);
 
     /* Coin line: the column's last item, so it scrolls with the list
      * instead of sitting in a fixed slot the scroller would run under.
@@ -1658,6 +1680,7 @@ void muse_interact_ui_build(lv_obj_t *tile)
     s_doodle_page = page_group(tile);
     s_mathpractice_page = page_group(tile);
     s_tictactoe_page = page_group(tile);
+    s_wordcards_page = page_group(tile);
     build_main();
     build_feed();
     build_game();
@@ -1670,6 +1693,7 @@ void muse_interact_ui_build(lv_obj_t *tile)
     muse_doodle_ui_build(s_doodle_page, on_back);
     muse_mathpractice_ui_build(s_mathpractice_page, on_back);
     muse_tictactoe_ui_build(s_tictactoe_page, on_back);
+    muse_wordcards_ui_build(s_wordcards_page, on_back);
     show_page(IC_PAGE_MAIN);
     /* Main page is the only one shown at build; muse_ui.c's tileview
      * hides the whole tile when it is not the active tile, so no extra
@@ -1702,6 +1726,7 @@ void muse_interact_ui_on_hidden(void)
     muse_doodle_ui_hide();
     muse_mathpractice_ui_hide();
     muse_tictactoe_ui_hide();
+    muse_wordcards_ui_hide();
     show_page(IC_PAGE_MAIN);
 }
 

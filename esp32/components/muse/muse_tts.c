@@ -382,6 +382,54 @@ static const char *tts_template(void)
     return tts_template_into(buf, sizeof(buf));
 }
 
+/* Expand the template with one short text, for callers that fetch one
+ * pre-generated word audio file instead of a reply sentence: the
+ * bridge answers /tts with the cached MP3 when it has one, so this is
+ * the same endpoint, host, key and voice the replies already use, and
+ * no second server or second host setting is needed. The word audio
+ * is pre-generated on the host (see ~/workspace/wordcards-tts-server.md);
+ * nothing here synthesises.
+ *
+ * The request is marked word=1 (appended after the text, which is
+ * always last in the template): the bridge then ignores the reply
+ * voice/rate from the query and answers with the word voice
+ * (en-US-AriaNeural, -10%) from its disk cache. A Chinese reply voice
+ * must never read English words, and the flag is what keeps the two
+ * apart on the one endpoint. */
+bool muse_tts_url_for_text(const char *text, char *out, size_t cap)
+{
+    if (!text || !text[0] || !out || cap == 0) {
+        return false;
+    }
+    char tpl[TTS_TEMPLATE_CAP];
+    const char *t = tts_template_into(tpl, sizeof(tpl));
+    const char *ph = strstr(t, "{text}");
+    if (!t[0] || !ph) {
+        return false;
+    }
+    size_t prefix_len = (size_t)(ph - t);
+    const char *suffix = ph + 6;
+    size_t text_len = strlen(text);
+    char encoded[TTS_TEXT_CHUNK * 3 + 8];
+    if (text_len > TTS_TEXT_CHUNK ||
+        url_encode(encoded, sizeof(encoded), text, text_len) == 0) {
+        return false;
+    }
+    /* The template always ends with the text placeholder, and the
+     * encoded text carries no '&', so the flag lands as its own
+     * query parameter. */
+    static const char word_flag[] = "&word=1";
+    if (prefix_len + strlen(encoded) + strlen(suffix) +
+            sizeof(word_flag) > cap) {
+        return false;
+    }
+    memcpy(out, t, prefix_len);
+    strcpy(out + prefix_len, encoded);
+    strcat(out + prefix_len, suffix);
+    strcat(out + prefix_len, word_flag);
+    return true;
+}
+
 static void fetch_reply(char *text)
 {
     const char *url = tts_template();
