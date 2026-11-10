@@ -31,7 +31,7 @@
  * back to START with the refusal note.
  *
  * Score and payout: a right pick is +1, a wrong one is +0, so the
- * score only ever goes up. The 3-minute round's score is converted exactly
+ * score only ever goes up. The 2-minute round's score is converted exactly
  * once, at OVER, by muse_pet_round_coins_cap() -- 1 point per coin, at
  * most 20 coins per round (this game's own ceiling since the round grew
  * to 3 minutes on 2026-11-08; every other game stays at 10) -- then sent

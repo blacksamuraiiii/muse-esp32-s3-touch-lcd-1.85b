@@ -74,13 +74,14 @@
  */
 #define MUSE_PET_SCORE_PER_COIN 1u     /* points per coin (1:1) */
 #define MUSE_PET_ROUND_COIN_MAX 20u    /* per-round payout ceiling */
-/* 加减练习 is a 3-minute round since 2026-11-08 (user decision), so its
- * per-round ceiling was raised to 20 the same day -- a 3-minute round
- * would otherwise top out in its first third. Every other game now also
- * uses 20 (MUSE_PET_ROUND_COIN_MAX, retuned 2026-11-08), so this constant
- * is the same value; it stays as its own knob in case the 3-minute game
- * ever wants a different ceiling. The worker clamps PET_PLAY_REWARD to the
- * hard maximum below, so a UI bug still cannot mint more than any game's
+/* 加减练习 has its own 20-coin ceiling: raised from the shared 10 on
+ * 2026-11-08 when the round went to 3 minutes, and KEPT at 20 when the
+ * round came back to 2 minutes on 2026-11-09 (user decision: only the
+ * clock changed). Every other game also uses 20
+ * (MUSE_PET_ROUND_COIN_MAX, retuned 2026-11-08), so this constant is the
+ * same value; it stays as its own knob in case this game ever wants a
+ * different ceiling. The worker clamps PET_PLAY_REWARD to the hard
+ * maximum below, so a UI bug still cannot mint more than any game's
  * ceiling. */
 #define MUSE_PET_ROUND_COIN_MAX_MATHPRACTICE 20u
 #define MUSE_PET_ROUND_COIN_HARD_MAX 20u
