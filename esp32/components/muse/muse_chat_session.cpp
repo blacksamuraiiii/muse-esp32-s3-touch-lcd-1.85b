@@ -1071,6 +1071,11 @@ static bool turn_start(uint32_t gen, bool text)
     if (s_connected && now_us() - s_conn.last_rx_us > 2 * PING_US) {
         drop_connection("stale before turn");
     }
+    /* The reply's speech service is idle from here until the first sentence
+     * lands, and that gap is 4-7 s of the model writing: worth spending it on
+     * the TTS connection's TLS handshake instead of making the listener wait
+     * for it afterwards (user 2026-11-10, reply TTS latency). */
+    muse_tts_prewarm();
     if (!ensure_connected()) {
         /* A 502 from the VM's session route is not the same as an unreachable
          * server: say what it is, so the press is not retried against a route

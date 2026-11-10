@@ -89,11 +89,27 @@ static volatile int64_t s_first_byte_us; /* when the first body byte arrived */
  * bytes are held back until they look like MPEG audio: an MPEG frame sync
  * (0xFF) or an ID3v2 tag. Matching only 0xFF would reject plenty of valid
  * ID3-prefixed files. */
+/* Big enough for the assembled URL: scheme + host/path + key + voice + rate +
+ * one chunk of text (muse_tts.c's tts_template_into()). */
+#define TTS_TEMPLATE_CAP (MUSE_SPEECH_URL_MAX + MUSE_SPEECH_KEY_MAX + MUSE_SPEECH_VOICE_MAX + \
+                          MUSE_SPEECH_RATE_MAX + 24)
+
 #define TTS_PREFIX_BYTES 8
 static uint8_t s_prefix[TTS_PREFIX_BYTES];
 static size_t s_prefix_n;
 static bool s_payload_open;   /* the prefix passed: bytes go to the ring now */
 static bool s_payload_bad;    /* the prefix failed: drop the rest, do not retry */
+
+static esp_http_client_handle_t s_client;
+static volatile bool s_prewarm;          /* the connection probe is running: ignore its body */
+static TaskHandle_t s_prewarm_task;
+static int64_t s_client_last_us;         /* when the last reply request finished */
+/* An idle keep-alive socket older than this is dropped by prewarm: servers and
+ * NAT boxes reap idle connections, and reconnecting while the model is still
+ * writing is free. */
+#define TTS_IDLE_DROP_US (45 * 1000 * 1000)
+#define TTS_PREWARM_TIMEOUT_MS 6000
+#define TTS_PREWARM_STACK 8192
 
 static bool mp3_prefix_ok(const uint8_t *p, size_t n)
 {
@@ -198,6 +214,9 @@ static void gate_feed(const uint8_t *d, size_t len)
 
 static esp_err_t on_http_data(esp_http_client_event_t *ev)
 {
+    if (s_prewarm) {
+        return ESP_OK;   /* the probe only wants the connection, not the body */
+    }
     if (ev->event_id == HTTP_EVENT_ON_HEADER || ev->event_id == HTTP_EVENT_ON_DATA) {
         if (s_short_wait && ev->client) {
             /* The wait that matters is over: the body may stream for as long as
@@ -245,13 +264,24 @@ static void gate_finish(void)
     }
 }
 
-static bool fetch_once(const char *url, int timeout_ms)
+/* The reply connection, kept between requests. A fresh TLS handshake costs
+ * 3.5-4.3 s on this board (measured 2026-11-10 on the word audio: the server
+ * answers in 18 ms once the socket is up), and a reply is several requests, so
+ * a client per request paid that cost per sentence. One handle with keep-alive
+ * pays one handshake per turn -- and muse_tts_prewarm() pays that one while the
+ * model is still writing, before any text has arrived. */
+
+static bool ensure_client(const char *url, int timeout_ms)
 {
+    if (s_client) {
+        esp_http_client_set_timeout_ms(s_client, timeout_ms);
+        esp_http_client_set_url(s_client, url);
+        return true;
+    }
     /* Some TTS endpoints refuse a request with no browser User-Agent. */
     const esp_app_desc_t *app = esp_app_get_description();
-    char user_agent[48];
+    static char user_agent[48];
     snprintf(user_agent, sizeof(user_agent), "MuseGadget/%s", app->version);
-
     const esp_http_client_config_t cfg = {
         .url = url,
         .method = HTTP_METHOD_GET,
@@ -261,12 +291,57 @@ static bool fetch_once(const char *url, int timeout_ms)
         .crt_bundle_attach = esp_crt_bundle_attach,
         .user_agent = user_agent,
         .event_handler = on_http_data,
+        .keep_alive_enable = true,
     };
-    esp_http_client_handle_t c = esp_http_client_init(&cfg);
-    if (!c) {
+    s_client = esp_http_client_init(&cfg);
+    if (!s_client) {
         ESP_LOGW(TAG, "http client init failed");
         return false;
     }
+    return true;
+}
+
+/* A socket that failed mid-body, was aborted, or answered with something that
+ * is not our audio is suspect: the next request gets a new connection rather
+ * than the remains of this one. */
+static void drop_client(void)
+{
+    if (s_client) {
+        esp_http_client_cleanup(s_client);
+        s_client = NULL;
+    }
+}
+
+/* THE ROOT URL (scheme://host[:port]/) of the configured endpoint: enough for
+ * the prewarm to complete TCP+TLS and leave the socket in the keep-alive pool.
+ * No text, so no synthesis and no quota spent. */
+static const char *tts_template_into(char *buf, size_t cap);
+
+static bool tts_root_url(char *out, size_t cap)
+{
+    char tpl[TTS_TEMPLATE_CAP];
+    const char *t = tts_template_into(tpl, sizeof(tpl));
+    const char *sep = t ? strstr(t, "://") : NULL;
+    if (!sep) {
+        return false;
+    }
+    const char *host = sep + 3;
+    const char *slash = strchr(host, '/');
+    size_t n = slash ? (size_t)(slash - t) + 1 : strlen(t);
+    if (n == 0 || n + 1 > cap) {
+        return false;
+    }
+    memcpy(out, t, n);
+    out[n] = '\0';
+    return true;
+}
+
+static bool fetch_once(const char *url, int timeout_ms)
+{
+    if (!ensure_client(url, timeout_ms)) {
+        return false;
+    }
+    esp_http_client_handle_t c = s_client;
     s_bytes = 0;
     s_first_byte_us = 0;
     s_prefix_n = 0;
@@ -276,24 +351,29 @@ static bool fetch_once(const char *url, int timeout_ms)
     esp_err_t err = esp_http_client_perform(c);
     int status = esp_http_client_get_status_code(c);
     int64_t body = esp_http_client_get_content_length(c);
-    esp_http_client_cleanup(c);
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "TTS request failed: %s (url %u bytes, budget %u)",
                  esp_err_to_name(err), (unsigned)strlen(url),
                  (unsigned)TTS_HTTP_TX_BUF);
+        drop_client();   /* the retry starts from a new connection */
         return false;
     }
     if (status != 200) {
         ESP_LOGW(TAG, "TTS endpoint answered %d", status);
+        drop_client();
         return false;
     }
     gate_finish();
-    if (s_payload_bad) {
+    if (s_payload_bad || s_abort) {
+        /* Nothing went to the decoder, or the read was abandoned midway: the
+         * socket may hold an unread body, so it must not be reused. */
+        drop_client();
         /* Nothing went to the decoder: the reply stays on screen as text. */
         return false;
     }
     /* A streamed reply has no Content-Length (-1), so report what we read and
      * how long the first byte took: that is the number the stream change moves. */
+    s_client_last_us = esp_timer_get_time();
     ESP_LOGI(TAG, "TTS got %u bytes (content-length %lld, first byte %d ms, total %d ms)",
              (unsigned)s_bytes, (long long)body,
              s_first_byte_us ? (int)((s_first_byte_us - t0) / 1000) : -1,
@@ -333,9 +413,6 @@ static bool fetch(const char *url, int timeout_ms)
  *
  * The {text} placeholder is what fetch_reply() splits on, so both paths share
  * one expansion. */
-#define TTS_TEMPLATE_CAP (MUSE_SPEECH_URL_MAX + MUSE_SPEECH_KEY_MAX + MUSE_SPEECH_VOICE_MAX + \
-                          MUSE_SPEECH_RATE_MAX + 24)
-
 /* Into the caller's buffer: the reply worker and the reachability probe can ask
  * at the same time. */
 static const char *tts_template_into(char *buf, size_t cap)
@@ -380,6 +457,54 @@ static const char *tts_template(void)
 {
     static char buf[TTS_TEMPLATE_CAP];
     return tts_template_into(buf, sizeof(buf));
+}
+
+/* Expand the template with one short text, for callers that fetch one
+ * pre-generated word audio file instead of a reply sentence: the
+ * bridge answers /tts with the cached MP3 when it has one, so this is
+ * the same endpoint, host, key and voice the replies already use, and
+ * no second server or second host setting is needed. The word audio
+ * is pre-generated on the host (see ~/workspace/wordcards-tts-server.md);
+ * nothing here synthesises.
+ *
+ * The request is marked word=1 (appended after the text, which is
+ * always last in the template): the bridge then ignores the reply
+ * voice/rate from the query and answers with the word voice
+ * (en-US-AriaNeural, -10%) from its disk cache. A Chinese reply voice
+ * must never read English words, and the flag is what keeps the two
+ * apart on the one endpoint. */
+bool muse_tts_url_for_text(const char *text, char *out, size_t cap)
+{
+    if (!text || !text[0] || !out || cap == 0) {
+        return false;
+    }
+    char tpl[TTS_TEMPLATE_CAP];
+    const char *t = tts_template_into(tpl, sizeof(tpl));
+    const char *ph = strstr(t, "{text}");
+    if (!t[0] || !ph) {
+        return false;
+    }
+    size_t prefix_len = (size_t)(ph - t);
+    const char *suffix = ph + 6;
+    size_t text_len = strlen(text);
+    char encoded[TTS_TEXT_CHUNK * 3 + 8];
+    if (text_len > TTS_TEXT_CHUNK ||
+        url_encode(encoded, sizeof(encoded), text, text_len) == 0) {
+        return false;
+    }
+    /* The template always ends with the text placeholder, and the
+     * encoded text carries no '&', so the flag lands as its own
+     * query parameter. */
+    static const char word_flag[] = "&word=1";
+    if (prefix_len + strlen(encoded) + strlen(suffix) +
+            sizeof(word_flag) > cap) {
+        return false;
+    }
+    memcpy(out, t, prefix_len);
+    strcpy(out + prefix_len, encoded);
+    strcat(out + prefix_len, suffix);
+    strcat(out + prefix_len, word_flag);
+    return true;
 }
 
 static void fetch_reply(char *text)
@@ -459,6 +584,60 @@ static void tts_task(void *arg)
             s_fetch_done = true;
         }
         taskEXIT_CRITICAL(&s_lock);
+    }
+}
+
+/* The probe: open the connection (TCP + TLS + cert chain) and leave it in the
+ * keep-alive pool, so the first sentence of the reply skips the handshake. The
+ * endpoint answers 403 without the token; that is fine -- the socket is what
+ * this buys, and the status is ignored. */
+static void prewarm_task(void *arg)
+{
+    char *url = (char *)arg;
+    int64_t t0 = esp_timer_get_time();
+    s_prewarm = true;
+    bool ok = ensure_client(url, TTS_PREWARM_TIMEOUT_MS);
+    if (ok) {
+        esp_err_t err = esp_http_client_perform(s_client);
+        if (err != ESP_OK) {
+            ESP_LOGW(TAG, "prewarm failed: %s", esp_err_to_name(err));
+            drop_client();
+        } else {
+            ESP_LOGI(TAG, "prewarm: connection ready in %d ms",
+                     (int)((esp_timer_get_time() - t0) / 1000));
+        }
+    }
+    s_prewarm = false;
+    free(url);
+    s_prewarm_task = NULL;
+    vTaskDelete(NULL);
+}
+
+void muse_tts_prewarm(void)
+{
+    if (s_task || s_prewarm_task) {
+        return;   /* a reply is already fetching, or a probe is running */
+    }
+    if (s_client && s_client_last_us &&
+        esp_timer_get_time() - s_client_last_us < TTS_IDLE_DROP_US) {
+        return;   /* the socket from the last turn is still fresh */
+    }
+    if (s_client) {
+        drop_client();   /* stale: reconnect now rather than on the first word */
+    }
+    char root[192];
+    if (!tts_root_url(root, sizeof(root))) {
+        return;
+    }
+    char *arg = strdup(root);
+    if (!arg) {
+        return;
+    }
+    if (xTaskCreateWithCaps(prewarm_task, "muse_tts_warm", TTS_PREWARM_STACK,
+                            arg, TTS_TASK_PRIO, &s_prewarm_task,
+                            MALLOC_CAP_SPIRAM) != pdPASS) {
+        free(arg);
+        s_prewarm_task = NULL;
     }
 }
 
