@@ -372,7 +372,11 @@ static void play_task(void *arg)
         p += drop;
         n -= drop;
     }
-    wc_rs_t rs;
+    /* Initialised at declaration, not left to rs_init(): gcc cannot prove the
+     * first rs_resample() comes after it and -Werror=maybe-uninitialized
+     * rejects the build. A 1:1 step is also the safe default -- a zero step
+     * would spin rs_resample() forever if it ever ran uninitialised. */
+    wc_rs_t rs = {.step = 1u << 16, .pos = 0, .prev = 0};
     int in_rate = 0;
     size_t off = 0;
     mp3dec_frame_info_t info;
