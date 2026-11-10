@@ -56,6 +56,14 @@
 // would not fit in `out`.
 bool muse_tts_url_for_text(const char *text, char *out, size_t cap);
 
+// Open the reply connection now, while the model is still writing: the TLS
+// handshake (3-4 s on this board) then costs nothing the listener waits for.
+// Fire and forget -- it returns at once, does nothing when a reply is already
+// fetching or when the socket from the last turn is still fresh (under 45 s
+// idle), and drops a stale one so the reconnect happens here, not on the first
+// word of the reply. Needs no text, so it spends no synthesis quota.
+void muse_tts_prewarm(void);
+
 // Start speaking `text`. Returns false when a fetch is already running or the
 // task could not be started. The text is copied, so the caller may free it.
 bool muse_tts_speak(const char *text);
