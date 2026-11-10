@@ -32,12 +32,12 @@
  *
  * Word sets: 8 sets x 4 words were planned (fruit / animal / colour
  * / body / number / school / food / family, 32 words, per 人教新起点
- * 一年级上册 + 牛津初级). Only the fruit set is wired up and shipped
- * in this phase; the other seven are data in the table with their
- * art marked MUSE_WORDCARDS_ART_NONE and a comment naming the
- * closest game-icons file, so adding a set is a data change plus its
- * four A8 masters -- no logic change. Do not ship placeholder art
- * that looks broken: a set without art is not offered.
+ * 一年级上册 + 牛津初级). Phase 1 (user decision 2026-11-10) ships
+ * the fruit and animal sets; the other six are data in the table
+ * with their art marked MUSE_WORDCARDS_ART_NONE and a comment
+ * naming the closest game-icons file, so adding a set is a data
+ * change plus its four A8 masters -- no logic change. Do not ship
+ * placeholder art that looks broken: a set without art is not offered.
  *
  * Timing is in milliseconds and advances only through
  * muse_wordcards_tick(), so the host test drives it deterministically
@@ -114,17 +114,26 @@ typedef struct {
     int pending_audio;                    /* word waiting to play, or -1 */
 } muse_wordcards_t;
 
-/* The sets table (8 sets x 4 words). Only set 0 (fruit) has art and
- * is offered; the rest are data for later phases. */
+/* The sets table (8 sets x 4 words). Sets 0 (fruit) and 1 (animal)
+ * have art and are offered; the rest are data for later phases. */
 extern const muse_wordcards_set_t MUSE_WORDCARDS_SETS_TABLE[MUSE_WORDCARDS_SETS];
 
-/* How many sets are actually offered (fruit only, for now). */
+/* How many sets are actually offered (fruit + animal in phase 1). */
 int muse_wordcards_offered_sets(void);
 
 /* True when every word of `set` has an art master. */
 bool muse_wordcards_set_has_art(int set);
 
 void muse_wordcards_init(muse_wordcards_t *g);
+
+/* Switch to set `set` (0..MUSE_WORDCARDS_SETS-1) for a fresh round:
+ * the round is reset to START with all cards front-up, the cache
+ * marks are cleared to EMPTY, and set_gen is bumped so a prefetch
+ * from the previous set cannot mark words ready in this one. The
+ * caller then prefetches the new set's 4 MP3s. False (and no change)
+ * when the set is out of range or has no art -- a set without art
+ * is never offered, so this only fires on a programming error. */
+bool muse_wordcards_select_set(muse_wordcards_t *g, int set);
 
 /* START -> PLAYING, resetting the round and the cache bookkeeping
  * for the current set. No-op from any other phase (use restart for

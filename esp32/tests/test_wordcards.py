@@ -35,6 +35,10 @@ EXPECTED_ART = {
     "banana": 856669,
     "cherry": 1133453,
     "peach": 1793543,
+    "cat": 1734876,
+    "dog": 1487589,
+    "bird": 783611,
+    "fish": 1250943,
 }
 
 
@@ -62,7 +66,7 @@ class WordCardsTest(unittest.TestCase):
     def test_wordcards_art_bytes(self) -> None:
         # The shipped A8 masters must be the generated ones: 16 KB
         # each, a real picture (some fully opaque pixels, some
-        # transparent), and pairwise different (no two fruits sharing
+        # transparent), and pairwise different (no two words sharing
         # one master by accident).
         art_dir = ROOT / "components" / "muse"
         seen = {}

@@ -8,9 +8,11 @@
  * ESP-IDF -- the UI owns the 50 ms timer, the flip animation and the
  * audio tasks, so the harness drives the clock by calling
  * muse_wordcards_tick() directly):
- *  1. Word table: 8 sets x 4 words, fruit set fully wired (apple /
- *     banana / cherry / peach, art 0..3, colours), every other set
- *     data-only (ART_NONE) and not offered.
+ *  1. Word table: 8 sets x 4 words, fruit and animal sets fully
+ *     wired (fruit art 0..3, animal art 4..7, colours), every other
+ *     set data-only (ART_NONE) and not offered; offered_sets() == 2.
+ *     select_set() switches sets for a fresh round and refuses a
+ *     set without art or out of range.
  *  2. Flip state machine: flip to back counts a card once (distinct),
  *     flip back and forth never inflates the count, replay only works
  *     on a flipped card, flips are refused outside PLAYING.
@@ -56,10 +58,30 @@ static void test_table(void)
     assert(strcmp(fruit->words[3].zh, "桃子") == 0);
     assert(fruit->words[3].color == 0xffaa78);
     assert(fruit->words[3].art == 3);
+    /* Animal set: fully wired, art 4..7, in table order. */
+    const muse_wordcards_set_t *animal = &MUSE_WORDCARDS_SETS_TABLE[1];
+    assert(strcmp(animal->title, "动物 · Animal") == 0);
+    assert(strcmp(animal->words[0].en, "cat") == 0);
+    assert(strcmp(animal->words[0].zh, "猫") == 0);
+    assert(animal->words[0].color == 0xe8a04c);
+    assert(animal->words[0].art == 4);
+    assert(strcmp(animal->words[1].en, "dog") == 0);
+    assert(strcmp(animal->words[1].zh, "狗") == 0);
+    assert(animal->words[1].color == 0xb07a4a);
+    assert(animal->words[1].art == 5);
+    assert(strcmp(animal->words[2].en, "bird") == 0);
+    assert(strcmp(animal->words[2].zh, "鸟") == 0);
+    assert(animal->words[2].color == 0x6ff0bf);
+    assert(animal->words[2].art == 6);
+    assert(strcmp(animal->words[3].en, "fish") == 0);
+    assert(strcmp(animal->words[3].zh, "鱼") == 0);
+    assert(animal->words[3].color == 0x6aa8ff);
+    assert(animal->words[3].art == 7);
     /* Every other set is data-only: no art, so not offered. */
-    assert(muse_wordcards_offered_sets() == 1);
+    assert(muse_wordcards_offered_sets() == 2);
     assert(muse_wordcards_set_has_art(0));
-    for (int s = 1; s < MUSE_WORDCARDS_SETS; s++) {
+    assert(muse_wordcards_set_has_art(1));
+    for (int s = 2; s < MUSE_WORDCARDS_SETS; s++) {
         assert(!muse_wordcards_set_has_art(s));
         for (int i = 0; i < MUSE_WORDCARDS_WORDS; i++) {
             assert(MUSE_WORDCARDS_SETS_TABLE[s].words[i].art ==
@@ -79,6 +101,54 @@ static muse_wordcards_t playing_game(void)
     muse_wordcards_start(&g);
     assert(g.phase == MUSE_WORDCARDS_PLAYING);
     return g;
+}
+
+static void test_select_set(void)
+{
+    muse_wordcards_t g;
+    muse_wordcards_init(&g);
+    assert(g.set == 0);
+    assert(g.phase == MUSE_WORDCARDS_START);
+    /* Switching to the animal set: fresh round, new generation,
+     * cache cleared. */
+    uint32_t gen = g.set_gen;
+    assert(muse_wordcards_select_set(&g, 1));
+    assert(g.set == 1);
+    assert(g.phase == MUSE_WORDCARDS_START);
+    assert(g.set_gen == gen + 1);
+    assert(g.elapsed_ms == 0 && g.flipped_count == 0);
+    for (int i = 0; i < MUSE_WORDCARDS_WORDS; i++) {
+        assert(!g.flipped[i] && !g.seen[i]);
+        assert(g.cache[i] == MUSE_WORDCARDS_CACHE_EMPTY);
+    }
+    /* A round in the new set plays: flips count, the clock runs. */
+    muse_wordcards_start(&g);
+    assert(muse_wordcards_flip_to_back(&g, 0));
+    assert(g.flipped_count == 1);
+    muse_wordcards_tick(&g, 1000);
+    /* Selecting the fruit set back resets the round: the animal
+     * flips and elapsed time do not carry over. */
+    assert(muse_wordcards_select_set(&g, 0));
+    assert(g.set == 0);
+    assert(g.phase == MUSE_WORDCARDS_START);
+    assert(g.elapsed_ms == 0 && g.flipped_count == 0);
+    for (int i = 0; i < MUSE_WORDCARDS_WORDS; i++) {
+        assert(!g.flipped[i] && !g.seen[i]);
+    }
+    /* A set without art, or out of range, is refused with no change. */
+    gen = g.set_gen;
+    assert(!muse_wordcards_select_set(&g, 2));
+    assert(!muse_wordcards_select_set(&g, -1));
+    assert(!muse_wordcards_select_set(&g, MUSE_WORDCARDS_SETS));
+    assert(g.set == 0);
+    assert(g.set_gen == gen);
+    /* Selecting the current set again is still a fresh round (the
+     * category page always starts a set fresh). */
+    muse_wordcards_start(&g);
+    assert(muse_wordcards_flip_to_back(&g, 2));
+    assert(muse_wordcards_select_set(&g, 0));
+    assert(g.phase == MUSE_WORDCARDS_START);
+    assert(g.flipped_count == 0 && !g.flipped[2]);
 }
 
 static void test_flip_counts_distinct(void)
@@ -253,6 +323,7 @@ static void test_mp3_gate(void)
 int main(void)
 {
     test_table();
+    test_select_set();
     test_flip_counts_distinct();
     test_clock();
     test_cache();
