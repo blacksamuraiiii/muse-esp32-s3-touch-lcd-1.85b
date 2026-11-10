@@ -189,8 +189,44 @@ static esp_err_t on_fetch_data(esp_http_client_event_t *ev)
     return ESP_OK;
 }
 
-/* One GET. Returns 1 = cached READY, 0 = failed (mark FAILED),
- * -1 = transport failure (mark FAILED and abort the rest of the set). */
+/* The one connection all four words of a set travel on. A fresh TLS
+ * handshake is the whole cost of a word (measured 2026-11-10: 3.5-4.3 s
+ * per word on the board, while the server answers in 18 ms once the
+ * socket is up), so the client is created once with keep-alive and
+ * reused; only the URL changes per word. */
+static esp_http_client_handle_t s_client;
+
+static bool ensure_client(const char *url)
+{
+    if (s_client) {
+        return true;
+    }
+    const esp_http_client_config_t cfg = {
+        .url = url,
+        .method = HTTP_METHOD_GET,
+        .timeout_ms = WC_HTTP_TIMEOUT_MS,
+        .buffer_size = WC_HTTP_BUF,
+        .crt_bundle_attach = esp_crt_bundle_attach,
+        .event_handler = on_fetch_data,
+        .keep_alive_enable = true,
+    };
+    s_client = esp_http_client_init(&cfg);
+    return s_client != NULL;
+}
+
+static void drop_client(void)
+{
+    if (s_client) {
+        esp_http_client_cleanup(s_client);
+        s_client = NULL;
+    }
+}
+
+/* One GET on the shared connection. Returns 1 = cached READY, 0 = failed
+ * (mark FAILED), -1 = transport failure (mark FAILED and abandon the
+ * rest of the set). One retry on a fresh connection: a kept-alive socket
+ * the server closed while it was idle fails exactly like a real outage,
+ * and that retry is the difference between a silent word and a word. */
 static int fetch_one(muse_wordcards_t *g, int idx, uint32_t gen)
 {
     const muse_wordcards_set_t *set =
@@ -199,26 +235,26 @@ static int fetch_one(muse_wordcards_t *g, int idx, uint32_t gen)
     if (!muse_tts_url_for_text(set->words[idx].en, url, sizeof(url))) {
         return 0; /* no speech service configured */
     }
-    s_fetch_idx = idx;
-    s_fetch_len = 0;
-    s_fetch_overflow = false;
-    const esp_http_client_config_t cfg = {
-        .url = url,
-        .method = HTTP_METHOD_GET,
-        .timeout_ms = WC_HTTP_TIMEOUT_MS,
-        .buffer_size = WC_HTTP_BUF,
-        .crt_bundle_attach = esp_crt_bundle_attach,
-        .event_handler = on_fetch_data,
-    };
-    esp_http_client_handle_t c = esp_http_client_init(&cfg);
-    if (!c) {
-        return -1;
-    }
-    esp_err_t err = esp_http_client_perform(c);
-    int status = esp_http_client_get_status_code(c);
-    esp_http_client_cleanup(c);
-    if (s_fetch_abort || gen != g->set_gen) {
-        return 0; /* superseded: the bookkeeping ignores the mark */
+    esp_err_t err = ESP_FAIL;
+    int status = 0;
+    for (int attempt = 0; attempt < 2; attempt++) {
+        if (!ensure_client(url)) {
+            return -1;
+        }
+        esp_http_client_set_url(s_client, url);
+        s_fetch_idx = idx;
+        s_fetch_len = 0;
+        s_fetch_overflow = false;
+        err = esp_http_client_perform(s_client);
+        status = esp_http_client_get_status_code(s_client);
+        if (s_fetch_abort || gen != g->set_gen) {
+            return 0; /* superseded: the bookkeeping ignores the mark */
+        }
+        if (err == ESP_OK) {
+            break;
+        }
+        /* The socket is suspect: start the retry from a new one. */
+        drop_client();
     }
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "word %s: fetch failed: %s", set->words[idx].en,
@@ -242,7 +278,6 @@ static int fetch_one(muse_wordcards_t *g, int idx, uint32_t gen)
              (unsigned)s_fetch_len);
     return 1;
 }
-
 typedef struct {
     muse_wordcards_t *g;
     uint32_t gen;

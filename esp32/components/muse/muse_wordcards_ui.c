@@ -25,21 +25,23 @@
  * ignores taps, so a double tap cannot queue two swaps.
  *
  * The clock is the 2-minute round from muse_wordcards.c: the timer
- * only advances while PLAYING, so a pause never eats learning time
- * (the doodle 60 s rule). The HUD reads "已翻 n 张 · 剩余 s 秒" while
- * playing or paused, and turns gold at OVER, where the title slot
- * becomes "时间到" and the summary line reads "本次学了 X 张".
- * The OVER overlay carries only the "再来一局" button (free restart:
- * same set again, a fresh prefetch, no charge -- this game is free).
+ * only advances while PLAYING, and leaving the page stops the clock
+ * (no pause screen: user 2026-11-10 dropped the start and pause
+ * pages, so entering a set starts the round and the back arrow is
+ * the only way out). The HUD reads "已翻 n 张 · 剩余 s 秒" and turns
+ * gold at OVER, where the title slot becomes "时间到" and the summary
+ * line reads "本次学了 X 张". The OVER overlay carries only the
+ * "再来一局" button (free restart: same set again, a fresh prefetch,
+ * no charge -- this game is free).
  *
  * Pronunciation: the UI never fetches on a tap. The prefetch (started
  * on entering the page) fills the PSRAM cache in the background; the
  * 50 ms tick drains the logic's pending_audio mark -- when the word
  * is READY it plays at once, when it is still FETCHING the mark waits
  * for the next tick, when it FAILED the mark is dropped silently and
- * the card simply stays silent. Flipping a card back, pausing, or
- * leaving the page drops a pending mark, so audio is never played for
- * a card the player is no longer looking at.
+ * the card simply stays silent. Flipping a card back or leaving the
+ * page drops a pending mark, so audio is never played for a card the
+ * player is no longer looking at.
  */
 #include "muse_wordcards_ui.h"
 
@@ -57,10 +59,10 @@
 #include "muse_wordcards_art.h"
 #include "muse_wordcards_audio.h"
 
-/* Hold to pause: the finger stays within this radius for this long. */
-#define MUSE_WORDCARDS_HOLD_MS 500u
+/* A press that drifts further than this is a swipe, not a tap (user
+ * 2026-11-10: no pause any more, so this only guards the flip). */
 #define MUSE_WORDCARDS_HOLD_MOVE_PX 12
-/* Timer period: the hold check, the clock and the audio drain ride on it. */
+/* Timer period: the clock and the audio drain ride on it. */
 #define MUSE_WORDCARDS_TICK_MS 50u
 /* Flip: 60 ms squash + 60 ms expand (mockup: 120 ms total). */
 #define MUSE_WORDCARDS_FLIP_HALF_MS 60u
@@ -94,7 +96,6 @@ static muse_wordcards_t s_game;
 /* Press tracking for the tap-to-flip and the hold-to-pause. */
 static bool s_press_active = false;
 static bool s_press_moved = false;
-static uint32_t s_press_start_ms = 0;
 static lv_coord_t s_press_x = 0;
 static lv_coord_t s_press_y = 0;
 static int s_press_card = -1;
@@ -109,8 +110,6 @@ static lv_obj_t *s_back[MUSE_WORDCARDS_WORDS];
 static lv_obj_t *s_back_en[MUSE_WORDCARDS_WORDS];
 static lv_obj_t *s_back_zh[MUSE_WORDCARDS_WORDS];
 static lv_obj_t *s_touch;
-static lv_obj_t *s_start_ov;
-static lv_obj_t *s_paused_ov;
 static lv_obj_t *s_over_ov;
 static lv_obj_t *s_back_btn;
 static lv_obj_t *s_name;
@@ -309,8 +308,6 @@ static void refresh_display(void)
     if (ph == MUSE_WORDCARDS_OVER) {
         title = "时间到";
         title_color = MUSE_THEME_GOLD;
-    } else if (ph == MUSE_WORDCARDS_PAUSED) {
-        title = "已暂停";
     }
     set_label(s_name, title);
     lv_obj_set_style_text_color(s_name, lv_color_hex(title_color),
@@ -327,8 +324,6 @@ static void refresh_display(void)
         lv_obj_set_style_text_color(s_hud, lv_color_hex(MUSE_THEME_GOLD),
                                     LV_PART_MAIN);
         lv_obj_clear_flag(s_hud, LV_OBJ_FLAG_HIDDEN);
-    } else if (ph == MUSE_WORDCARDS_START) {
-        lv_obj_add_flag(s_hud, LV_OBJ_FLAG_HIDDEN);
     } else {
         snprintf(hud, sizeof(hud), "已翻 %lu 张 · 剩余 %lu 秒",
                  (unsigned long)s_game.flipped_count,
@@ -338,31 +333,18 @@ static void refresh_display(void)
         lv_obj_clear_flag(s_hud, LV_OBJ_FLAG_HIDDEN);
     }
     set_label(s_hud, hud);
-    if (ph == MUSE_WORDCARDS_START) {
-        lv_obj_clear_flag(s_start_ov, LV_OBJ_FLAG_HIDDEN);
-    } else {
-        lv_obj_add_flag(s_start_ov, LV_OBJ_FLAG_HIDDEN);
-    }
-    if (ph == MUSE_WORDCARDS_PAUSED) {
-        lv_obj_clear_flag(s_paused_ov, LV_OBJ_FLAG_HIDDEN);
-    } else {
-        lv_obj_add_flag(s_paused_ov, LV_OBJ_FLAG_HIDDEN);
-    }
     if (ph == MUSE_WORDCARDS_OVER) {
         lv_obj_clear_flag(s_over_ov, LV_OBJ_FLAG_HIDDEN);
     } else {
         lv_obj_add_flag(s_over_ov, LV_OBJ_FLAG_HIDDEN);
     }
-    /* Touch only while playing. The back arrow is visible on every
-     * overlay and hidden while playing (snake's rule): leaving
-     * mid-round means holding the page to pause first, so a stray tap
-     * on the rim can never abandon a round. */
+    /* Touch is live only while PLAYING; the back arrow stays visible in
+     * every state (user 2026-11-10: no start page and no pause any more,
+     * so leaving mid-round is the back arrow's job). */
     if (ph == MUSE_WORDCARDS_PLAYING) {
         lv_obj_clear_flag(s_touch, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_add_flag(s_back_btn, LV_OBJ_FLAG_HIDDEN);
     } else {
         lv_obj_add_flag(s_touch, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_clear_flag(s_back_btn, LV_OBJ_FLAG_HIDDEN);
     }
 }
 
@@ -383,33 +365,10 @@ static void begin_game(bool restart)
     refresh_display();
 }
 
-static void on_start(lv_event_t *e)
-{
-    (void)e;
-    begin_game(false);
-}
-
 static void on_restart(lv_event_t *e)
 {
     (void)e;
     begin_game(true);
-}
-
-static void on_resume(lv_event_t *e)
-{
-    (void)e;
-    muse_wordcards_resume(&s_game);
-    lv_timer_resume(s_timer);
-    refresh_display();
-}
-
-static void pause_game(void)
-{
-    muse_wordcards_pause(&s_game);
-    muse_wordcards_audio_stop();
-    muse_wordcards_clear_pending_audio(&s_game);
-    lv_timer_pause(s_timer);
-    refresh_display();
 }
 
 /* The 50 ms tick: the clock, the hold-to-pause, and the audio drain.
@@ -460,12 +419,6 @@ static void on_tick(lv_timer_t *timer)
          * (see on_touch_released): the hold wins over the tap by
          * duration, which is what keeps a held card from flipping
          * when it is held to pause. */
-        if (s_press_active && !s_press_moved &&
-            lv_tick_get() - s_press_start_ms >= MUSE_WORDCARDS_HOLD_MS) {
-            s_press_active = false;
-            pause_game();
-            return;
-        }
         drain_pending_audio();
     }
     refresh_display();
@@ -480,13 +433,11 @@ static void on_touch_pressed(lv_event_t *e)
     lv_indev_get_point(lv_indev_active(), &point);
     s_press_active = true;
     s_press_moved = false;
-    s_press_start_ms = lv_tick_get();
     s_press_x = point.x;
     s_press_y = point.y;
     s_press_card = card_at(point.x, point.y);
-    /* Nothing flips here: the flip fires on release-after-a-short-
-     * press, never on press-down, so a hold-to-pause never flips a
-     * card. */
+    /* Nothing flips here: the flip fires on release, so a drag across
+     * the grid (a swipe towards the page edge) never flips a card. */
 }
 
 static void on_touch_pressing(lv_event_t *e)
@@ -514,12 +465,8 @@ static void on_touch_released(lv_event_t *e)
     if (!was_active || s_game.phase != MUSE_WORDCARDS_PLAYING) {
         return;
     }
-    /* A hold already paused (the tick fired pause_game, and the touch
-     * layer is hidden while paused): the release flips nothing. A slow
-     * release past the hold time without the tick having fired yet is
-     * the same -- the press was a hold, not a tap. */
-    if (s_press_moved ||
-        lv_tick_get() - s_press_start_ms >= MUSE_WORDCARDS_HOLD_MS) {
+    /* A press that drifted is a swipe, not a tap: it flips nothing. */
+    if (s_press_moved) {
         return;
     }
     lv_point_t point;
@@ -614,8 +561,8 @@ void muse_wordcards_ui_open_set(int set)
     /* A set change ends anything the old set was doing: stop the
      * audio, abort its prefetch, drop a flip animation in flight
      * (its midpoint swap would otherwise rewrite a card that now
-     * belongs to the new set), and park the timer on START. The
-     * caller prefetches the new set through ui_show(). */
+     * belongs to the new set). The caller starts the round and
+     * prefetches the new set through ui_show(). */
     muse_wordcards_audio_stop();
     muse_wordcards_audio_prefetch_abort();
     muse_wordcards_clear_pending_audio(&s_game);
@@ -784,37 +731,10 @@ void muse_wordcards_ui_build(lv_obj_t *page, lv_event_cb_t back_cb)
     lv_obj_add_event_cb(s_touch, on_touch_pressing, LV_EVENT_PRESSING, NULL);
     lv_obj_add_event_cb(s_touch, on_touch_released, LV_EVENT_RELEASED, NULL);
 
-    /* START overlay: not dimmed, the cards stay visible behind it. */
-    s_start_ov = overlay(page, false);
-    lv_obj_t *start_btn = centre_btn(s_start_ov, 131, 147);
-    lv_obj_t *start_lb = label(start_btn, muse_font_cjk(), MUSE_THEME_TEXT);
-    lv_label_set_text(start_lb, "开始");
-    lv_obj_center(start_lb);
-    lv_obj_add_event_cb(start_btn, on_start, LV_EVENT_CLICKED, NULL);
-    /* Hint line (mockup v4): same slot as the snake page's hint. The
-     * action keeps the mockup's wording ("翻面读一读"), and the pause
-     * is a hold anywhere on the page, not just the middle, so the copy
-     * says 长按暂停 (the other games document their hold here too). */
-    lv_obj_t *hint_lb = label(s_start_ov, muse_font_cjk(), MUSE_THEME_DIM);
-    lv_label_set_text(hint_lb, "点卡片翻面读一读，长按暂停");
-    lv_obj_align(hint_lb, LV_ALIGN_TOP_MID, 0, 304);
-
-    /* PAUSED overlay: dim, 继续 button with the PLAY symbol above
-     * the label (goldrain's card). No "已暂停" label on the card any
-     * more: the page title itself becomes "已暂停" while paused
-     * (user 2026-11-08). No restart capsule: a single tap in the
-     * narrowest part of the bezel must not restart a free round
-     * by accident either; the back arrow leaves, and 开始 starts
-     * again on the next visit. */
-    s_paused_ov = overlay(page, true);
-    lv_obj_t *resume_btn = centre_btn(s_paused_ov, 131, 147);
-    lv_obj_t *resume_sym = label(resume_btn, &lv_font_montserrat_20, MUSE_THEME_TEXT);
-    lv_label_set_text(resume_sym, LV_SYMBOL_PLAY);
-    lv_obj_align(resume_sym, LV_ALIGN_TOP_MID, 0, 12);
-    lv_obj_t *resume_lb = label(resume_btn, muse_font_cjk(), MUSE_THEME_TEXT);
-    lv_label_set_text(resume_lb, "继续");
-    lv_obj_align(resume_lb, LV_ALIGN_TOP_MID, 0, 34);
-    lv_obj_add_event_cb(resume_btn, on_resume, LV_EVENT_CLICKED, NULL);
+    /* No START overlay and no PAUSED overlay (user 2026-11-10): entering
+     * a set starts the round and shows the 2x2 cards at once, and leaving
+     * is the back arrow's job. The round clock stops whenever the page is
+     * hidden, so nothing is lost by dropping the pause screen. */
 
     /* OVER overlay: dim + 再来一局 button only (UI polish 2026-11-01).
      * The result title lives in the page-title slot and the summary
@@ -830,7 +750,8 @@ void muse_wordcards_ui_build(lv_obj_t *page, lv_event_cb_t back_cb)
 
     /* Back arrow: the shared transparent one (no filled background, user
      * request 2026-11-01), same geometry and symbol as snake / goldrain.
-     * Hidden while playing. Created after the overlays so it stays
+     * Always visible, top-left of the card page (user 2026-11-10: it is
+     * the only way out now). Created after the overlays so it stays
      * clickable on them. */
     s_back_btn = muse_back_button(page, back_cb);
 
@@ -853,19 +774,24 @@ void muse_wordcards_ui_build(lv_obj_t *page, lv_event_cb_t back_cb)
 
 void muse_wordcards_ui_show(void)
 {
-    /* Entering the set: prefetch its 4 MP3s in the background, so a
-     * flip plays from the PSRAM cache at once. Safe to call again on
-     * a return visit: only one prefetch runs per set generation. */
-    muse_wordcards_audio_prefetch(&s_game);
+    /* Entering the set: the 2x2 cards are the page (user 2026-11-10, no
+     * start button), so a fresh round starts here and its 4 MP3s are
+     * prefetched in the background. A return visit within the 2 minutes
+     * carries on with the round that was running. */
+    if (s_game.phase != MUSE_WORDCARDS_PLAYING) {
+        begin_game(false);
+    } else {
+        muse_wordcards_audio_prefetch(&s_game);
+        lv_timer_resume(s_timer);
+    }
     refresh_display();
 }
 
 void muse_wordcards_ui_hide(void)
 {
-    if (s_game.phase == MUSE_WORDCARDS_PLAYING) {
-        muse_wordcards_pause(&s_game);
-        lv_timer_pause(s_timer);
-    }
+    /* No pause state any more: leaving just stops the clock. The phase
+     * stays PLAYING, so coming back inside the 2 minutes carries on. */
+    lv_timer_pause(s_timer);
     muse_wordcards_audio_stop();
     muse_wordcards_audio_prefetch_abort();
     muse_wordcards_clear_pending_audio(&s_game);
