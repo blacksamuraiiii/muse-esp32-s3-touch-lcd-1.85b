@@ -12,6 +12,11 @@ RUN pip install --no-cache-dir \
         -r requirements.txt
 
 COPY tts_server.py .
+COPY gen_word_audio.py .
+
+# Word-card MP3s live here: pre-generated once, served from disk on every flip.
+# The host bind-mounts /opt/muse-tts/word_audio over it, so a rebuild keeps them.
+RUN mkdir -p /app/word_audio
 
 # No secrets here: the Azure key/region come from /opt/muse-tts/.env on the host,
 # passed with `docker run --env-file`.
