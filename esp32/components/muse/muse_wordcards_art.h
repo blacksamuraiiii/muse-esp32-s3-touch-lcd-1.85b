@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 /*
- * muse_wordcards_art.h -- 英语单词卡片 fruit art masters.
+ * muse_wordcards_art.h -- 英语单词卡片 fruit + animal art masters.
  *
  * Source (user decision 2026-11-10, same set as 石头剪刀布):
  *   game-icons/icons repository, CC BY 3.0 -- keep the Game-icons
@@ -9,18 +9,22 @@
  *     banana = delapouite/banana.svg (Delapouite)
  *     cherry = delapouite/cherry.svg (Delapouite)
  *     peach  = delapouite/peach.svg (Delapouite)
- *   All four are 512x512 single-colour SVGs.
+ *     cat    = lorc/cat.svg (Lorc)
+ *     dog    = delapouite/sitting-dog.svg (Delapouite, no plain dog)
+ *     bird   = delapouite/hummingbird.svg (Delapouite, no plain bird)
+ *     fish   = delapouite/tropical-fish.svg (Delapouite)
+ *   All eight are 512x512 single-colour SVGs.
  *
  * Generated once, offline, by ~/workspace/wordcards-art-gen.py; the
- * four .c files beside this header hold the pixel data (LVGL A8,
+ * eight .c files beside this header hold the pixel data (LVGL A8,
  * 128x128 master). Do not hand-edit them and do not hand-draw
  * replacements: the only approved art is the set above.
  *
  * Format is A8, not the hands' ARGB8888: one ARGB8888 128x128 master
- * is 64 KB, and four fruits would be 256 KB against the ~290 KB free
+ * is 64 KB, and eight icons would be 512 KB against the ~290 KB free
  * in the 4 MB app slot at 1.5.2a (1.5e's bin was 3,870,720 B). A8 is
- * 16 KB per icon (64 KB for the set). The UI recolours the mask per
- * fruit at runtime (lv_obj_set_style_image_recolor + _opa COVER),
+ * 16 KB per icon (128 KB for the two sets). The UI recolours the mask
+ * per word at runtime (lv_obj_set_style_image_recolor + _opa COVER),
  * exactly like the hands' loser-dim -- the colour lives in the
  * word table (muse_wordcards.h), not in these pixels.
  *
@@ -44,15 +48,19 @@ extern const lv_image_dsc_t muse_wordcards_art_apple;
 extern const lv_image_dsc_t muse_wordcards_art_banana;
 extern const lv_image_dsc_t muse_wordcards_art_cherry;
 extern const lv_image_dsc_t muse_wordcards_art_peach;
+extern const lv_image_dsc_t muse_wordcards_art_cat;
+extern const lv_image_dsc_t muse_wordcards_art_dog;
+extern const lv_image_dsc_t muse_wordcards_art_bird;
+extern const lv_image_dsc_t muse_wordcards_art_fish;
 
 /* Master size, px (square). The UI draws the picture at 72 px. */
 #define MUSE_WORDCARDS_ART_PX 128
 
 /* Art index -> descriptor, in word-table order (muse_wordcards.h). */
-extern const lv_image_dsc_t *const MUSE_WORDCARDS_ART[4];
+extern const lv_image_dsc_t *const MUSE_WORDCARDS_ART[8];
 
-/* Recolour per fruit (theme hex), in the same order. */
-extern const uint32_t MUSE_WORDCARDS_ART_COLOR[4];
+/* Recolour per word (theme hex), in the same order. */
+extern const uint32_t MUSE_WORDCARDS_ART_COLOR[8];
 
 #ifdef __cplusplus
 }

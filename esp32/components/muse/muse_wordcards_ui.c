@@ -5,12 +5,18 @@
  * Layout (mockup v4, user decision 2026-11-10): the set title in the
  * shared title slot (y=38), a 2x2 grid of 116x116 cards at (60,60)
  * with an 8 px gap, and the HUD at y=308 (the snake / OX棋 slot).
- * A card's front is only its picture (the A8 game-icons master,
- * recoloured per fruit at runtime, scaled to 72 px from the 128 px
- * master). Its back is three centred lines: the English word in gold
- * Montserrat 20, the Chinese in Noto 16, and the speaker logo
- * (LV_SYMBOL_VOLUME_MAX, the face speaker button's glyph) in white --
- * the v3 ~31x18 logo, not the v2 48x30 one.
+ * The category page (mockup v2, user decision 2026-11-10) is the
+ * level above: title "单词练习", rows at the minigame list's
+ * geometry (330 wide, top 84, 58 high, 10 gap, radius 18, CARD
+ * fill) with the set icon (36 px) + 12 px gap + set title (Noto 16)
+ * centred as one group, no count text, and the hint "免费 · 每类
+ * 限时 2 分钟" under the list. A card's front is only its picture
+ * (the A8 game-icons master, recoloured per word at runtime,
+ * scaled to 72 px from the 128 px master). Its back is three centred
+ * lines: the English word in gold Montserrat 20, the Chinese in
+ * Noto 16, and the speaker logo (LV_SYMBOL_VOLUME_MAX, the face
+ * speaker button's glyph) in white -- the v3 ~31x18 logo, not the
+ * v2 48x30 one.
  *
  * The flip is a fake: 120 ms of horizontal squash (scale_x 256 -> 0
  * in 60 ms), swap the front/back at the midpoint, expand back
@@ -99,6 +105,9 @@ static bool s_flip_target[MUSE_WORDCARDS_WORDS];
 static lv_obj_t *s_card[MUSE_WORDCARDS_WORDS];
 static lv_obj_t *s_front_img[MUSE_WORDCARDS_WORDS];
 static lv_obj_t *s_back[MUSE_WORDCARDS_WORDS];
+/* Back-face lines, kept so open_set can rebuild them for a new set. */
+static lv_obj_t *s_back_en[MUSE_WORDCARDS_WORDS];
+static lv_obj_t *s_back_zh[MUSE_WORDCARDS_WORDS];
 static lv_obj_t *s_touch;
 static lv_obj_t *s_start_ov;
 static lv_obj_t *s_paused_ov;
@@ -108,6 +117,25 @@ static lv_obj_t *s_name;
 static lv_obj_t *s_hud;
 static lv_obj_t *s_page;
 static lv_timer_t *s_timer;
+/* Category page (built once by muse_wordcards_ui_build_sets): the
+ * owner callback a set row calls. */
+static lv_obj_t *s_sets_page;
+static muse_wordcards_open_set_cb_t s_open_set_cb;
+
+/* Category-page geometry: the minigame list's own numbers
+ * (build_minigame in muse_interact_ui.c) -- 330 wide, top 84, rows
+ * 58 high with a 10 px gap, radius 18, CARD fill (muse_card). The
+ * hint sits under the last row, at the mockup v2 slot. */
+#define MUSE_WORDCARDS_SETS_W 330
+#define MUSE_WORDCARDS_SETS_TOP 84
+#define MUSE_WORDCARDS_SETS_ROW_H 58
+#define MUSE_WORDCARDS_SETS_GAP 10
+#define MUSE_WORDCARDS_SETS_RADIUS 18
+#define MUSE_WORDCARDS_SETS_HINT_Y 232
+/* Set icon on a category row: 36 px, 12 px before the title. */
+#define MUSE_WORDCARDS_SETS_ICON_PX 36
+#define MUSE_WORDCARDS_SETS_ICON_SCALE \
+    (256 * MUSE_WORDCARDS_SETS_ICON_PX / MUSE_WORDCARDS_ART_PX)
 
 /* --- small helpers, same shapes as the OX棋 page ------------------ */
 
@@ -560,6 +588,113 @@ static lv_obj_t *centre_btn(lv_obj_t *parent, lv_coord_t x, lv_coord_t y)
     return btn;
 }
 
+/* --- set switching + category page ------------------------------ */
+
+/* Rebuild the four cards' pictures and back texts from the current
+ * set's table (the card objects themselves are built once). */
+static void refresh_card_content(void)
+{
+    for (int i = 0; i < MUSE_WORDCARDS_WORDS; i++) {
+        const muse_wordcards_word_t *w =
+            &MUSE_WORDCARDS_SETS_TABLE[s_game.set].words[i];
+        lv_image_set_src(s_front_img[i], MUSE_WORDCARDS_ART[w->art]);
+        lv_obj_set_style_image_recolor(s_front_img[i],
+                                       lv_color_hex(w->color),
+                                       LV_PART_MAIN);
+        lv_label_set_text(s_back_en[i], w->en);
+        lv_label_set_text(s_back_zh[i], w->zh);
+    }
+}
+
+void muse_wordcards_ui_open_set(int set)
+{
+    if (!muse_wordcards_select_set(&s_game, set)) {
+        return; /* no art for that set: stay on the current one */
+    }
+    /* A set change ends anything the old set was doing: stop the
+     * audio, abort its prefetch, drop a flip animation in flight
+     * (its midpoint swap would otherwise rewrite a card that now
+     * belongs to the new set), and park the timer on START. The
+     * caller prefetches the new set through ui_show(). */
+    muse_wordcards_audio_stop();
+    muse_wordcards_audio_prefetch_abort();
+    muse_wordcards_clear_pending_audio(&s_game);
+    s_press_active = false;
+    for (int i = 0; i < MUSE_WORDCARDS_WORDS; i++) {
+        lv_anim_delete(s_card[i], NULL);
+        s_flip_anim[i] = false;
+        lv_obj_set_style_transform_scale_x(s_card[i],
+                                           MUSE_WORDCARDS_FLIP_SCALE,
+                                           LV_PART_MAIN);
+    }
+    lv_timer_pause(s_timer);
+    refresh_card_content();
+    refresh_display();
+}
+
+static void on_set_row(lv_event_t *e)
+{
+    int set = (int)(intptr_t)lv_event_get_user_data(e);
+    if (s_open_set_cb) {
+        s_open_set_cb(set);
+    }
+}
+
+void muse_wordcards_ui_build_sets(lv_obj_t *page, lv_event_cb_t back_cb,
+                                  muse_wordcards_open_set_cb_t open_cb)
+{
+    s_sets_page = page;
+    s_open_set_cb = open_cb;
+    muse_back_button(page, back_cb);
+    muse_page_title(page, "单词练习", 44);
+    /* One row per offered set, in table order: muse_card (the
+     * minigame list's row) with a flex row inside -- icon + title
+     * centred as one group (mockup v2: icon 36 px, 12 px gap,
+     * Noto 16 title, no count text). */
+    int row = 0;
+    for (int s = 0; s < MUSE_WORDCARDS_SETS; s++) {
+        if (!muse_wordcards_set_has_art(s)) {
+            continue;
+        }
+        const muse_wordcards_set_t *set = &MUSE_WORDCARDS_SETS_TABLE[s];
+        lv_obj_t *card = muse_card(page, MUSE_WORDCARDS_SETS_W,
+                                   MUSE_WORDCARDS_SETS_ROW_H,
+                                   MUSE_WORDCARDS_SETS_RADIUS);
+        lv_obj_set_pos(card, (360 - MUSE_WORDCARDS_SETS_W) / 2,
+                       MUSE_WORDCARDS_SETS_TOP +
+                           row * (MUSE_WORDCARDS_SETS_ROW_H +
+                                  MUSE_WORDCARDS_SETS_GAP));
+        lv_obj_set_flex_flow(card, LV_FLEX_FLOW_ROW);
+        lv_obj_set_flex_align(card, LV_FLEX_ALIGN_CENTER,
+                              LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+        lv_obj_set_style_pad_column(card, 12, LV_PART_MAIN);
+        /* First word's picture, recoloured with its own colour. */
+        lv_obj_t *img = lv_image_create(card);
+        lv_image_set_src(img,
+                         MUSE_WORDCARDS_ART[set->words[0].art]);
+        lv_image_set_scale(img, MUSE_WORDCARDS_SETS_ICON_SCALE);
+        lv_obj_set_size(img, MUSE_WORDCARDS_SETS_ICON_PX,
+                        MUSE_WORDCARDS_SETS_ICON_PX);
+        lv_obj_set_style_image_recolor(img,
+                                       lv_color_hex(set->words[0].color),
+                                       LV_PART_MAIN);
+        lv_obj_set_style_image_recolor_opa(img, LV_OPA_COVER,
+                                           LV_PART_MAIN);
+        lv_obj_remove_flag(img, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_remove_flag(img, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_t *t = label(card, muse_font_btn(), MUSE_THEME_TEXT);
+        lv_label_set_text(t, set->title);
+        lv_obj_add_event_cb(card, on_set_row, LV_EVENT_CLICKED,
+                            (void *)(intptr_t)s);
+        row++;
+    }
+    /* Hint under the list (mockup v2). Noto 16 is the only CJK size
+     * the firmware has, so the mockup's 14 px hint renders at 16 px. */
+    lv_obj_t *hint = label(page, muse_font_cjk(), MUSE_THEME_DIM);
+    lv_label_set_text(hint, "免费 · 每类限时 2 分钟");
+    lv_obj_align(hint, LV_ALIGN_TOP_MID, 0, MUSE_WORDCARDS_SETS_HINT_Y);
+}
+
 void muse_wordcards_ui_build(lv_obj_t *page, lv_event_cb_t back_cb)
 {
     muse_wordcards_init(&s_game);
@@ -626,6 +761,9 @@ void muse_wordcards_ui_build(lv_obj_t *page, lv_event_cb_t back_cb)
         lv_obj_t *zh = label(back, muse_font_cjk(), MUSE_THEME_TEXT);
         lv_label_set_text(zh, w->zh);
         lv_obj_align(zh, LV_ALIGN_TOP_MID, 0, MUSE_WORDCARDS_BACK_ZH_Y);
+        /* Kept so open_set can rebuild the back for a new set. */
+        s_back_en[i] = en;
+        s_back_zh[i] = zh;
         lv_obj_t *sp = label(back, &lv_font_montserrat_20,
                              MUSE_THEME_TEXT);
         lv_label_set_text(sp, LV_SYMBOL_VOLUME_MAX);

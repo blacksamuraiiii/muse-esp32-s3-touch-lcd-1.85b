@@ -39,16 +39,18 @@ const muse_wordcards_set_t MUSE_WORDCARDS_SETS_TABLE[MUSE_WORDCARDS_SETS] = {
         },
     },
     {
-        "动物 · Animals",
+        "动物 · Animal",
         {
-            /* Art TODO (closest game-icons file, not yet generated):
+            /* Art: game-icons, CC BY 3.0 (see muse_wordcards_art.h),
+             * the closest matches, user-accepted 2026-11-10:
              * cat = lorc/cat, dog = delapouite/sitting-dog (no plain
              * dog in the set), bird = delapouite/hummingbird (no plain
-             * bird in the set), fish = delapouite/tropical-fish. */
-            {"cat", "猫", 0xf2efff, MUSE_WORDCARDS_ART_NONE},
-            {"dog", "狗", 0xf2efff, MUSE_WORDCARDS_ART_NONE},
-            {"bird", "鸟", 0xf2efff, MUSE_WORDCARDS_ART_NONE},
-            {"fish", "鱼", 0xf2efff, MUSE_WORDCARDS_ART_NONE},
+             * bird in the set), fish = delapouite/tropical-fish.
+             * Colours are the mockup's per-animal recolours. */
+            {"cat", "猫", 0xe8a04c, 4},
+            {"dog", "狗", 0xb07a4a, 5},
+            {"bird", "鸟", 0x6ff0bf, 6},
+            {"fish", "鱼", 0x6aa8ff, 7},
         },
     },
     {
@@ -182,6 +184,29 @@ void muse_wordcards_init(muse_wordcards_t *g)
         g->cache_bytes[i] = 0;
     }
     reset_round(g);
+}
+
+bool muse_wordcards_select_set(muse_wordcards_t *g, int set)
+{
+    if (set < 0 || set >= MUSE_WORDCARDS_SETS) {
+        return false;
+    }
+    if (!muse_wordcards_set_has_art(set)) {
+        return false;
+    }
+    g->set = set;
+    /* A new set is a new generation: a prefetch from the previous
+     * set must not mark words ready here, and the old cache marks
+     * belong to the old words. The round restarts at START, so the
+     * player sees the 开始 overlay for the new set. */
+    g->set_gen++;
+    for (int i = 0; i < MUSE_WORDCARDS_WORDS; i++) {
+        g->cache[i] = MUSE_WORDCARDS_CACHE_EMPTY;
+        g->cache_bytes[i] = 0;
+    }
+    reset_round(g);
+    g->phase = MUSE_WORDCARDS_START;
+    return true;
 }
 
 void muse_wordcards_start(muse_wordcards_t *g)
