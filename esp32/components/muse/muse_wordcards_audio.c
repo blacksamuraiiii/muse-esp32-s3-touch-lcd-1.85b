@@ -40,6 +40,13 @@ static const char *TAG = "muse.wordcards_audio";
 #define WC_HTTP_TIMEOUT_MS 8000
 #define WC_HTTP_BUF 1024
 #define WC_TASK_STACK 12288
+/* The playback task needs more than the fetch task: measured on the 185B it
+ * overflowed 12288 (panic: "A stack overflow in task muse_wc_play") while
+ * decoding + resampling + muse_audio_write ran. 24 KB still fits PSRAM
+ * comfortably and leaves headroom for a deeper codec call path; the
+ * high-water mark logged at the end of each playback is the number to tune
+ * against, not this guess. */
+#define WC_PLAY_STACK 24576
 #define WC_TASK_PRIO 4
 
 /* PSRAM slots: one per word of the current set. Allocated on the
@@ -348,6 +355,7 @@ void muse_wordcards_audio_prefetch_abort(void)
 typedef struct {
     int idx;
     size_t len;
+    const char *en;   /* the word, for the log only (static table string) */
 } play_req_t;
 
 static void play_task(void *arg)
@@ -355,7 +363,11 @@ static void play_task(void *arg)
     play_req_t *req = (play_req_t *)arg;
     int idx = req->idx;
     size_t len = req->len;
+    const char *en = req->en;
     free(req);
+    ESP_LOGI(TAG, "play %s: %u bytes (stack %u left at start)",
+             en, (unsigned)len,
+             (unsigned)uxTaskGetStackHighWaterMark(NULL));
     muse_audio_power(true); /* left open: the voice task owns closing */
     if (!ensure_decode_buffers()) {
         s_play_task = NULL;
@@ -405,6 +417,8 @@ static void play_task(void *arg)
             muse_audio_write(s_pcm16, out_n);
         }
     }
+    ESP_LOGI(TAG, "play %s done: stack %u left", en,
+             (unsigned)uxTaskGetStackHighWaterMark(NULL));
     s_play_task = NULL;
     vTaskDelete(NULL);
 }
@@ -435,8 +449,9 @@ bool muse_wordcards_audio_play(muse_wordcards_t *g, int i)
     }
     req->idx = i;
     req->len = s_slot_len[i];
+    req->en = MUSE_WORDCARDS_SETS_TABLE[g->set].words[i].en;
     s_play_abort = false;
-    if (xTaskCreateWithCaps(play_task, "muse_wc_play", WC_TASK_STACK,
+    if (xTaskCreateWithCaps(play_task, "muse_wc_play", WC_PLAY_STACK,
                             req, WC_TASK_PRIO, &s_play_task,
                             MALLOC_CAP_SPIRAM) != pdPASS) {
         free(req);
