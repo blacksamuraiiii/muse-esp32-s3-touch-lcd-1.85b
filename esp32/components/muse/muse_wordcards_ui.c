@@ -322,16 +322,16 @@ static void refresh_display(void)
      * hidden. */
     char hud[48];
     if (ph == MUSE_WORDCARDS_OVER) {
-        snprintf(hud, sizeof(hud), "本次学了 %d 张",
-                 s_game.flipped_count);
+        snprintf(hud, sizeof(hud), "本次学了 %lu 张",
+                 (unsigned long)s_game.flipped_count);
         lv_obj_set_style_text_color(s_hud, lv_color_hex(MUSE_THEME_GOLD),
                                     LV_PART_MAIN);
         lv_obj_clear_flag(s_hud, LV_OBJ_FLAG_HIDDEN);
     } else if (ph == MUSE_WORDCARDS_START) {
         lv_obj_add_flag(s_hud, LV_OBJ_FLAG_HIDDEN);
     } else {
-        snprintf(hud, sizeof(hud), "已翻 %d 张 · 剩余 %lu 秒",
-                 s_game.flipped_count,
+        snprintf(hud, sizeof(hud), "已翻 %lu 张 · 剩余 %lu 秒",
+                 (unsigned long)s_game.flipped_count,
                  (unsigned long)muse_wordcards_remaining_s(&s_game));
         lv_obj_set_style_text_color(s_hud, lv_color_hex(MUSE_THEME_TEXT),
                                     LV_PART_MAIN);
