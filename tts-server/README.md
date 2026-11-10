@@ -12,8 +12,8 @@
 |---|---|
 | 主机 | 局域网内一台常开 Linux（Alpine 3.17.0 / x86_64，Docker 20.10.24，**无 compose**）；具体地址不入库 |
 | 目录 | `/opt/muse-tts/`（`tts_server.py`、`requirements.txt`、`Dockerfile`，md5 与仓库一致） |
-| 镜像 | `muse-tts:1.4`（`python:3.12-alpine` + flask + **waitress** + edge-tts；1.0 → 初版，1.1 → 韵律/校验/缓存，1.2 → pitch 单位修正，1.3 → Azure 主用，**1.4 → waitress 换掉 Flask 开发服务器**） |
-| 容器 | `muse-tts`，`--restart unless-stopped`，映射 `0.0.0.0:5050->5050`，`--env-file /opt/muse-tts/.env` |
+| 镜像 | `muse-tts:1.6`（`python:3.12-alpine` + flask + **waitress** + edge-tts；1.0 → 初版，1.1 → 韵律/校验/缓存，1.2 → pitch 单位修正，1.3 → Azure 主用，1.4 → waitress 换掉 Flask 开发服务器，1.5 → 中继令牌，**1.6 → 单词卡片磁盘缓存 + `word=1`**） |
+| 容器 | `muse-tts`，`--restart unless-stopped`，映射 `127.0.0.1:5050->5050`（公网只经 nginx 反代），`--env-file /opt/muse-tts/.env`，挂 `-v /opt/muse-tts/word_audio:/app/word_audio` |
 | 密钥 | 主机 `/opt/muse-tts/.env`（mode 600，不入库、不进镜像）；本地副本 `tts-server/.env`（已 gitignore） |
 | 音色 | `TTS_VOICE`，当前 `zh-CN-XiaoxiaoNeural`；Azure 侧再叠 `mstts:express-as style=friendly styledegree=1.2` |
 
@@ -27,7 +27,8 @@
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | GET | `/tts?voice=<音色>&text=<URL 编码文本>` | 返回 `audio/mpeg`；`q=` 与 `text=` 都收；缺文本 → 400，上游非 MP3 → 502 |
-| GET | `/health` | JSON：生效音色、rate、pitch、max_chars、缓存条目与字节数 |
+| GET | `/tts?word=1&text=<英文单词>` | 单词卡片专用：忽略 URL 里的 voice/rate，固定单词语音 `en-US-AriaNeural -10%`，优先返回磁盘上预生成的文件 |
+| GET | `/health` | JSON：生效音色、rate、pitch、max_chars、缓存条目与字节数、单词缓存（目录/文件数/音色） |
 
 可选参数：`rate`（默认 `+8%`）、`pitch`（默认 `+4%`）、`stream`（默认 `1`）。**pitch 单位按后端不同**：
 Azure 收百分比（`^[+-]\d+%$`），edge-tts 只收 `^[+-]\d+Hz$`，写错会被忽略并回落默认值，
@@ -181,3 +182,27 @@ chunked 与 Content-Length 两条路都一样，所以不是分块编码的问�
 - 无鉴权：局域网内谁都能调。要收口就加 `X-Key`（同参考实现）。
 - 响应头尚未带 `X-Emotion`（板载形象的情绪映射要用，见 `../virtual-avatar/README.md`）。
 - 磁盘：主机根分区 9.7 G 已用 86%，镜像约 60 MB，留意余量。
+
+## 单词卡片音频（镜像 1.6，2026-11-10）
+
+固件 `feat/wordcards-20261110` 的单词卡片不在翻面时合成语音：进一组时后台预取该组
+4 个词的 MP3 到 PSRAM，翻面本地播放。取法就是回复那条 `/tts`，只多带 `word=1`：
+
+```
+…/?k=<token>&voice=zh-CN-XiaoyiNeural&text=apple&word=1
+```
+
+- 服务端见 `word=1` 就忽略 URL 里的 voice/rate，固定 `en-US-AriaNeural`（-10%，
+  `TTS_WORD_VOICE` / `TTS_WORD_RATE` 可改）。中文回复音色永远不会读英文单词。
+- 先读磁盘（`TTS_WORD_DIR`，容器里 `/app/word_audio`，主机挂
+  `/opt/muse-tts/word_audio`）；命中直接返回，未命中才合成一次并原子写入。
+  文件名 `词-sha256(voice|rate|词)前12位.mp3`，换音色/语速不会误用旧文件。
+- `TTS_WORD_MAX_FILES`（默认 2000）到顶后只读不写；非 MP3 文件按缺失处理且不删。
+- 预生成：`docker exec muse-tts python gen_word_audio.py`（32 词，按固件
+  `MUSE_WORDCARDS_SETS_TABLE` 的表；已有且校验通过就跳过，重跑安全）。
+- 上游 SSML 语言跟随音色（`en-*` → `en-US`），原来写死 `zh-CN`。
+
+实测（2026-11-10）：32 词各 11232 B（1.872 s，语音约 0.5 s，其余为 Azure 尾部静音，
+中文短回复同样 11232 B，属既有格式行为）；公网 URL 取 `apple` → `x-tts-cache: hit`、
+`x-tts-word: 1`，md5 与主机磁盘文件一致；普通中文回复仍是 `X-TTS-Stream: 1` 流式。
+细节与部署/回滚步骤见 `../notes/wordcards-tts-server.md`。
