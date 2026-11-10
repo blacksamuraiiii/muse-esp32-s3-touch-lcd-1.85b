@@ -44,6 +44,18 @@
 #include <stddef.h>
 #include <stdint.h>
 
+// Expand the template with one short text, for callers that fetch one
+// pre-generated word audio file instead of a reply sentence (the
+// word-cards prefetch). The bridge answers /tts with the cached MP3
+// when it has one, so this is the same endpoint, host, key and voice
+// the replies already use, and no second server is needed. The request
+// is marked word=1, so the bridge answers with the word voice
+// (en-US-AriaNeural, -10%) from its disk cache instead of the reply
+// voice. Returns false when there is no template, no {text}
+// placeholder, the text is longer than one TTS chunk, or the result
+// would not fit in `out`.
+bool muse_tts_url_for_text(const char *text, char *out, size_t cap);
+
 // Start speaking `text`. Returns false when a fetch is already running or the
 // task could not be started. The text is copied, so the caller may free it.
 bool muse_tts_speak(const char *text);
