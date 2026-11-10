@@ -71,6 +71,18 @@ docker exec muse-tts python gen_word_audio.py     # 缺的词补上，已有的�
 | 主机 127.0.0.1:5050 | `word=1` 两次 + 表外词 `table` | hit / hit / miss 后自动存盘，均 200 |
 | 公网 URL（WSL 按固件模板形状） | `…&text=apple&word=1` | HTTP/2 200、`x-tts-cache: hit`、`x-tts-word: 1`，ffprobe `mp3/24000/mono/48kbps/1.872s` |
 
+## 取音提速（2026-11-10，1.5.2c）
+
+固件原来每词一次 `esp_http_client_init` → `perform` → `cleanup`，即每词新建一条
+TCP+TLS 连接。板子上单次握手 3.5–4.3 秒（服务器同一连接应答只要 18 ms），所以一组
+4 个词要 16 秒（串口时间戳：apple 123.29 s → banana 128.26 s → cherry 173.24 s →
+peach 176.71 s）。现改为**一条 keep-alive 连接串行取完**（只换 URL，出错/被中止时才
+丢弃重连），一组降到数秒，用户实机确认「快多了」。
+
+nginx 侧同时加了 upstream keep-alive（`proxy_set_header Connection ""` +
+`vhost/nginx/0.muse-tts-upstream.conf` 的 `upstream muse_tts_backend { keepalive 16; }`），
+省掉 nginx→容器每请求新建连接。
+
 ## 已知观察
 
 - **每个词音 11232 字节（1.872 s），其中语音只占约 0.5 s**，其余是 Azure 尾部静音；
