@@ -7,7 +7,7 @@
  * animal sets merged into one 8-word group over two swiped pages): the
  * minigame list's "单词练习" row opens the category page
  * (muse_wordcards_ui_build_sets: one row per offered set -- "水果 ·
- * Fruit", "动物1 · Animal 1", "动物2 · Animal 2", "物品 · Things" --
+ * Fruit", "动物 · Animal", "食物 · Food", "物品 · Things" --
  * icon + title centred as one group, no count text, hint "限时免费"
  * as the list's last item), and a
  * category row opens that set's 2x2 card page (muse_wordcards_ui_build).

@@ -121,15 +121,18 @@ const muse_wordcards_set_t MUSE_WORDCARDS_SETS_TABLE[MUSE_WORDCARDS_SETS] = {
     {
         "食物 · Food",
         {
-            /* Art TODO (closest game-icons file, not yet generated):
-             * cake = lorc/cake-slice (no whole cake in the set),
-             * milk = rihlsul/milk-carton, bread = delapouite/bread,
-             * egg = delapouite/egg-eye (verify the name in
-             * game-icons before generating). */
-            {"cake", "蛋糕", 0xf2efff, MUSE_WORDCARDS_ART_NONE},
-            {"milk", "牛奶", 0xf2efff, MUSE_WORDCARDS_ART_NONE},
-            {"bread", "面包", 0xf2efff, MUSE_WORDCARDS_ART_NONE},
-            {"egg", "鸡蛋", 0xf2efff, MUSE_WORDCARDS_ART_NONE},
+            /* 1.5.3a B1 (user decision 2026-11-11): cake =
+             * lorc/cake-slice (no whole cake in the set), milk =
+             * rihlsul/milk-carton, bread = delapouite/bread, egg =
+             * delapouite/egg-eye. Colours are the user-confirmed
+             * ones (preview ~/workspace/wordcards-food-v1.png):
+             * cake pink, milk light blue, bread gold, egg yolk. The
+             * four words were already in the 39-word pre-generated
+             * TTS table, so no new audio was needed. */
+            {"cake", "蛋糕", 0xff8fb3, 16},
+            {"milk", "牛奶", 0x8ec9ff, 17},
+            {"bread", "面包", 0xe0a458, 18},
+            {"egg", "鸡蛋", 0xffd23e, 19},
             WC_EMPTY, WC_EMPTY, WC_EMPTY, WC_EMPTY,
         },
     },
