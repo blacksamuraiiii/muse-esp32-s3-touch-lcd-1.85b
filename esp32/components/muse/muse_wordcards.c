@@ -25,6 +25,10 @@
 #define WC_YELLOW 0xf6cb4b
 #define WC_PEACH 0xffaa78
 
+/* A slot a set does not use: en == NULL means "no word here", which every
+ * loop skips (the animal set is the only 8-word set so far). */
+#define WC_EMPTY {NULL, NULL, 0, MUSE_WORDCARDS_ART_NONE}
+
 const muse_wordcards_set_t MUSE_WORDCARDS_SETS_TABLE[MUSE_WORDCARDS_SETS] = {
     {
         "水果 · Fruit",
@@ -36,23 +40,28 @@ const muse_wordcards_set_t MUSE_WORDCARDS_SETS_TABLE[MUSE_WORDCARDS_SETS] = {
             {"banana", "香蕉", WC_YELLOW, 1},
             {"cherry", "樱桃", WC_RED, 2},
             {"peach", "桃子", WC_PEACH, 3},
+            WC_EMPTY, WC_EMPTY, WC_EMPTY, WC_EMPTY,
         },
     },
     {
-        "动物1 · Animal 1",
+        /* Animal 1 + animal 2 merged (user decision 2026-11-11): one
+         * 8-word group over two pages, the practice workbook's animals. */
+        "动物 · Animal",
         {
-            /* Art: game-icons, CC BY 3.0 (see muse_wordcards_art.h),
-             * the closest matches, user-accepted 2026-11-10:
-             * cat = lorc/cat, dog = delapouite/sitting-dog (no plain
-             * dog in the set), bird = delapouite/hummingbird (no plain
-             * bird in the set), fish = delapouite/tropical-fish.
-             * Colours are the mockup's per-animal recolours.
-             * Renamed from "动物 · Animal" in phase 2 (user decision
-             * 2026-11-11) so the two animal sets read 动物1 / 动物2. */
+            /* Art: game-icons, CC BY 3.0. Page 1 (2026-11-10): cat =
+             * lorc/cat, dog = delapouite/sitting-dog, bird =
+             * delapouite/hummingbird, fish = delapouite/tropical-fish.
+             * Page 2 (2026-11-11, practice workbook photo): bear is the
+             * bear-head, fox the fox-head (no whole animal in the set).
+             * Colours are the mockup's per-animal recolours. */
             {"cat", "猫", 0xe8a04c, 4},
             {"dog", "狗", 0xb07a4a, 5},
             {"bird", "鸟", 0x6ff0bf, 6},
             {"fish", "鱼", 0x6aa8ff, 7},
+            {"bear", "熊", 0xa8763e, 8},
+            {"duck", "鸭子", 0xf6cb4b, 9},
+            {"frog", "青蛙", 0x6ff0bf, 10},
+            {"fox", "狐狸", 0xff8c42, 11},
         },
     },
     {
@@ -65,6 +74,7 @@ const muse_wordcards_set_t MUSE_WORDCARDS_SETS_TABLE[MUSE_WORDCARDS_SETS] = {
             {"blue", "蓝色", 0x7dadcb, MUSE_WORDCARDS_ART_NONE},
             {"green", "绿色", 0x6ff0bf, MUSE_WORDCARDS_ART_NONE},
             {"yellow", "黄色", 0xf6cb4b, MUSE_WORDCARDS_ART_NONE},
+            WC_EMPTY, WC_EMPTY, WC_EMPTY, WC_EMPTY,
         },
     },
     {
@@ -78,6 +88,7 @@ const muse_wordcards_set_t MUSE_WORDCARDS_SETS_TABLE[MUSE_WORDCARDS_SETS] = {
             {"nose", "鼻子", 0xf2efff, MUSE_WORDCARDS_ART_NONE},
             {"mouth", "嘴", 0xf2efff, MUSE_WORDCARDS_ART_NONE},
             {"ear", "耳朵", 0xf2efff, MUSE_WORDCARDS_ART_NONE},
+            WC_EMPTY, WC_EMPTY, WC_EMPTY, WC_EMPTY,
         },
     },
     {
@@ -89,6 +100,7 @@ const muse_wordcards_set_t MUSE_WORDCARDS_SETS_TABLE[MUSE_WORDCARDS_SETS] = {
             {"two", "二", 0xf2efff, MUSE_WORDCARDS_ART_NONE},
             {"three", "三", 0xf2efff, MUSE_WORDCARDS_ART_NONE},
             {"four", "四", 0xf2efff, MUSE_WORDCARDS_ART_NONE},
+            WC_EMPTY, WC_EMPTY, WC_EMPTY, WC_EMPTY,
         },
     },
     {
@@ -103,6 +115,7 @@ const muse_wordcards_set_t MUSE_WORDCARDS_SETS_TABLE[MUSE_WORDCARDS_SETS] = {
             {"pen", "笔", 0xf2efff, MUSE_WORDCARDS_ART_NONE},
             {"bag", "书包", 0xf2efff, MUSE_WORDCARDS_ART_NONE},
             {"pencil", "铅笔", 0xf2efff, MUSE_WORDCARDS_ART_NONE},
+            WC_EMPTY, WC_EMPTY, WC_EMPTY, WC_EMPTY,
         },
     },
     {
@@ -117,6 +130,7 @@ const muse_wordcards_set_t MUSE_WORDCARDS_SETS_TABLE[MUSE_WORDCARDS_SETS] = {
             {"milk", "牛奶", 0xf2efff, MUSE_WORDCARDS_ART_NONE},
             {"bread", "面包", 0xf2efff, MUSE_WORDCARDS_ART_NONE},
             {"egg", "鸡蛋", 0xf2efff, MUSE_WORDCARDS_ART_NONE},
+            WC_EMPTY, WC_EMPTY, WC_EMPTY, WC_EMPTY,
         },
     },
     {
@@ -130,19 +144,7 @@ const muse_wordcards_set_t MUSE_WORDCARDS_SETS_TABLE[MUSE_WORDCARDS_SETS] = {
             {"dad", "爸爸", 0xf2efff, MUSE_WORDCARDS_ART_NONE},
             {"sister", "姐妹", 0xf2efff, MUSE_WORDCARDS_ART_NONE},
             {"brother", "兄弟", 0xf2efff, MUSE_WORDCARDS_ART_NONE},
-        },
-    },
-    {
-        "动物2 · Animal 2",
-        {
-            /* Phase 2 (user decision 2026-11-11, from the practice
-             * workbook photo): bear is the bear-head (no whole bear
-             * in the set), fox is the fox-head. Colours are the
-             * preview v3 recolours. */
-            {"bear", "熊", 0xa8763e, 8},
-            {"duck", "鸭子", 0xf6cb4b, 9},
-            {"frog", "青蛙", 0x6ff0bf, 10},
-            {"fox", "狐狸", 0xff8c42, 11},
+            WC_EMPTY, WC_EMPTY, WC_EMPTY, WC_EMPTY,
         },
     },
     {
@@ -159,6 +161,7 @@ const muse_wordcards_set_t MUSE_WORDCARDS_SETS_TABLE[MUSE_WORDCARDS_SETS] = {
             {"box", "盒子", 0xb07a4a, 13},
             {"bag", "包", 0xa77dff, 14},
             {"robot", "机器人", 0x7dadcb, 15},
+            WC_EMPTY, WC_EMPTY, WC_EMPTY, WC_EMPTY,
         },
     },
 };
@@ -174,12 +177,27 @@ int muse_wordcards_offered_sets(void)
     return n;
 }
 
-bool muse_wordcards_set_has_art(int set)
+int muse_wordcards_set_words(int set)
 {
     if (set < 0 || set >= MUSE_WORDCARDS_SETS) {
+        return 0;
+    }
+    int n = 0;
+    for (int i = 0; i < MUSE_WORDCARDS_WORDS; i++) {
+        if (MUSE_WORDCARDS_SETS_TABLE[set].words[i].en) {
+            n++;
+        }
+    }
+    return n;
+}
+
+bool muse_wordcards_set_has_art(int set)
+{
+    const int words = muse_wordcards_set_words(set);
+    if (words == 0) {
         return false;
     }
-    for (int i = 0; i < MUSE_WORDCARDS_WORDS; i++) {
+    for (int i = 0; i < words; i++) {
         if (MUSE_WORDCARDS_SETS_TABLE[set].words[i].art ==
             MUSE_WORDCARDS_ART_NONE) {
             return false;
@@ -255,12 +273,20 @@ void muse_wordcards_restart(muse_wordcards_t *g)
     g->phase = MUSE_WORDCARDS_PLAYING;
 }
 
+/* A card index that really holds a word (slots past the set's word count
+ * have en == NULL: 4-word sets use only the first page). */
+static bool word_slot(const muse_wordcards_t *g, int i)
+{
+    return i >= 0 && i < MUSE_WORDCARDS_WORDS &&
+           MUSE_WORDCARDS_SETS_TABLE[g->set].words[i].en != NULL;
+}
+
 bool muse_wordcards_flip_to_back(muse_wordcards_t *g, int i)
 {
     if (g->phase != MUSE_WORDCARDS_PLAYING) {
         return false;
     }
-    if (i < 0 || i >= MUSE_WORDCARDS_WORDS) {
+    if (!word_slot(g, i)) {
         return false;
     }
     if (g->flipped[i]) {
@@ -280,7 +306,7 @@ bool muse_wordcards_flip_to_front(muse_wordcards_t *g, int i)
     if (g->phase != MUSE_WORDCARDS_PLAYING) {
         return false;
     }
-    if (i < 0 || i >= MUSE_WORDCARDS_WORDS) {
+    if (!word_slot(g, i)) {
         return false;
     }
     if (!g->flipped[i]) {
@@ -295,7 +321,7 @@ bool muse_wordcards_replay(muse_wordcards_t *g, int i)
     if (g->phase != MUSE_WORDCARDS_PLAYING) {
         return false;
     }
-    if (i < 0 || i >= MUSE_WORDCARDS_WORDS) {
+    if (!word_slot(g, i)) {
         return false;
     }
     if (!g->flipped[i]) {
@@ -317,9 +343,19 @@ void muse_wordcards_clear_pending_audio(muse_wordcards_t *g)
 
 void muse_wordcards_cache_begin(muse_wordcards_t *g)
 {
+    /* A word already READY for this set generation stays READY: the UI
+     * calls prefetch again every time the page is shown, and re-marking a
+     * cached word FETCHING used to make the audio module re-download it --
+     * four TLS round trips and a second TLS client's worth of internal RAM
+     * for nothing (2026-11-11: that is what starved the LVGL renderer). */
     for (int i = 0; i < MUSE_WORDCARDS_WORDS; i++) {
-        g->cache[i] = MUSE_WORDCARDS_CACHE_FETCHING;
-        g->cache_bytes[i] = 0;
+        if (!word_slot(g, i)) {
+            continue;   /* no word in this slot: nothing to fetch */
+        }
+        if (g->cache[i] != MUSE_WORDCARDS_CACHE_READY) {
+            g->cache[i] = MUSE_WORDCARDS_CACHE_FETCHING;
+            g->cache_bytes[i] = 0;
+        }
     }
 }
 
@@ -359,6 +395,9 @@ bool muse_wordcards_cache_is_ready(const muse_wordcards_t *g, int i)
 bool muse_wordcards_cache_all_ready(const muse_wordcards_t *g)
 {
     for (int i = 0; i < MUSE_WORDCARDS_WORDS; i++) {
+        if (!word_slot(g, i)) {
+            continue;   /* an empty slot is not a word to wait for */
+        }
         if (g->cache[i] != MUSE_WORDCARDS_CACHE_READY) {
             return false;
         }

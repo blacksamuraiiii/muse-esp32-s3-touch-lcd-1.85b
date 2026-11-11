@@ -74,6 +74,11 @@
 #define MUSE_WORDCARDS_GAP 8
 #define MUSE_WORDCARDS_ORIGIN_X 60
 #define MUSE_WORDCARDS_ORIGIN_Y 60
+/* Paging (user 2026-11-11, the same horizontal strip idiom as the feed
+ * page): one 2x2 field is one page; an 8-word set has two pages, swiped
+ * left/right with a hard stop at both ends and a snap per page. */
+#define MUSE_WORDCARDS_PAGE_W 240
+#define MUSE_WORDCARDS_PAGE_H 240
 /* Front picture: the 128 px A8 master drawn at 72 px. */
 #define MUSE_WORDCARDS_PIC_PX 72
 #define MUSE_WORDCARDS_PIC_SCALE \
@@ -118,7 +123,11 @@ static lv_obj_t *s_back[MUSE_WORDCARDS_WORDS];
 /* Back-face lines, kept so open_set can rebuild them for a new set. */
 static lv_obj_t *s_back_en[MUSE_WORDCARDS_WORDS];
 static lv_obj_t *s_back_zh[MUSE_WORDCARDS_WORDS];
-static lv_obj_t *s_touch;
+/* The paging strip, its page containers, and one tap layer per page (the
+ * layer has to be a child of the page so a drag still scrolls the strip). */
+static lv_obj_t *s_strip;
+static lv_obj_t *s_pg[MUSE_WORDCARDS_PAGES];
+static lv_obj_t *s_touch[MUSE_WORDCARDS_PAGES];
 static lv_obj_t *s_back_btn;
 static lv_obj_t *s_name;
 static lv_obj_t *s_page;
@@ -188,31 +197,36 @@ static void set_label(lv_obj_t *l, const char *text)
 
 /* --- card geometry ------------------------------------------------ */
 
-static void card_origin(int i, int *x, int *y)
+/* Where card `k` (0..3) sits inside its page: the mockup's 2x2 field. */
+static void card_local(int k, int *x, int *y)
 {
-    *x = MUSE_WORDCARDS_ORIGIN_X +
-         (i % 2) * (MUSE_WORDCARDS_CARD + MUSE_WORDCARDS_GAP);
-    *y = MUSE_WORDCARDS_ORIGIN_Y +
-         (i / 2) * (MUSE_WORDCARDS_CARD + MUSE_WORDCARDS_GAP);
+    *x = (k % 2) * (MUSE_WORDCARDS_CARD + MUSE_WORDCARDS_GAP);
+    *y = (k / 2) * (MUSE_WORDCARDS_CARD + MUSE_WORDCARDS_GAP);
 }
 
-static int card_at(lv_coord_t x, lv_coord_t y)
+/* The card of page `pg` under a point given in that page's own
+ * coordinates, or -1. `i` is the global card index (page * 4 + k). */
+static int card_on_page(int pg, lv_coord_t x, lv_coord_t y)
 {
-    for (int i = 0; i < MUSE_WORDCARDS_WORDS; i++) {
+    if (pg < 0 || pg >= MUSE_WORDCARDS_PAGES) {
+        return -1;
+    }
+    for (int k = 0; k < MUSE_WORDCARDS_PER_PAGE; k++) {
         int cx, cy;
-        card_origin(i, &cx, &cy);
+        card_local(k, &cx, &cy);
         if (x >= cx && x < cx + MUSE_WORDCARDS_CARD && y >= cy &&
             y < cy + MUSE_WORDCARDS_CARD) {
-            return i;
+            return pg * MUSE_WORDCARDS_PER_PAGE + k;
         }
     }
     return -1;
 }
 
-static bool point_on_speaker(int i, lv_coord_t x, lv_coord_t y)
+/* True when the point (page-local) lands on card `k`'s speaker logo. */
+static bool point_on_speaker(int k, lv_coord_t x, lv_coord_t y)
 {
     int cx, cy;
-    card_origin(i, &cx, &cy);
+    card_local(k, &cx, &cy);
     int scx = cx + MUSE_WORDCARDS_CARD / 2;
     int scy = cy + MUSE_WORDCARDS_BACK_SP_CY;
     return x >= scx - MUSE_WORDCARDS_SP_HALF_W &&
@@ -326,10 +340,15 @@ static void refresh_display(void)
     /* Touch is live only while PLAYING; the back arrow stays visible in
      * every state (user 2026-11-10: no start page and no pause any more,
      * so leaving mid-round is the back arrow's job). */
-    if (s_game.phase == MUSE_WORDCARDS_PLAYING) {
-        lv_obj_clear_flag(s_touch, LV_OBJ_FLAG_HIDDEN);
-    } else {
-        lv_obj_add_flag(s_touch, LV_OBJ_FLAG_HIDDEN);
+    for (int p = 0; p < MUSE_WORDCARDS_PAGES; p++) {
+        if (!s_touch[p]) {
+            continue;
+        }
+        if (s_game.phase == MUSE_WORDCARDS_PLAYING) {
+            lv_obj_clear_flag(s_touch[p], LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_add_flag(s_touch[p], LV_OBJ_FLAG_HIDDEN);
+        }
     }
 }
 
@@ -395,20 +414,37 @@ static void on_tick(lv_timer_t *timer)
     refresh_display();
 }
 
-/* --- touch (tap to flip, hold to pause) --------------------------- */
+/* --- touch (tap to flip, swipe to page) --------------------------- */
+
+/* Page-local press position: the layer sits at the page's own origin, and
+ * the strip's scroll offset is already accounted for by the layer's
+ * coordinates, so a paged strip needs no arithmetic here. */
+static void touch_local(lv_event_t *e, int *pg, lv_coord_t *lx, lv_coord_t *ly)
+{
+    lv_obj_t *layer = lv_event_get_target(e);
+    lv_area_t a;
+    lv_obj_get_coords(layer, &a);
+    lv_point_t point;
+    lv_indev_get_point(lv_indev_active(), &point);
+    *pg = (int)(intptr_t)lv_obj_get_user_data(layer);
+    *lx = point.x - a.x1;
+    *ly = point.y - a.y1;
+}
 
 static void on_touch_pressed(lv_event_t *e)
 {
-    (void)e;
+    int pg;
+    lv_coord_t lx, ly;
+    touch_local(e, &pg, &lx, &ly);
     lv_point_t point;
     lv_indev_get_point(lv_indev_active(), &point);
     s_press_active = true;
     s_press_moved = false;
     s_press_x = point.x;
     s_press_y = point.y;
-    s_press_card = card_at(point.x, point.y);
-    /* Nothing flips here: the flip fires on release, so a drag across
-     * the grid (a swipe towards the page edge) never flips a card. */
+    s_press_card = card_on_page(pg, lx, ly);
+    /* Nothing flips here: the flip fires on release, so a drag across the
+     * grid (or a swipe to the other page) never flips a card. */
 }
 
 static void on_touch_pressing(lv_event_t *e)
@@ -429,7 +465,6 @@ static void on_touch_pressing(lv_event_t *e)
 
 static void on_touch_released(lv_event_t *e)
 {
-    (void)e;
     bool was_active = s_press_active;
     int press_card = s_press_card;
     s_press_active = false;
@@ -440,9 +475,10 @@ static void on_touch_released(lv_event_t *e)
     if (s_press_moved) {
         return;
     }
-    lv_point_t point;
-    lv_indev_get_point(lv_indev_active(), &point);
-    int card = card_at(point.x, point.y);
+    int pg;
+    lv_coord_t lx, ly;
+    touch_local(e, &pg, &lx, &ly);
+    int card = card_on_page(pg, lx, ly);
     /* A tap flips only when press and release agree on the card: a
      * swipe across the grid never flips the wrong card. A tap between
      * cards (card < 0) flips nothing. */
@@ -454,7 +490,7 @@ static void on_touch_released(lv_event_t *e)
             start_flip(card, true);
             refresh_display();
         }
-    } else if (point_on_speaker(card, point.x, point.y)) {
+    } else if (point_on_speaker(card % MUSE_WORDCARDS_PER_PAGE, lx, ly)) {
         /* The speaker logo: replay the pronunciation. The tick
          * drains the mark, so the replay waits for the cache the
          * same way a first flip does. */
@@ -479,19 +515,37 @@ static void on_touch_released(lv_event_t *e)
 
 /* --- set switching + category page ------------------------------ */
 
-/* Rebuild the four cards' pictures and back texts from the current
- * set's table (the card objects themselves are built once). */
+/* Rebuild the cards' pictures and back texts from the current set's
+ * table (the card objects themselves are built once). A slot the set does
+ * not use is hidden, and the second page is shown only for a set that
+ * actually has a fifth word. */
 static void refresh_card_content(void)
 {
+    const int words = muse_wordcards_set_words(s_game.set);
     for (int i = 0; i < MUSE_WORDCARDS_WORDS; i++) {
         const muse_wordcards_word_t *w =
             &MUSE_WORDCARDS_SETS_TABLE[s_game.set].words[i];
+        if (!w->en) {
+            lv_obj_add_flag(s_card[i], LV_OBJ_FLAG_HIDDEN);
+            continue;
+        }
+        lv_obj_clear_flag(s_card[i], LV_OBJ_FLAG_HIDDEN);
         lv_image_set_src(s_front_img[i], MUSE_WORDCARDS_ART[w->art]);
         lv_obj_set_style_image_recolor(s_front_img[i],
                                        lv_color_hex(w->color),
                                        LV_PART_MAIN);
         lv_label_set_text(s_back_en[i], w->en);
         lv_label_set_text(s_back_zh[i], w->zh);
+    }
+    if (s_pg[1]) {
+        if (words <= MUSE_WORDCARDS_PER_PAGE) {
+            lv_obj_add_flag(s_pg[1], LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_clear_flag(s_pg[1], LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+    if (s_strip) {
+        lv_obj_scroll_to_x(s_strip, 0, LV_ANIM_OFF);
     }
 }
 
@@ -601,90 +655,126 @@ void muse_wordcards_ui_build(lv_obj_t *page, lv_event_cb_t back_cb)
     muse_wordcards_init(&s_game);
     s_page = page;
 
-    /* Cards: a 116x116 CARD rounded rect with a RULE outline (mockup
-     * v4). The front picture is the A8 master, recoloured per fruit
-     * at runtime and drawn at 72 px; the back is three centred lines,
-     * built once per card and hidden until that card is flipped. */
-    for (int i = 0; i < MUSE_WORDCARDS_WORDS; i++) {
-        int cx, cy;
-        card_origin(i, &cx, &cy);
-        const muse_wordcards_word_t *w =
-            &MUSE_WORDCARDS_SETS_TABLE[s_game.set].words[i];
-        lv_obj_t *card = lv_obj_create(page);
-        lv_obj_set_size(card, MUSE_WORDCARDS_CARD, MUSE_WORDCARDS_CARD);
-        lv_obj_set_pos(card, cx, cy);
-        lv_obj_set_style_bg_color(card, lv_color_hex(MUSE_THEME_CARD),
-                                  LV_PART_MAIN);
-        lv_obj_set_style_bg_opa(card, LV_OPA_COVER, LV_PART_MAIN);
-        lv_obj_set_style_border_width(card, 1, LV_PART_MAIN);
-        lv_obj_set_style_border_color(card, lv_color_hex(MUSE_THEME_RULE),
-                                      LV_PART_MAIN);
-        lv_obj_set_style_radius(card, 14, LV_PART_MAIN);
-        lv_obj_set_style_pad_all(card, 0, LV_PART_MAIN);
-        lv_obj_set_style_transform_pivot_x(card, LV_PCT(50), LV_PART_MAIN);
-        lv_obj_set_style_transform_pivot_y(card, LV_PCT(50), LV_PART_MAIN);
-        lv_obj_remove_flag(card, LV_OBJ_FLAG_SCROLLABLE);
-        lv_obj_remove_flag(card, LV_OBJ_FLAG_CLICKABLE);
-        lv_obj_set_user_data(card, (void *)(intptr_t)i);
-        s_card[i] = card;
-        s_shown[i] = -1;
-        /* Front: the A8 master, recoloured per fruit (the RPS hands'
-         * image_recolor idiom) and scaled to 72 px. The 128 px image
-         * object is centred on the card, so its centre is the card's
-         * centre. */
-        lv_obj_t *img = lv_image_create(card);
-        lv_image_set_src(img, MUSE_WORDCARDS_ART[w->art]);
-        lv_image_set_scale(img, MUSE_WORDCARDS_PIC_SCALE);
-        lv_obj_set_style_image_recolor(img, lv_color_hex(w->color),
-                                       LV_PART_MAIN);
-        lv_obj_set_style_image_recolor_opa(img, LV_OPA_COVER,
-                                           LV_PART_MAIN);
-        lv_obj_set_pos(img, (MUSE_WORDCARDS_CARD - MUSE_WORDCARDS_ART_PX) / 2,
-                       (MUSE_WORDCARDS_CARD - MUSE_WORDCARDS_ART_PX) / 2);
-        lv_obj_remove_flag(img, LV_OBJ_FLAG_SCROLLABLE);
-        lv_obj_remove_flag(img, LV_OBJ_FLAG_CLICKABLE);
-        s_front_img[i] = img;
-        /* Back: three centred lines (mockup v4). The container is a
-         * transparent box over the whole card; the lines are aligned
-         * TOP_MID at their fixed offsets. */
-        lv_obj_t *back = lv_obj_create(card);
-        lv_obj_set_size(back, MUSE_WORDCARDS_CARD, MUSE_WORDCARDS_CARD);
-        lv_obj_set_pos(back, 0, 0);
-        lv_obj_set_style_bg_opa(back, LV_OPA_TRANSP, LV_PART_MAIN);
-        lv_obj_set_style_border_width(back, 0, LV_PART_MAIN);
-        lv_obj_set_style_pad_all(back, 0, LV_PART_MAIN);
-        lv_obj_remove_flag(back, LV_OBJ_FLAG_SCROLLABLE);
-        lv_obj_remove_flag(back, LV_OBJ_FLAG_CLICKABLE);
-        lv_obj_add_flag(back, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_t *en = label(back, &lv_font_montserrat_20,
-                             MUSE_THEME_GOLD);
-        lv_label_set_text(en, w->en);
-        lv_obj_align(en, LV_ALIGN_TOP_MID, 0, MUSE_WORDCARDS_BACK_EN_Y);
-        lv_obj_t *zh = label(back, muse_font_cjk(), MUSE_THEME_TEXT);
-        lv_label_set_text(zh, w->zh);
-        lv_obj_align(zh, LV_ALIGN_TOP_MID, 0, MUSE_WORDCARDS_BACK_ZH_Y);
-        /* Kept so open_set can rebuild the back for a new set. */
-        s_back_en[i] = en;
-        s_back_zh[i] = zh;
-        lv_obj_t *sp = label(back, &lv_font_montserrat_20,
-                             MUSE_THEME_TEXT);
-        lv_label_set_text(sp, LV_SYMBOL_VOLUME_MAX);
-        lv_obj_align(sp, LV_ALIGN_TOP_MID, 0, MUSE_WORDCARDS_BACK_SP_Y);
-        s_back[i] = back;
-    }
+    /* Paging strip: one 240x240 page per 4 cards, the feed page's idiom
+     * (flex row, snap per page, scrollbar off, hard stop at both ends).
+     * The 60 px side pads put the single-page field exactly where the
+     * mockup had it, so a 4-word set looks unchanged. */
+    s_strip = lv_obj_create(page);
+    lv_obj_remove_style_all(s_strip);
+    lv_obj_set_size(s_strip, 360, MUSE_WORDCARDS_PAGE_H);
+    lv_obj_align(s_strip, LV_ALIGN_TOP_MID, 0, MUSE_WORDCARDS_ORIGIN_Y);
+    lv_obj_set_flex_flow(s_strip, LV_FLEX_FLOW_ROW);
+    lv_obj_set_style_pad_left(s_strip, MUSE_WORDCARDS_ORIGIN_X, 0);
+    lv_obj_set_style_pad_right(s_strip, MUSE_WORDCARDS_ORIGIN_X, 0);
+    lv_obj_set_scroll_dir(s_strip, LV_DIR_HOR);
+    lv_obj_set_scrollbar_mode(s_strip, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_set_scroll_snap_x(s_strip, LV_SCROLL_SNAP_START);
+    lv_obj_remove_flag(s_strip, LV_OBJ_FLAG_SCROLL_ELASTIC);
 
-    /* Touch layer: full page, only while playing, above the cards.
-     * fill() strips CLICKABLE, so it is added back: without it the
-     * layer would never receive PRESSED events. */
-    s_touch = fill(page, MUSE_THEME_BG);
-    lv_obj_set_style_bg_opa(s_touch, LV_OPA_TRANSP, LV_PART_MAIN);
-    lv_obj_set_size(s_touch, 360, 360);
-    lv_obj_set_pos(s_touch, 0, 0);
-    lv_obj_add_flag(s_touch, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_add_flag(s_touch, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_add_event_cb(s_touch, on_touch_pressed, LV_EVENT_PRESSED, NULL);
-    lv_obj_add_event_cb(s_touch, on_touch_pressing, LV_EVENT_PRESSING, NULL);
-    lv_obj_add_event_cb(s_touch, on_touch_released, LV_EVENT_RELEASED, NULL);
+    /* Cards: a 116x116 CARD rounded rect with a RULE outline (mockup
+     * v4), four per page. The front picture is the A8 master, recoloured
+     * per word at runtime and drawn at 72 px; the back is three centred
+     * lines, built once per card and hidden until that card is flipped. */
+    for (int p = 0; p < MUSE_WORDCARDS_PAGES; p++) {
+        lv_obj_t *pg = lv_obj_create(s_strip);
+        lv_obj_remove_style_all(pg);
+        lv_obj_set_size(pg, MUSE_WORDCARDS_PAGE_W, MUSE_WORDCARDS_PAGE_H);
+        lv_obj_remove_flag(pg, LV_OBJ_FLAG_SCROLLABLE);
+        s_pg[p] = pg;
+        for (int k = 0; k < MUSE_WORDCARDS_PER_PAGE; k++) {
+            int i = p * MUSE_WORDCARDS_PER_PAGE + k;
+            int cx, cy;
+            card_local(k, &cx, &cy);
+            const muse_wordcards_word_t *w =
+                &MUSE_WORDCARDS_SETS_TABLE[s_game.set].words[i];
+            lv_obj_t *card = lv_obj_create(pg);
+            lv_obj_set_size(card, MUSE_WORDCARDS_CARD, MUSE_WORDCARDS_CARD);
+            lv_obj_set_pos(card, cx, cy);
+            lv_obj_set_style_bg_color(card, lv_color_hex(MUSE_THEME_CARD),
+                                      LV_PART_MAIN);
+            lv_obj_set_style_bg_opa(card, LV_OPA_COVER, LV_PART_MAIN);
+            lv_obj_set_style_border_width(card, 1, LV_PART_MAIN);
+            lv_obj_set_style_border_color(card, lv_color_hex(MUSE_THEME_RULE),
+                                          LV_PART_MAIN);
+            lv_obj_set_style_radius(card, 14, LV_PART_MAIN);
+            lv_obj_set_style_pad_all(card, 0, LV_PART_MAIN);
+            lv_obj_set_style_transform_pivot_x(card, LV_PCT(50), LV_PART_MAIN);
+            lv_obj_set_style_transform_pivot_y(card, LV_PCT(50), LV_PART_MAIN);
+            lv_obj_remove_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+            lv_obj_remove_flag(card, LV_OBJ_FLAG_CLICKABLE);
+            lv_obj_set_user_data(card, (void *)(intptr_t)i);
+            s_card[i] = card;
+            s_shown[i] = -1;
+            /* Front: the A8 master, recoloured per word (the RPS hands'
+             * image_recolor idiom) and scaled to 72 px. The 128 px image
+             * object is centred on the card, so its centre is the card's
+             * centre. */
+            lv_obj_t *img = lv_image_create(card);
+            if (w->en) {
+                lv_image_set_src(img, MUSE_WORDCARDS_ART[w->art]);
+            }
+            lv_image_set_scale(img, MUSE_WORDCARDS_PIC_SCALE);
+            lv_obj_set_style_image_recolor(img, lv_color_hex(w->color),
+                                           LV_PART_MAIN);
+            lv_obj_set_style_image_recolor_opa(img, LV_OPA_COVER,
+                                               LV_PART_MAIN);
+            lv_obj_set_pos(img,
+                           (MUSE_WORDCARDS_CARD - MUSE_WORDCARDS_ART_PX) / 2,
+                           (MUSE_WORDCARDS_CARD - MUSE_WORDCARDS_ART_PX) / 2);
+            lv_obj_remove_flag(img, LV_OBJ_FLAG_SCROLLABLE);
+            lv_obj_remove_flag(img, LV_OBJ_FLAG_CLICKABLE);
+            s_front_img[i] = img;
+            /* Back: three centred lines (mockup v4). The container is a
+             * transparent box over the whole card; the lines are aligned
+             * TOP_MID at their fixed offsets. */
+            lv_obj_t *back = lv_obj_create(card);
+            lv_obj_set_size(back, MUSE_WORDCARDS_CARD, MUSE_WORDCARDS_CARD);
+            lv_obj_set_pos(back, 0, 0);
+            lv_obj_set_style_bg_opa(back, LV_OPA_TRANSP, LV_PART_MAIN);
+            lv_obj_set_style_border_width(back, 0, LV_PART_MAIN);
+            lv_obj_set_style_pad_all(back, 0, LV_PART_MAIN);
+            lv_obj_remove_flag(back, LV_OBJ_FLAG_SCROLLABLE);
+            lv_obj_remove_flag(back, LV_OBJ_FLAG_CLICKABLE);
+            lv_obj_add_flag(back, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_t *en = label(back, &lv_font_montserrat_20,
+                                 MUSE_THEME_GOLD);
+            lv_label_set_text(en, w->en ? w->en : "");
+            lv_obj_align(en, LV_ALIGN_TOP_MID, 0, MUSE_WORDCARDS_BACK_EN_Y);
+            lv_obj_t *zh = label(back, muse_font_cjk(), MUSE_THEME_TEXT);
+            lv_label_set_text(zh, w->zh ? w->zh : "");
+            lv_obj_align(zh, LV_ALIGN_TOP_MID, 0, MUSE_WORDCARDS_BACK_ZH_Y);
+            /* Kept so open_set can rebuild the back for a new set. */
+            s_back_en[i] = en;
+            s_back_zh[i] = zh;
+            lv_obj_t *sp = label(back, &lv_font_montserrat_20,
+                                 MUSE_THEME_TEXT);
+            lv_label_set_text(sp, LV_SYMBOL_VOLUME_MAX);
+            lv_obj_align(sp, LV_ALIGN_TOP_MID, 0, MUSE_WORDCARDS_BACK_SP_Y);
+            s_back[i] = back;
+        }
+
+        /* Tap layer for this page: a child of the page, so a drag still
+         * scrolls the strip (the feed strip's cards behave the same way).
+         * fill() strips CLICKABLE, so it is added back: without it the
+         * layer would never receive PRESSED events. */
+        lv_obj_t *t = fill(pg, MUSE_THEME_BG);
+        lv_obj_set_style_bg_opa(t, LV_OPA_TRANSP, LV_PART_MAIN);
+        lv_obj_set_size(t, MUSE_WORDCARDS_PAGE_W, MUSE_WORDCARDS_PAGE_H);
+        lv_obj_set_pos(t, 0, 0);
+        lv_obj_add_flag(t, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_add_flag(t, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_set_user_data(t, (void *)(intptr_t)p);
+        lv_obj_add_event_cb(t, on_touch_pressed, LV_EVENT_PRESSED, NULL);
+        lv_obj_add_event_cb(t, on_touch_pressing, LV_EVENT_PRESSING, NULL);
+        lv_obj_add_event_cb(t, on_touch_released, LV_EVENT_RELEASED, NULL);
+        s_touch[p] = t;
+    }
+    /* A set with four words has one page: hide the second so there is
+     * nothing to swipe to (refresh_card_content keeps this in step when
+     * the player opens the 8-word animal set). */
+    if (muse_wordcards_set_words(s_game.set) <= MUSE_WORDCARDS_PER_PAGE) {
+        lv_obj_add_flag(s_pg[1], LV_OBJ_FLAG_HIDDEN);
+    }
 
     /* No START overlay, no PAUSED overlay and no OVER overlay (user
      * 2026-11-10 dropped the first two, 2026-11-11 dropped the third

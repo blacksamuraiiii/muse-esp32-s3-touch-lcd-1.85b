@@ -84,6 +84,94 @@ box / robot / bag 全部 `200` + `x-tts-cache: hit` + 11232 字节 + 首字节 `
 - **未做**：未刷机、未实机点过下拉与「限时免费」滚动位置；分类页版面是否被这一行
   顶到、MUSE 页展开后的滚动位置，都要真机确认。
 
+## 第三轮（2026-11-11 晚，版本 1.5.2d）
+
+用户三点：①Muse proxy 开关多余；②Server 右侧要直接写清是哪条链路，点开是缩进三行；
+③单词练习特别容易卡死，要优化。另：动物1/2 合并成一组、卡片页左右滑翻页（这一项
+留到下一轮，需先出渲染图）。
+
+版本号：`version.txt` 1.5.2c → **1.5.2d**（用户：c 已经用过）。新增
+`build_152d_test.ps1` / `flash_152d.ps1`。
+
+### 设置 MUSE
+
+| 项 | 现在 |
+|---|---|
+| 开关 | **删掉** `Muse proxy` 开关（`s_proxy_sw`、`on_proxy_sw` 一并删） |
+| Server 行 | 右侧值改成 `官方直连` / `<可注册域名>代理`（`server_value()`，由 CONFIG 值现算，源码无个人域名）；行值是 `muse_settings_proxy_level()` 的 0/1/2 |
+| 选项 | Server 行点开内联三行，缩进 26 px、行高 46、圆角 14（读起来像二级页），右端 `✓` 标当前项；选中转即开、选官方即关 |
+
+### 卡死排查与改动
+
+复现窗口抓到的日志（`serial-freeze.log`，1.5.2c）里**没有**单词卡片活动，也没有
+心跳断档，但有一串 `device token maintenance blocked; another setup operation is
+active` + `Muse VM connect blocked`，随后 `api.muse.ai -> 185.45.5.35` 直连失败、
+`ESP_ERR_HTTP_CONNECT` 重试——另有一条「setup 操作卡住」的线索，待下一轮跟进。
+
+已经改掉的三处会拖住 LVGL 线程/重绘的点：
+
+| 改动 | 机制 |
+|---|---|
+| 播放不再等 | 上一张还在播时 `muse_wordcards_audio_play()` 原来在 LVGL 线程里最多等 1 s（`20 × 50 ms`）。改成排队：置 abort + 记 wanted，由退出中的 `play_task_exit()` 接续启动 |
+| 样式不再每 tick 重写 | `refresh_display()` 每 50 ms 给 4 张卡重写背景/边框并写 `transform_scale_x`（强制走图层重绘）。改成 `s_shown[]` 比对，只在翻面状态变化时写；缩放复位挪到 `flip_done_cb()` |
+| 词音裁尾静音 | 1.872 s 的文件里语音只占约 0.5 s。播放侧检测尾部静音（峰值 ≤300 且已发声 ≥200 ms，连续 200 ms）即收尾，实测一张约 0.6 s 放完 |
+| 存活探针 | `on_tick` 每 5 s 打 `muse_wordcards: probe: round alive t=Ns`，用来判断卡死时 LVGL 线程是否还活着（定位完删除） |
+
+### 验证
+
+- 编译：`build_152d_test.ps1` exit=0，`project_version` 1.5.2d，error 0 条；
+  `muse_wordcards_audio.c`、`muse_wordcards_ui.c`、`muse_settings_ui.c` 都在
+  `Building C object` 清单里。
+- 刷机：`flash_152d.log` 20:32:07 exit=0，`Hash of data verified.`。
+- 逻辑 harness（无 sanitizer）：`ok`。本机 ASan 版又触发已知的 DEADLYSIGNAL 风暴，
+  与代码无关（同一二进制重跑可过）。
+- **未验证**：Server 行新版面与三选一、卡死是否消失——需真机点验。
+
+## 第四轮（2026-11-11 晚，同一个 1.5.2d）
+
+用户：①单词练习里两个动物条目没合并；②单上一篇已抓到崩溃（整页卡死随后重启）。
+
+### 崩溃：抓到现场并定位
+
+`serial-152d-2.log` 里 `Guru Meditation Error: Core 0 panic'ed (StoreProhibited)`，
+backtrace 用 `xtensa-esp32s3-elf-addr2line` 解开：
+
+```
+circ_calc_aa4            lv_draw_sw_mask.c:1126  (inlined by) lv_draw_sw_mask_radius_init
+lv_draw_sw_fill          lv_draw_sw_fill.c:91
+execute_drawing          lv_draw_sw.c:390
+prvRunThread             lv_freertos.c:436
+```
+
+即 LVGL 画圆角时写遮罩缓冲。崩溃前一刻心跳是 `int=10K/4K min=6K`——内部 RAM 最大
+空闲块只剩 4 KB，遮罩申请失败返回 NULL，随后被直接写入。谁吃掉的：崩溃前 3 秒
+`link.app: disconnect: settings changed`（用户切了 Server），会话要重建一个新的 TLS
+连接；同时单词页又在预取 bear/duck/frog/fox（第二条 TLS）。mbedTLS 的缓冲都在内部
+RAM，两套叠在一起就把渲染器饿死了。
+
+### 修法（都已进 1.5.2d 第二次构建）
+
+| 改动 | 位置 |
+|---|---|
+| 预取跳过已 READY 的词（回页面不再重下 4 个文件） | `muse_wordcards.c` `cache_begin` + `muse_wordcards_audio.c` `fetch_task` |
+| 取完即关 keep-alive 客户端，把 TLS 缓冲还给堆 | `fetch_task` 末尾 `drop_client()` |
+| 内部堆最大空闲块 < 16 KB 时跳过预取并打日志（宁可静音不崩） | `WC_MIN_INTERNAL_FOR_TLS` |
+| 槽位按组内真实词数分配（4 词组不再预留 8 个 32 KB 槽） | `ensure_slots(g)` |
+
+### 动物合并
+
+- 表结构：`MUSE_WORDCARDS_WORDS` 8（每组最多 8 词）、`PER_PAGE` 4、`PAGES` 2、`SETS` 9；未用槽位 `en == NULL`，所有循环用 `muse_wordcards_set_words(set)` 取真实词数。
+- 组表顺序：水果(0) / **动物 · Animal(1，8 词)** / 颜色 / 身体 / 数字 / 学校 / 食物 / 家庭 / 物品(8)。
+- 卡片页：横向滑条（照喂饭页做法：flex 行、`LV_SCROLL_SNAP_START`、关滚动条、硬边界），一页 2×2 四张，两侧 60 px 内边距让单页位置与以前完全一致；4 词组把第二页隐藏，滑不动。
+- 触摸：每页一个透明点击层（挂在页容器下，所以拖拽仍能滚动滑条），命中判定用页内坐标。
+- harness 同步：9 组、动物 8 词、offered 3、空格子断言、`cache_begin` 保留 READY 的新语义。
+
+### 验证
+
+- harness（无 sanitizer）：`ok`。
+- 固件：`build_152d_test.ps1` exit=0，error 0 条，三个改动文件都在 `Building C object` 清单里；`flash_152d.log` 20:54:13 exit=0。
+- **未验证**：合并后的翻页手感、崩溃是否彻底消失——要真机翻卡 + 切 Server 复现一次。
+
 ## 合入后用户侧步骤
 
 1. 主机上跑预生成（新 7 个词）：**已在 2026-11-11 做完**（7 generated / 32 cached，公网验收全 hit，见上）。
