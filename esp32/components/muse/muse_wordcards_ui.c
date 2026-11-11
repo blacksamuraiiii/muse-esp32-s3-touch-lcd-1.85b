@@ -22,11 +22,10 @@
  * speaker button's glyph) in white -- the v3 ~31x18 logo, not the
  * v2 48x30 one.
  *
- * The flip is a fake: 120 ms of horizontal squash (scale_x 256 -> 0
- * in 60 ms), swap the front/back at the midpoint, expand back
- * (0 -> 256 in 60 ms). The pivot is the card's own centre, so it
- * squeezes in place instead of sliding. While a card is flipping it
- * ignores taps, so a double tap cannot queue two swaps.
+ * The flip is instant: the tap swaps the front for the back at once. The
+ * mockup's 120 ms squash needed a layer buffer per card (63.5 KB, see the
+ * note at refresh_display) and took the board down on this hardware
+ * (user-accepted 2026-11-11).
  *
  * There is no clock (user decision 2026-11-11, was a 2-minute round):
  * entering a set starts the round and the back arrow is the only way
@@ -66,9 +65,6 @@
 #define MUSE_WORDCARDS_HOLD_MOVE_PX 12
 /* Timer period: the clock and the audio drain ride on it. */
 #define MUSE_WORDCARDS_TICK_MS 50u
-/* Flip: 60 ms squash + 60 ms expand (mockup: 120 ms total). */
-#define MUSE_WORDCARDS_FLIP_HALF_MS 60u
-#define MUSE_WORDCARDS_FLIP_SCALE 256
 /* Card geometry (mockup v4): 116x116 cards, 8 px gap, origin (60,60). */
 #define MUSE_WORDCARDS_CARD 116
 #define MUSE_WORDCARDS_GAP 8
@@ -104,9 +100,6 @@ static bool s_press_moved = false;
 static lv_coord_t s_press_x = 0;
 static lv_coord_t s_press_y = 0;
 static int s_press_card = -1;
-/* One card's flip animation in flight: taps on that card wait. */
-static bool s_flip_anim[MUSE_WORDCARDS_WORDS];
-static bool s_flip_target[MUSE_WORDCARDS_WORDS];
 /* The side each card currently shows (-1 = unknown, 0 = front, 1 = back).
  * refresh_display() writes styles only when this changes: a style write
  * invalidates the object, and a transform_scale write pushes the card
@@ -235,103 +228,51 @@ static bool point_on_speaker(int k, lv_coord_t x, lv_coord_t y)
            y < scy + MUSE_WORDCARDS_SP_HALF_H;
 }
 
-/* --- flip animation ----------------------------------------------- */
-
-static void flip_scale_cb(void *var, int32_t v)
-{
-    lv_obj_set_style_transform_scale_x((lv_obj_t *)var, (int16_t)v,
-                                       LV_PART_MAIN);
-}
-
-static void flip_start(int i, int32_t from, int32_t to,
-                       lv_anim_completed_cb_t done)
-{
-    lv_anim_t a;
-    lv_anim_init(&a);
-    lv_anim_set_var(&a, s_card[i]);
-    lv_anim_set_values(&a, from, to);
-    lv_anim_set_duration(&a, MUSE_WORDCARDS_FLIP_HALF_MS);
-    lv_anim_set_exec_cb(&a, flip_scale_cb);
-    lv_anim_set_completed_cb(&a, done);
-    lv_anim_start(&a);
-}
-
-static void flip_done_cb(lv_anim_t *a)
-{
-    lv_obj_t *card = (lv_obj_t *)a->var;
-    int i = (int)(intptr_t)lv_obj_get_user_data(card);
-    s_flip_anim[i] = false;
-    /* Undo the squash once, here, instead of on every 50 ms tick: a
-     * transform_scale write forces the card through LVGL's layer path. */
-    lv_obj_set_style_transform_scale_x(s_card[i], MUSE_WORDCARDS_FLIP_SCALE,
-                                      LV_PART_MAIN);
-    s_shown[i] = s_flip_target[i] ? 1 : 0;
-}
-
-static void flip_mid_cb(lv_anim_t *a)
-{
-    lv_obj_t *card = (lv_obj_t *)a->var;
-    int i = (int)(intptr_t)lv_obj_get_user_data(card);
-    /* Midpoint: the card is a vertical line, so the swap is invisible.
-     * Show the side the flip is going to. */
-    if (s_flip_target[i]) {
-        lv_obj_add_flag(s_front_img[i], LV_OBJ_FLAG_HIDDEN);
-        lv_obj_clear_flag(s_back[i], LV_OBJ_FLAG_HIDDEN);
-    } else {
-        lv_obj_clear_flag(s_front_img[i], LV_OBJ_FLAG_HIDDEN);
-        lv_obj_add_flag(s_back[i], LV_OBJ_FLAG_HIDDEN);
-    }
-    flip_start(i, 0, MUSE_WORDCARDS_FLIP_SCALE, flip_done_cb);
-}
-
-static void start_flip(int i, bool to_back)
-{
-    if (s_flip_anim[i]) {
-        return;
-    }
-    s_flip_anim[i] = true;
-    s_flip_target[i] = to_back;
-    flip_start(i, MUSE_WORDCARDS_FLIP_SCALE, 0, flip_mid_cb);
-}
+/* --- no flip animation -------------------------------------------- *
+ * The mockup's horizontal squash (transform_scale_x on the card) needs a
+ * layer buffer: a 116x116 card is 126 px with its border, i.e. 63.5 KB of
+ * RGB565. On this board that allocation fails every frame
+ * (`lv_draw_buf_create_ex: No memory: 126x126, 63504Byte`), which showed
+ * up as cards vanishing on tap, no word audio (the failed allocations also
+ * starved xTaskCreateWithCaps) and a reboot from the radius-mask cache
+ * (`Guru Meditation` in lv_draw_sw_mask). So the flip is an instant swap
+ * (user-accepted 2026-11-11): no transform, no layer, nothing to fail. */
 
 /* --- display sync ------------------------------------------------- */
 
 static void refresh_display(void)
 {
     for (int i = 0; i < MUSE_WORDCARDS_WORDS; i++) {
-        /* The flip animation owns the swap while it runs; otherwise
-         * the shown side follows the logic state. A flipped card also
+        /* The shown side follows the logic state. A flipped card also
          * takes the mockup's pressed fill and 2 px GOLD border, so
          * the flipped state is visible at a glance. Nothing is written
          * when the side did not change: every style write invalidates
          * the object, and this runs every 50 ms. */
-        if (!s_flip_anim[i]) {
-            int8_t want = s_game.flipped[i] ? 1 : 0;
-            if (s_shown[i] == want) {
-                continue;
-            }
-            s_shown[i] = want;
-            if (want) {
-                lv_obj_add_flag(s_front_img[i], LV_OBJ_FLAG_HIDDEN);
-                lv_obj_clear_flag(s_back[i], LV_OBJ_FLAG_HIDDEN);
-                lv_obj_set_style_bg_color(s_card[i],
-                                          lv_color_hex(MUSE_THEME_CARD_PRESSED),
+        int8_t want = s_game.flipped[i] ? 1 : 0;
+        if (s_shown[i] == want) {
+            continue;
+        }
+        s_shown[i] = want;
+        if (want) {
+            lv_obj_add_flag(s_front_img[i], LV_OBJ_FLAG_HIDDEN);
+            lv_obj_clear_flag(s_back[i], LV_OBJ_FLAG_HIDDEN);
+            lv_obj_set_style_bg_color(s_card[i],
+                                      lv_color_hex(MUSE_THEME_CARD_PRESSED),
+                                      LV_PART_MAIN);
+            lv_obj_set_style_border_color(s_card[i],
+                                          lv_color_hex(MUSE_THEME_GOLD),
                                           LV_PART_MAIN);
-                lv_obj_set_style_border_color(s_card[i],
-                                              lv_color_hex(MUSE_THEME_GOLD),
-                                              LV_PART_MAIN);
-                lv_obj_set_style_border_width(s_card[i], 2, LV_PART_MAIN);
-            } else {
-                lv_obj_clear_flag(s_front_img[i], LV_OBJ_FLAG_HIDDEN);
-                lv_obj_add_flag(s_back[i], LV_OBJ_FLAG_HIDDEN);
-                lv_obj_set_style_bg_color(s_card[i],
-                                          lv_color_hex(MUSE_THEME_CARD),
+            lv_obj_set_style_border_width(s_card[i], 2, LV_PART_MAIN);
+        } else {
+            lv_obj_clear_flag(s_front_img[i], LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(s_back[i], LV_OBJ_FLAG_HIDDEN);
+            lv_obj_set_style_bg_color(s_card[i],
+                                      lv_color_hex(MUSE_THEME_CARD),
+                                      LV_PART_MAIN);
+            lv_obj_set_style_border_color(s_card[i],
+                                          lv_color_hex(MUSE_THEME_RULE),
                                           LV_PART_MAIN);
-                lv_obj_set_style_border_color(s_card[i],
-                                              lv_color_hex(MUSE_THEME_RULE),
-                                              LV_PART_MAIN);
-                lv_obj_set_style_border_width(s_card[i], 1, LV_PART_MAIN);
-            }
+            lv_obj_set_style_border_width(s_card[i], 1, LV_PART_MAIN);
         }
     }
     /* Title: the set name, always (no 时间到 / summary any more: the
@@ -482,13 +423,12 @@ static void on_touch_released(lv_event_t *e)
     /* A tap flips only when press and release agree on the card: a
      * swipe across the grid never flips the wrong card. A tap between
      * cards (card < 0) flips nothing. */
-    if (card < 0 || card != press_card || s_flip_anim[card]) {
+    if (card < 0 || card != press_card) {
         return;
     }
     if (!s_game.flipped[card]) {
         if (muse_wordcards_flip_to_back(&s_game, card)) {
-            start_flip(card, true);
-            refresh_display();
+            refresh_display();   /* instant swap, no animation */
         }
     } else if (point_on_speaker(card % MUSE_WORDCARDS_PER_PAGE, lx, ly)) {
         /* The speaker logo: replay the pronunciation. The tick
@@ -505,8 +445,7 @@ static void on_touch_released(lv_event_t *e)
             muse_wordcards_clear_pending_audio(&s_game);
         }
         if (muse_wordcards_flip_to_front(&s_game, card)) {
-            start_flip(card, false);
-            refresh_display();
+            refresh_display();   /* instant swap, no animation */
         }
     }
 }
@@ -564,12 +503,7 @@ void muse_wordcards_ui_open_set(int set)
     muse_wordcards_clear_pending_audio(&s_game);
     s_press_active = false;
     for (int i = 0; i < MUSE_WORDCARDS_WORDS; i++) {
-        lv_anim_delete(s_card[i], NULL);
-        s_flip_anim[i] = false;
         s_shown[i] = -1;   /* new words: force the next refresh to draw */
-        lv_obj_set_style_transform_scale_x(s_card[i],
-                                           MUSE_WORDCARDS_FLIP_SCALE,
-                                           LV_PART_MAIN);
     }
     lv_timer_pause(s_timer);
     refresh_card_content();
@@ -665,6 +599,8 @@ void muse_wordcards_ui_build(lv_obj_t *page, lv_event_cb_t back_cb)
     lv_obj_align(s_strip, LV_ALIGN_TOP_MID, 0, MUSE_WORDCARDS_ORIGIN_Y);
     lv_obj_set_flex_flow(s_strip, LV_FLEX_FLOW_ROW);
     lv_obj_set_style_pad_left(s_strip, MUSE_WORDCARDS_ORIGIN_X, 0);
+    /* 与卡片列间距一致：两页之间也留 8 px，翻页时不会贴在一起 */
+    lv_obj_set_style_pad_column(s_strip, MUSE_WORDCARDS_GAP, 0);
     lv_obj_set_style_pad_right(s_strip, MUSE_WORDCARDS_ORIGIN_X, 0);
     lv_obj_set_scroll_dir(s_strip, LV_DIR_HOR);
     lv_obj_set_scrollbar_mode(s_strip, LV_SCROLLBAR_MODE_OFF);
