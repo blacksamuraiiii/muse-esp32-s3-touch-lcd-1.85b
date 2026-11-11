@@ -1,7 +1,7 @@
 {
-  "version": "1.5.1",
-  "url": "https://github.com/blacksamuraiiii/muse-esp32-s3-touch-lcd-1.85b/releases/download/v1.5.1/muse-gadget.bin",
-  "sha256": "50df665a99abb7fa41fcd08fa19757c63e8c6bd5d599cc3bb90d0d2fdd44b430",
-  "size": 3543040,
-  "notes": "1.5.1 正式版：语音链路（TTS 页连接测试、回复按句流式、会话 502/503 忙碌退避）；互动页六款小游戏（新增加减练习，凑十法练习并入、数独归档）；金币经济 v4（5 金币门票、1 分 = 1 金币）；字体统一 Noto 16 + 符号尾链；滑动跟手归档、IMU 唤醒修复、毛毛跳跃 60 秒时限。公开镜像不含 Wi-Fi / 静态 IP / SDK token。"
+  "version": "1.5.2",
+  "url": "https://github.com/blacksamuraiiii/muse-esp32-s3-touch-lcd-1.85b/releases/download/v1.5.2/muse-gadget.bin",
+  "sha256": "127b280266e651961206f38e80344c29636fe23ff14d09b02f95d603e51b4ce0",
+  "size": 3870720,
+  "notes": "单词练习：不限时、动物合并成一组 8 词（卡片页左右滑翻页）、分类页「限时免费」；修复整机重启（翻面动画要 63.5 KB 图层缓冲、申请失败导致卡片消失/无声/崩溃，翻面改即时切换）；MUSE 设置去掉 proxy 开关、Server 行直接选链路；词音裁掉尾部静音；TTS 服务端补齐 7 个新词。公开镜像不含 Wi-Fi、静态地址、SDK token 与自建中继地址。"
 }
