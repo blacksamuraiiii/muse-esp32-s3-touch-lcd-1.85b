@@ -3,7 +3,8 @@
  * muse_wordcards_ui.h -- 英语单词卡片 subpages inside the interaction tile.
  *
  * Two pages, three levels (user decision 2026-11-10, phase 1: fruit
- * + animal, 8 cards; phase 2 2026-11-11 adds animal 2 + things): the
+ * + animal, 8 cards; phase 2 2026-11-11 adds things; the same day the two
+ * animal sets merged into one 8-word group over two swiped pages): the
  * minigame list's "单词练习" row opens the category page
  * (muse_wordcards_ui_build_sets: one row per offered set -- "水果 ·
  * Fruit", "动物1 · Animal 1", "动物2 · Animal 2", "物品 · Things" --
@@ -29,8 +30,9 @@
  * nothing in this module touches the economy.
  *
  * Controls (user decision 2026-11-10, mockup v4; pause dropped the same
- * day): tap a card's front to flip it -- a 120 ms horizontal squash,
- * swap, expand (not a true 3D flip, LVGL cannot do that cheaply) -- and
+ * day, the 120 ms squash dropped 2026-11-11 because it needed a 63.5 KB
+ * layer buffer per card and crashed the renderer): tap a card's front to
+ * flip it instantly -- and
  * the back shows the English word (gold, Montserrat 20), the Chinese
  * (Noto 16) and the speaker logo (~31x18, v3 size), and the
  * pronunciation plays automatically from the PSRAM cache. Tap the
