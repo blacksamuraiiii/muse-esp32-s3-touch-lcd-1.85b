@@ -50,6 +50,8 @@
 #include <stdint.h>
 #include <string.h>
 
+#include "esp_log.h"
+
 #include "muse_audio.h" /* game sound effects */
 #include "muse_font.h"
 #include "muse_state.h" /* poke: no auto-sleep while a round runs */
@@ -100,6 +102,15 @@ static int s_press_card = -1;
 /* One card's flip animation in flight: taps on that card wait. */
 static bool s_flip_anim[MUSE_WORDCARDS_WORDS];
 static bool s_flip_target[MUSE_WORDCARDS_WORDS];
+/* The side each card currently shows (-1 = unknown, 0 = front, 1 = back).
+ * refresh_display() writes styles only when this changes: a style write
+ * invalidates the object, and a transform_scale write pushes the card
+ * through the layer path, 20 times a second for four cards. */
+static int8_t s_shown[MUSE_WORDCARDS_WORDS];
+/* 50 ms ticks of the current round, for the temporary liveness probe. */
+static uint32_t s_probe_ticks;
+
+static const char *TAG = "muse_wordcards";
 
 static lv_obj_t *s_card[MUSE_WORDCARDS_WORDS];
 static lv_obj_t *s_front_img[MUSE_WORDCARDS_WORDS];
@@ -236,6 +247,11 @@ static void flip_done_cb(lv_anim_t *a)
     lv_obj_t *card = (lv_obj_t *)a->var;
     int i = (int)(intptr_t)lv_obj_get_user_data(card);
     s_flip_anim[i] = false;
+    /* Undo the squash once, here, instead of on every 50 ms tick: a
+     * transform_scale write forces the card through LVGL's layer path. */
+    lv_obj_set_style_transform_scale_x(s_card[i], MUSE_WORDCARDS_FLIP_SCALE,
+                                      LV_PART_MAIN);
+    s_shown[i] = s_flip_target[i] ? 1 : 0;
 }
 
 static void flip_mid_cb(lv_anim_t *a)
@@ -272,9 +288,16 @@ static void refresh_display(void)
         /* The flip animation owns the swap while it runs; otherwise
          * the shown side follows the logic state. A flipped card also
          * takes the mockup's pressed fill and 2 px GOLD border, so
-         * the flipped state is visible at a glance. */
+         * the flipped state is visible at a glance. Nothing is written
+         * when the side did not change: every style write invalidates
+         * the object, and this runs every 50 ms. */
         if (!s_flip_anim[i]) {
-            if (s_game.flipped[i]) {
+            int8_t want = s_game.flipped[i] ? 1 : 0;
+            if (s_shown[i] == want) {
+                continue;
+            }
+            s_shown[i] = want;
+            if (want) {
                 lv_obj_add_flag(s_front_img[i], LV_OBJ_FLAG_HIDDEN);
                 lv_obj_clear_flag(s_back[i], LV_OBJ_FLAG_HIDDEN);
                 lv_obj_set_style_bg_color(s_card[i],
@@ -295,8 +318,6 @@ static void refresh_display(void)
                                               LV_PART_MAIN);
                 lv_obj_set_style_border_width(s_card[i], 1, LV_PART_MAIN);
             }
-            lv_obj_set_style_transform_scale_x(
-                s_card[i], MUSE_WORDCARDS_FLIP_SCALE, LV_PART_MAIN);
         }
     }
     /* Title: the set name, always (no 时间到 / summary any more: the
@@ -320,6 +341,7 @@ static void begin_game(void)
      * (the shared game-start sound). The round has no end of its own,
      * so this is the only way in and the back arrow the only way out. */
     muse_audio_sfx(MUSE_SFX_START);
+    s_probe_ticks = 0;
     muse_wordcards_start(&s_game);
     muse_wordcards_audio_prefetch(&s_game);
     lv_timer_resume(s_timer);
@@ -361,6 +383,14 @@ static void on_tick(lv_timer_t *timer)
          * (same idiom as video playback and a voice turn). */
         muse_state_poke();
         drain_pending_audio();
+        /* Liveness probe, 5 s: if the UI ever freezes again, the serial
+         * log shows whether this timer kept running (LVGL thread alive,
+         * something else stuck) or stopped (thread blocked). Remove it
+         * once the freeze is pinned down. */
+        if ((++s_probe_ticks % (5000u / MUSE_WORDCARDS_TICK_MS)) == 0) {
+            ESP_LOGI(TAG, "probe: round alive t=%us",
+                     (unsigned)(s_probe_ticks / (1000u / MUSE_WORDCARDS_TICK_MS)));
+        }
     }
     refresh_display();
 }
@@ -482,6 +512,7 @@ void muse_wordcards_ui_open_set(int set)
     for (int i = 0; i < MUSE_WORDCARDS_WORDS; i++) {
         lv_anim_delete(s_card[i], NULL);
         s_flip_anim[i] = false;
+        s_shown[i] = -1;   /* new words: force the next refresh to draw */
         lv_obj_set_style_transform_scale_x(s_card[i],
                                            MUSE_WORDCARDS_FLIP_SCALE,
                                            LV_PART_MAIN);
@@ -596,6 +627,7 @@ void muse_wordcards_ui_build(lv_obj_t *page, lv_event_cb_t back_cb)
         lv_obj_remove_flag(card, LV_OBJ_FLAG_CLICKABLE);
         lv_obj_set_user_data(card, (void *)(intptr_t)i);
         s_card[i] = card;
+        s_shown[i] = -1;
         /* Front: the A8 master, recoloured per fruit (the RPS hands'
          * image_recolor idiom) and scaled to 72 px. The 128 px image
          * object is centred on the card, so its centre is the card's

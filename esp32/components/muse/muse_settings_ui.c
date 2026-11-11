@@ -98,7 +98,6 @@ static lv_obj_t *s_hatch_status, *s_hatch_host, *s_hatch_vm, *s_hatch_token, *s_
 /* Speech service rows: the values live in NVS, this is the display side. The
  * status line is the probe's answer, never the configuration. */
 static lv_obj_t *s_sp_url, *s_sp_voice, *s_sp_key, *s_sp_rate, *s_sp_status;
-static lv_obj_t *s_proxy_sw;
 static lv_obj_t *s_link_status, *s_link_reset_lbl;
 static int64_t s_link_reset_armed_us;
 static int64_t s_sdk_token_bad_us;   /* when an invalid SDK token was entered */
@@ -865,14 +864,6 @@ static void tick_wifi(void)
 
 static void on_hatch_vm_done(const char *text) { muse_settings_set_hatch_vm(text); }
 
-/* Off: api.muse.ai and hatch.metaaivm.com direct. On: the relay hostnames
- * compiled in from CONFIG_MUSE_PROXY_*. Link applies the API base, the chat
- * session re-reads the host, so no restart is needed. */
-static void on_proxy_sw(lv_event_t *e)
-{
-    muse_settings_set_proxy(lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED));
-}
-
 /* One save path for the four speech fields: whichever row was edited, the
  * other three are read back from settings and stored with it. */
 static void speech_host(const char *url, char *out, size_t cap);   /* defined with the rows below */
@@ -1128,6 +1119,10 @@ static void on_server_choice(lv_event_t *e)
 static void server_choice(lv_obj_t *list, const char *text, int level)
 {
     lv_obj_t *c = card(list, true);
+    /* Secondary look: flatter and shorter than a top-level row, so the
+     * indented block reads as a sub-page of the Server row. */
+    lv_obj_set_height(c, 46);
+    lv_obj_set_style_radius(c, 14, 0);
     lv_obj_t *t = label(c, muse_font_cjk(), MUSE_THEME_TEXT, text);
     lv_obj_set_flex_grow(t, 1);
     lv_label_set_long_mode(t, LV_LABEL_LONG_MODE_DOTS);
@@ -1142,6 +1137,22 @@ static void relay_choice(lv_obj_t *list, const char *host, int level)
     char text[64];
     snprintf(text, sizeof(text), "中转 · %s", short_host(host, addr, sizeof(addr)));
     server_choice(list, text, level);
+}
+
+/* The Server row's right-hand value (user 2026-11-11): the direct default, or
+ * "<registrable domain>代理" for the picked relay. */
+static void server_value(char *buf, size_t cap)
+{
+    int level = muse_settings_proxy_level();
+    const char *host = level == MUSE_ENDPOINT_RELAY_2 ? CONFIG_MUSE_PROXY2_VM_HOST
+                     : level == MUSE_ENDPOINT_RELAY_1 ? CONFIG_MUSE_PROXY_VM_HOST
+                                                      : "";
+    char addr[48];
+    if (!host[0]) {
+        strlcpy(buf, "官方直连", cap);
+        return;
+    }
+    snprintf(buf, cap, "%s代理", short_host(host, addr, sizeof(addr)));
 }
 
 static void on_hatch_vm(lv_event_t *e)
@@ -1186,12 +1197,15 @@ static void build_hatch_page(lv_obj_t *tile)
     s_link_status = note(list, "");
     button(list, "Reset pairing", MUSE_THEME_DANGER, on_link_reset, &s_link_reset_lbl);
     s_hatch_status = note(list, "");
-    s_proxy_sw = switch_row(list, "Muse proxy", muse_settings_proxy(), on_proxy_sw);
+    /* No Muse proxy switch any more (user 2026-11-11: "有点多余"): the
+     * Server row IS the switch. Its right-hand value names the current
+     * link, and tapping it opens the indented list below (one row per
+     * relay this build has, plus the direct default). */
     row(list, NULL, "Server", &s_hatch_host, on_server_pick, NULL);
-    /* The picker sits right under the row it belongs to and stays hidden until
-     * that row is tapped. A relay is offered only when this build has both
-     * halves of its pair, so a public build shows the direct row alone. */
+    /* The relay value ("<domain>代理") is wider than the 130 px slot. */
+    lv_obj_set_style_max_width(s_hatch_host, 170, 0);
     s_srv_list = column(list);
+    lv_obj_set_style_pad_left(s_srv_list, 26, 0);   /* 缩进一格：读起来像二级页 */
     lv_obj_add_flag(s_srv_list, LV_OBJ_FLAG_HIDDEN);
     for (int i = 0; i < 3; i++) {
         s_srv_mark[i] = NULL;
@@ -1210,8 +1224,7 @@ static void build_hatch_page(lv_obj_t *tile)
     note(list, "Pair with the Muse app to use your account; a device token here overrides it, and a long one is "
                "easier to send over Bluetooth. The VM ID picks one of your VMs. The SDK token is from "
                "gadgets.muse.ai; one set here replaces the firmware's. "
-               "Server lists the links this build knows: direct, and any relay compiled in. Pick one instead "
-               "of typing a host. Muse proxy turns the relay on and off. "
+               "Server picks the link: the official direct one, or a relay compiled into this build. "
                "Reset pairing forgets Wi-Fi and the app pairing, then restarts.");
 }
 
@@ -1240,24 +1253,10 @@ static void tick_hatch(void)
     lv_obj_set_style_text_color(s_hatch_status, lv_color_hex(h.state == MUSE_HATCH_REACHABLE ? MUSE_THEME_OK :
                                                              h.state == MUSE_HATCH_UNREACHABLE ? MUSE_THEME_WARN : MUSE_THEME_DIM), 0);
 
-    char host[MUSE_HOST_MAX + 1], vm[MUSE_VM_MAX + 1];
-    muse_settings_hatch_host(host);
+    char vm[MUSE_VM_MAX + 1], sv[48];
     muse_settings_hatch_vm(vm);
-    set_text(s_hatch_host, host);
-    /* The switch and the Server picker are one setting (proxy + endpoint):
-     * draw the switch to match, and mark the picked relay. Only write the
-     * switch state when it differs -- add_state fires VALUE_CHANGED, and
-     * on_proxy_sw would then rewrite NVS on every tick. */
-    if (s_proxy_sw) {
-        bool on = muse_settings_proxy();
-        if (on != lv_obj_has_state(s_proxy_sw, LV_STATE_CHECKED)) {
-            if (on) {
-                lv_obj_add_state(s_proxy_sw, LV_STATE_CHECKED);
-            } else {
-                lv_obj_clear_state(s_proxy_sw, LV_STATE_CHECKED);
-            }
-        }
-    }
+    server_value(sv, sizeof(sv));
+    set_text(s_hatch_host, sv);
     int level = muse_settings_proxy_level();
     for (int i = 0; i < 3; i++) {
         if (s_srv_mark[i]) {

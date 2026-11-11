@@ -49,6 +49,17 @@ static const char *TAG = "muse.wordcards_audio";
 #define WC_PLAY_STACK 24576
 #define WC_TASK_PRIO 4
 
+/* Trailing-silence trim. Azure pads a one-word MP3 to a fixed length: a
+ * 11232-byte file is 1.872 s for ~0.5 s of speech, the rest silence. The
+ * playback used to spend that tail in the task, holding the speaker and
+ * the word's slot, so the next flip found a busy task and (before this
+ * change) made the LVGL thread wait for it. Stop writing once the tail
+ * has been silent this long. Silence inside a word is shorter, and the
+ * trim only arms after the word has actually spoken. */
+#define WC_SPEECH_PEAK     300      /* below this peak counts as silence */
+#define WC_SPEECH_MIN_MS   200u     /* audible this long before trimming */
+#define WC_TAIL_SILENCE_MS 200u     /* silent this long: the word is done */
+
 /* PSRAM slots: one per word of the current set. Allocated on the
  * first prefetch and kept: a round reuses them, a restart refills
  * them. 32 KB each is the MUSE_WORDCARDS_MAX_MP3_BYTES cap. */
@@ -65,6 +76,12 @@ static bool s_fetch_wanted;
 
 static TaskHandle_t s_play_task;
 static volatile bool s_play_abort;
+/* A word asked for while another is still playing: the running task is
+ * told to stop, and this one starts as it exits. Queued here instead of
+ * waited for, because the caller is the LVGL thread (see
+ * muse_wordcards_audio_play). */
+static muse_wordcards_t *s_play_wanted_g;
+static int s_play_wanted_idx = -1;
 
 /* Decode state, PSRAM like muse_audio_play.c (6.7 KB decoder, touched
  * only by the decode path). */
@@ -393,6 +410,27 @@ typedef struct {
     const char *en;   /* the word, for the log only (static table string) */
 } play_req_t;
 
+bool muse_wordcards_audio_play(muse_wordcards_t *g, int i);
+
+/* The task's only exit: clear the handle, then start a word that was asked
+ * for while this one was playing (a fast second flip), then delete. The
+ * queued start must happen AFTER the handle is cleared, or the new call
+ * sees a busy task and queues itself again. */
+static void play_task_exit(void)
+{
+    s_play_task = NULL;
+    if (s_play_wanted_idx >= 0) {
+        muse_wordcards_t *g = s_play_wanted_g;
+        int idx = s_play_wanted_idx;
+        s_play_wanted_g = NULL;
+        s_play_wanted_idx = -1;
+        if (g && idx >= 0) {
+            (void)muse_wordcards_audio_play(g, idx);
+        }
+    }
+    vTaskDelete(NULL);
+}
+
 static void play_task(void *arg)
 {
     play_req_t *req = (play_req_t *)arg;
@@ -405,8 +443,7 @@ static void play_task(void *arg)
              (unsigned)uxTaskGetStackHighWaterMark(NULL));
     muse_audio_power(true); /* left open: the voice task owns closing */
     if (!ensure_decode_buffers()) {
-        s_play_task = NULL;
-        vTaskDelete(NULL);
+        play_task_exit();
     }
     /* The slot belongs to the current round; copy the length, not the
      * pointer, into this task -- the bytes stay put until the next
@@ -427,6 +464,8 @@ static void play_task(void *arg)
     int in_rate = 0;
     size_t off = 0;
     mp3dec_frame_info_t info;
+    uint32_t spoke_ms = 0;
+    uint32_t silent_ms = 0;
     while (n - off > 0 && !s_play_abort) {
         int samples =
             mp3dec_decode_frame(s_dec, p + off, n - off, s_pcm, &info);
@@ -450,12 +489,33 @@ static void play_task(void *arg)
         size_t out_n = rs_resample(&rs, s_pcm, samples, s_pcm16);
         if (out_n && !s_play_abort) {
             muse_audio_write(s_pcm16, out_n);
+            /* Trailing-silence trim (see WC_TAIL_SILENCE_MS): a silent
+             * tail is not worth holding the speaker for, and the next
+             * flip would have to wait for it. */
+            int16_t peak = 0;
+            for (size_t k = 0; k < out_n; k++) {
+                int16_t v = s_pcm16[k] < 0 ? (int16_t)-s_pcm16[k] : s_pcm16[k];
+                if (v > peak) {
+                    peak = v;
+                }
+            }
+            uint32_t ms = (uint32_t)((out_n * 1000u) / MUSE_AUDIO_RATE);
+            if (peak > WC_SPEECH_PEAK) {
+                spoke_ms += ms;
+                silent_ms = 0;
+            } else if (spoke_ms >= WC_SPEECH_MIN_MS) {
+                silent_ms += ms;
+                if (silent_ms >= WC_TAIL_SILENCE_MS) {
+                    ESP_LOGI(TAG, "play %s: tail silence trimmed at %u ms",
+                             en, (unsigned)(spoke_ms + silent_ms));
+                    break;
+                }
+            }
         }
     }
     ESP_LOGI(TAG, "play %s done: stack %u left", en,
              (unsigned)uxTaskGetStackHighWaterMark(NULL));
-    s_play_task = NULL;
-    vTaskDelete(NULL);
+    play_task_exit();
 }
 
 bool muse_wordcards_audio_play(muse_wordcards_t *g, int i)
@@ -467,16 +527,36 @@ bool muse_wordcards_audio_play(muse_wordcards_t *g, int i)
         return false;
     }
     if (s_play_task) {
-        /* A replay while playing restarts it: stop, then start again
-         * below. The old task clears s_play_task on exit; wait for
-         * that (a word is ~1 s) rather than decode over it. */
-        muse_wordcards_audio_stop();
-        for (int w = 0; w < 20 && s_play_task; w++) {
-            vTaskDelay(pdMS_TO_TICKS(50));
+        /* Supersede, never wait: this is called from the LVGL tick
+         * (drain_pending_audio), and waiting here for the running word
+         * froze the whole UI for up to a second on every fast tap. Queue
+         * this one and let the running task's exit start it. The caller
+         * clears its pending mark on true, so the latest tap is the one
+         * that plays. */
+        s_play_wanted_g = g;
+        s_play_wanted_idx = i;
+        s_play_abort = true;
+        if (!s_play_task && s_play_wanted_idx >= 0) {
+            /* It exited between the check and the queue: start now
+             * instead of waiting for an exit that already happened. */
+            play_req_t *r = (play_req_t *)calloc(1, sizeof(*r));
+            if (r) {
+                r->idx = i;
+                r->len = s_slot_len[i];
+                r->en = MUSE_WORDCARDS_SETS_TABLE[g->set].words[i].en;
+                s_play_wanted_idx = -1;
+                s_play_wanted_g = NULL;
+                s_play_abort = false;
+                if (xTaskCreateWithCaps(play_task, "muse_wc_play", WC_PLAY_STACK,
+                                        r, WC_TASK_PRIO, &s_play_task,
+                                        MALLOC_CAP_SPIRAM) != pdPASS) {
+                    free(r);
+                    s_play_task = NULL;
+                    return false;
+                }
+            }
         }
-        if (s_play_task) {
-            return false;
-        }
+        return true;
     }
     play_req_t *req = (play_req_t *)calloc(1, sizeof(*req));
     if (!req) {
