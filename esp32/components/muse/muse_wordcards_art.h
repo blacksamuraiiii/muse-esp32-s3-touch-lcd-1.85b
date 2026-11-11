@@ -21,17 +21,24 @@
  *     box    = delapouite/cardboard-box.svg (Delapouite)
  *     bag    = delapouite/hand-bag.svg (Delapouite)
  *     robot  = lorc/robot-golem.svg (Lorc)
- *   All sixteen are 512x512 single-colour SVGs.
+ *   Food set (1.5.3a B1, user decision 2026-11-11, colours confirmed
+ *   the same day, preview ~/workspace/wordcards-food-v1.png):
+ *     cake   = lorc/cake-slice.svg (Lorc)        #ff8fb3 pink
+ *     milk   = rihlsul/milk-carton.svg (Rihlsul) #8ec9ff light blue
+ *     bread  = delapouite/bread.svg (Delapouite) #e0a458 bread gold
+ *     egg    = delapouite/egg-eye.svg (Delapouite) #ffd23e yolk
+ *   All twenty are 512x512 single-colour SVGs.
  *
- * Generated once, offline, by ~/workspace/wordcards-art-gen-phase2.py;
- * the sixteen .c files beside this header hold the pixel data
+ * Generated once, offline, by ~/workspace/wordcards-art-gen-phase2.py
+ * (the sixteen) and ~/workspace/wordcards-art-gen-food.py (the food
+ * four); the twenty .c files beside this header hold the pixel data
  * (LVGL A8, 128x128 master). Do not hand-edit them and do not
  * hand-draw replacements: the only approved art is the set above.
  *
  * Format is A8, not the hands' ARGB8888: one ARGB8888 128x128 master
  * is 64 KB, and sixteen icons would be 1 MB against the ~290 KB free
  * in the 4 MB app slot at 1.5.2a (1.5e's bin was 3,870,720 B). A8 is
- * 16 KB per icon (256 KB for the four sets). The UI recolours the mask
+ * 16 KB per icon (320 KB for the five sets). The UI recolours the mask
  * per word at runtime (lv_obj_set_style_image_recolor + _opa COVER),
  * exactly like the hands' loser-dim -- the colour lives in the
  * word table (muse_wordcards.h), not in these pixels.
@@ -68,15 +75,19 @@ extern const lv_image_dsc_t muse_wordcards_art_balloon;
 extern const lv_image_dsc_t muse_wordcards_art_box;
 extern const lv_image_dsc_t muse_wordcards_art_bag;
 extern const lv_image_dsc_t muse_wordcards_art_robot;
+extern const lv_image_dsc_t muse_wordcards_art_cake;
+extern const lv_image_dsc_t muse_wordcards_art_milk;
+extern const lv_image_dsc_t muse_wordcards_art_bread;
+extern const lv_image_dsc_t muse_wordcards_art_egg;
 
 /* Master size, px (square). The UI draws the picture at 72 px. */
 #define MUSE_WORDCARDS_ART_PX 128
 
 /* Art index -> descriptor, in word-table order (muse_wordcards.h). */
-extern const lv_image_dsc_t *const MUSE_WORDCARDS_ART[16];
+extern const lv_image_dsc_t *const MUSE_WORDCARDS_ART[20];
 
 /* Recolour per word (theme hex), in the same order. */
-extern const uint32_t MUSE_WORDCARDS_ART_COLOR[16];
+extern const uint32_t MUSE_WORDCARDS_ART_COLOR[20];
 
 #ifdef __cplusplus
 }

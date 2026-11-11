@@ -120,12 +120,12 @@ typedef struct {
 } muse_wordcards_t;
 
 /* The sets table (9 sets x up to 8 words). Set 0 (fruit), 1 (animal, 8
- * words) and 8 (things) have art and are offered; the rest are data for
- * later phases. Slots past a set's real word count have en == NULL. */
+ * words), 6 (food, 1.5.3a B1) and 8 (things) have art and are offered;
+ * the rest are data for later phases. Slots past a set's real word count
+ * have en == NULL. */
 extern const muse_wordcards_set_t MUSE_WORDCARDS_SETS_TABLE[MUSE_WORDCARDS_SETS];
 
-/* How many sets are actually offered (fruit + animal 1 + animal 2 +
- * things). */
+/* How many sets are actually offered (fruit + animal + food + things). */
 int muse_wordcards_offered_sets(void);
 
 /* True when every word of `set` has an art master. */
