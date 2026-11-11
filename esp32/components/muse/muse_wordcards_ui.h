@@ -3,15 +3,18 @@
  * muse_wordcards_ui.h -- 英语单词卡片 subpages inside the interaction tile.
  *
  * Two pages, three levels (user decision 2026-11-10, phase 1: fruit
- * + animal, 8 cards): the minigame list's "单词练习" row opens the
- * category page (muse_wordcards_ui_build_sets: one row per offered
- * set -- "水果 · Fruit", "动物 · Animal" -- icon + title centred as
- * one group, no count text, hint "免费 · 每类限时 2 分钟"), and a
+ * + animal, 8 cards; phase 2 2026-11-11 adds animal 2 + things): the
+ * minigame list's "单词练习" row opens the category page
+ * (muse_wordcards_ui_build_sets: one row per offered set -- "水果 ·
+ * Fruit", "动物1 · Animal 1", "动物2 · Animal 2", "物品 · Things" --
+ * icon + title centred as one group, no count text, hint "限时免费"
+ * as the list's last item), and a
  * category row opens that set's 2x2 card page (muse_wordcards_ui_build).
  * Back goes one level up at a time: card page -> category page ->
  * minigame list. Entering a set always starts it fresh (START, all
  * cards front-up, prefetch of that set's 4 MP3s); leaving a set
- * resets its flipped cards.
+ * resets its flipped cards. There is no time limit (user decision
+ * 2026-11-11): no countdown, no summary, no pause screen.
  *
  * Owned by muse_interact_ui.c like the feed / game / fortune / OX棋
  * subpages: the page groups live inside the interaction tile (NOT a
@@ -25,27 +28,23 @@
  * 2026-11-10), so there is no entry fee, no PET_FEE and no payout --
  * nothing in this module touches the economy.
  *
- * Controls (user decision 2026-11-10, mockup v4): tap a card's front
- * to flip it -- a 120 ms horizontal squash, swap, expand (not a true
- * 3D flip, LVGL cannot do that cheaply) -- and the back shows the
- * English word (gold, Montserrat 20), the Chinese (Noto 16) and the
- * speaker logo (~31x18, v3 size), and the pronunciation plays
- * automatically from the PSRAM cache. Tap the speaker logo to replay;
- * tap anywhere else on a flipped card to flip it back. Pausing is a
- * LONG HOLD anywhere on the page: the finger stays within ~12 px for
- * 500 ms (the goldrain / mathpractice / OX棋 idiom). The hold is
- * tracked by hand, not LVGL's LONG_PRESSED: the tap and the hold
- * share the cards, so the flip fires on release-after-a-short-press,
- * never on press-down -- a hold-to-pause never flips a card. There is
- * no pause button. The back arrow stays hidden while playing -- hold
- * first, then leave from the pause card.
+ * Controls (user decision 2026-11-10, mockup v4; pause dropped the same
+ * day): tap a card's front to flip it -- a 120 ms horizontal squash,
+ * swap, expand (not a true 3D flip, LVGL cannot do that cheaply) -- and
+ * the back shows the English word (gold, Montserrat 20), the Chinese
+ * (Noto 16) and the speaker logo (~31x18, v3 size), and the
+ * pronunciation plays automatically from the PSRAM cache. Tap the
+ * speaker logo to replay; tap anywhere else on a flipped card to flip
+ * it back. There is no pause: no long hold, no pause card, and the back
+ * arrow is always visible top-left (it is the only way out of a round
+ * that never ends by itself).
  *
  * Progress lives in static RAM: leaving the tile
- * (muse_wordcards_ui_hide) pauses a running round and stops any
- * playback, so it never plays on invisibly; a reboot restarts from
- * START. The game never touches voice: screen taps are consumed by
- * the touch layer, and BOOT keeps its global behaviour (it is not a
- * game key), exactly like the other mini-game pages.
+ * (muse_wordcards_ui_hide) stops the timer and any playback, so it
+ * never plays on invisibly; a reboot restarts from START. The game
+ * never touches voice: screen taps are consumed by the touch layer,
+ * and BOOT keeps its global behaviour (it is not a game key), exactly
+ * like the other mini-game pages.
  */
 #pragma once
 

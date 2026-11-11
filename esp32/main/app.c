@@ -100,52 +100,77 @@ static const char *TAG = "link.app";
 static const char *HEARTBEAT_TAG = "link.heartbeat";
 
 // Muse's endpoints move together when the relay switch is on: the account API
-// base and the noise host both point at the proxy. Re-applied at boot, after a
-// pairing that carries its own endpoints, and (from the heartbeat) whenever the
-// settings switch flips. muse_hatch_config_changed() drops the live session so
-// the next connect uses the host that was just set.
-static bool s_proxy_endpoints_on;
+// base and the noise host both point at the relay, and the Server picker in
+// MUSE settings chooses which relay (1 = the first pair, 2 = the second, 0 =
+// direct). Re-applied at boot, after a pairing that
+// carries its own endpoints, and (from the heartbeat) whenever the settings
+// switch or the picked relay changes. muse_hatch_config_changed() drops the
+// live session so the next connect uses the host that was just set.
+static int s_proxy_endpoints = MUSE_ENDPOINT_DIRECT;
 
-/* Apply the endpoints for a given switch state. Split out because the boot path
+/* Apply the endpoints for one endpoint level. Split out because the boot path
  * cannot ask muse_settings: that module is initialised later (muse_glue's boot
  * task), so asking it early returns the default and every boot started on the
- * direct host, burning one 15 s timeout before the relay was applied. */
-static void apply_muse_endpoints(bool on)
+ * direct host, burning one 15 s timeout before the relay was applied. A relay
+ * this build did not configure falls back to direct instead of pointing at an
+ * empty host. */
+static void apply_muse_endpoints(int level)
 {
-    const bool configured = CONFIG_MUSE_PROXY_API_URL[0] != '\0';
-    if (on && !configured) {
-        ESP_LOGW(TAG, "relay switch is on but no relay base is configured; staying direct");
-        on = false;
+    const int requested = level;
+    const char *api = NULL;
+    const char *host = NULL;
+    if (level == MUSE_ENDPOINT_RELAY_2) {
+        api = CONFIG_MUSE_PROXY2_API_URL;
+        host = CONFIG_MUSE_PROXY2_VM_HOST;
+    } else if (level == MUSE_ENDPOINT_RELAY_1) {
+        api = CONFIG_MUSE_PROXY_API_URL;
+        host = CONFIG_MUSE_PROXY_VM_HOST;
     }
-    vm_api_set_base_url(on ? CONFIG_MUSE_PROXY_API_URL : NULL);
-    noise_ctrl_set_host(on ? CONFIG_MUSE_PROXY_VM_HOST : NULL);
+    if (!api || !api[0] || !host || !host[0]) {
+        if (level != MUSE_ENDPOINT_DIRECT) {
+            ESP_LOGW(TAG, "relay %d is not configured in this build; staying direct", level);
+        }
+        level = MUSE_ENDPOINT_DIRECT;
+        api = NULL;
+        host = NULL;
+    }
+    vm_api_set_base_url(api);
+    noise_ctrl_set_host(host);
     /* Both relays can gate on k=<token>; the direct hosts ignore it. */
-    vm_api_set_relay_token(on ? CONFIG_MUSE_PROXY_TOKEN : NULL);
-    noise_ctrl_set_relay_token(on ? CONFIG_MUSE_PROXY_TOKEN : NULL);
-    s_proxy_endpoints_on = on;
-    ESP_LOGI(TAG, "muse endpoints: %s", on ? "relay" : "direct");
+    vm_api_set_relay_token(api ? CONFIG_MUSE_PROXY_TOKEN : NULL);
+    noise_ctrl_set_relay_token(api ? CONFIG_MUSE_PROXY_TOKEN : NULL);
+    /* Remember what was ASKED for, not what was applied: the heartbeat compares
+     * this against the setting, and a relay this build lacks must not be
+     * re-applied (and the live session dropped) on every heartbeat. */
+    s_proxy_endpoints = requested;
+    ESP_LOGI(TAG, "muse endpoints: %s", level == MUSE_ENDPOINT_DIRECT ? "direct"
+                                    : level == MUSE_ENDPOINT_RELAY_2 ? "relay 2" : "relay 1");
     muse_hatch_config_changed();
 }
 
 /* One read straight from the Muse settings namespace, used at boot before that
  * module is up. Everywhere else the loaded setting is authoritative. */
-static bool proxy_switch_stored(void)
+static int endpoint_stored(void)
 {
     nvs_handle_t h;
     uint8_t v = 0;
-    bool on = false;
+    uint8_t ep = 0;
+    int level = MUSE_ENDPOINT_DIRECT;
     if (nvs_open("muse", NVS_READONLY, &h) == ESP_OK) {
-        if (nvs_get_u8(h, "proxy", &v) == ESP_OK) {
-            on = v != 0;
+        if (nvs_get_u8(h, "proxy", &v) == ESP_OK && v != 0) {
+            ep = MUSE_ENDPOINT_RELAY_1;
+            nvs_get_u8(h, "endpoint", &ep);
+            level = (ep == MUSE_ENDPOINT_RELAY_2) ? MUSE_ENDPOINT_RELAY_2
+                                                  : MUSE_ENDPOINT_RELAY_1;
         }
         nvs_close(h);
     }
-    return on;
+    return level;
 }
 
 static void apply_muse_proxy_endpoints(void)
 {
-    apply_muse_endpoints(muse_settings_proxy());
+    apply_muse_endpoints(muse_settings_proxy_level());
 }
 
 /* From the glue, right after muse_app_run() has loaded the settings: that is
@@ -2889,7 +2914,7 @@ void app_run(void) {
     // The relay switch cannot be read through muse_settings yet (that module loads
     // later), so it is read straight from NVS here: the first account lookup, a
     // couple of seconds from now, must already go to the right host.
-    apply_muse_endpoints(proxy_switch_stored());
+    apply_muse_endpoints(endpoint_stored());
 
     bool skip_boot_scan = false;
     if (setup_complete && !CONFIG_HOMEHUB_WIFI_SSID[0]) {
@@ -3115,7 +3140,7 @@ void app_run(void) {
                  (unsigned)(heap_caps_get_largest_free_block(MALLOC_CAP_RETENTION) / 1024),
                  muse_input_cpu_pd() ? "on" : "off");
 #endif
-        if (muse_settings_proxy() != s_proxy_endpoints_on) {
+        if (muse_settings_proxy_level() != s_proxy_endpoints) {
             apply_muse_proxy_endpoints();
         }
         size_t free_dma = heap_caps_get_free_size(MALLOC_CAP_DMA);

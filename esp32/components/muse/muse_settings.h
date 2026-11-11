@@ -67,9 +67,23 @@ int muse_settings_alarm_min(void);      /* 0..59 */
 int muse_settings_alarm_days(void);     /* bit0 Sun .. bit6 Sat; 0 once, 0x7F daily */
 bool muse_settings_wifi_on(void);
 bool muse_settings_ble_on(void);
-/* On: the account API and the VM host use CONFIG_MUSE_PROXY_* instead of
- * api.muse.ai and hatch.metaaivm.com. Off (the default) is a direct link. */
+/* Which relay the proxy switch selects. 1 = CONFIG_MUSE_PROXY_API_URL /
+ * CONFIG_MUSE_PROXY_VM_HOST, 2 = CONFIG_MUSE_PROXY2_API_URL /
+ * CONFIG_MUSE_PROXY2_VM_HOST (the settings page's Server picker offers one
+ * row per relay this build has configured, plus the direct default). */
+#define MUSE_ENDPOINT_DIRECT  0
+#define MUSE_ENDPOINT_RELAY_1 1
+#define MUSE_ENDPOINT_RELAY_2 2
+
+/* On: the account API and the VM host use a CONFIG_MUSE_PROXY*_* relay instead
+ * of api.muse.ai and hatch.metaaivm.com. Off (the default) is a direct link. */
 bool muse_settings_proxy(void);
+/* The effective endpoint: MUSE_ENDPOINT_DIRECT while the switch is off, else
+ * the relay the Server picker selected. app.c applies this to the endpoints. */
+int muse_settings_proxy_level(void);
+/* 1 or 2: the relay the picker last chose (kept while the switch is off, so
+ * flipping the switch back on returns to it). */
+int muse_settings_endpoint(void);
 
 void muse_settings_wifi(char ssid[MUSE_SSID_MAX + 1], char pass[MUSE_PASS_MAX + 1]);
 void muse_settings_hatch_host(char out[MUSE_HOST_MAX + 1]);
@@ -89,6 +103,9 @@ void muse_settings_set_alarm_days(int days);
 void muse_settings_set_wifi_on(bool on);
 void muse_settings_set_ble_on(bool on);
 void muse_settings_set_proxy(bool on);
+/* Pick a relay: MUSE_ENDPOINT_DIRECT turns the switch off, 1/2 turn it on and
+ * select that relay. Notifies MUSE_SETTING_PROXY like the switch. */
+void muse_settings_set_endpoint(int level);
 
 /* Speech service. Empty url = use the endpoint compiled in from
  * CONFIG_MUSE_TTS_URL (which is empty in a public build). key and rate are

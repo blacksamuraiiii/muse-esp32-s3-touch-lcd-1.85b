@@ -39,9 +39,11 @@ static struct {
     uint16_t sleep_s;
     bool wifi_on;
     bool ble_on;
-    /* Off (the default): api.muse.ai and hatch.metaaivm.com direct. On: the
-     * CONFIG_MUSE_PROXY_* relay, for a network that cannot reach either. */
+    /* Off (the default): api.muse.ai and hatch.metaaivm.com direct. On: a relay
+     * from the build's CONFIG_MUSE_PROXY_* / CONFIG_MUSE_PROXY2_* pairs --
+     * endpoint picks which one (1 = the first pair, 2 = the second). */
     bool proxy;
+    uint8_t endpoint;
     /* Speech service overrides; empty means "use CONFIG_MUSE_TTS_URL". */
     char sp_url[MUSE_SPEECH_URL_MAX + 1];
     char sp_voice[MUSE_SPEECH_VOICE_MAX + 1];
@@ -149,6 +151,9 @@ esp_err_t muse_settings_init(void)
     if (nvs_get_u8(s_nvs, "proxy", &b) == ESP_OK) {
         s.proxy = b;
     }
+    s.endpoint = MUSE_ENDPOINT_RELAY_1;
+    load_u8("endpoint", &s.endpoint);
+    s.endpoint = (uint8_t)clampi(s.endpoint, MUSE_ENDPOINT_RELAY_1, MUSE_ENDPOINT_RELAY_2);
     load_u8("alarm_h", &s.alarm_h);
     load_u8("alarm_m", &s.alarm_m);
     load_u8("alarm_days", &s.alarm_days);
@@ -171,9 +176,10 @@ esp_err_t muse_settings_init(void)
     s.alarm_h = clampi(s.alarm_h, 0, 23);
     s.alarm_m = clampi(s.alarm_m, 0, 59);
     s.alarm_days &= 0x7F;
-    ESP_LOGI(TAG, "vol %d%s, mic %d dB, bright %d, sleep %ds, wifi %s (%s), ble %s, proxy %s, alarm %02d:%02d %s days 0x%02x, muse %s",
+    ESP_LOGI(TAG, "vol %d%s, mic %d dB, bright %d, sleep %ds, wifi %s (%s), ble %s, proxy %s%s, alarm %02d:%02d %s days 0x%02x, muse %s",
              s.volume, s.speaker_on ? "" : " (speaker off)", s.mic_gain, s.brightness, s.sleep_s, s.wifi_on ? "on" : "off",
-             "network saved by Link", s.ble_on ? "on" : "off", s.proxy ? "on" : "off",
+             "network saved by Link", s.ble_on ? "on" : "off",
+             s.proxy ? "on" : "off", s.proxy ? (s.endpoint == MUSE_ENDPOINT_RELAY_2 ? " (relay 2)" : " (relay 1)") : "",
              s.alarm_h, s.alarm_m, s.alarm_on ? "on" : "off",
              s.alarm_days, s.token[0] ? "token set" : "no token");
     ESP_LOGI(TAG, "speech: %s, voice %s, key %s, rate %s",
@@ -200,6 +206,13 @@ bool muse_settings_wifi_on(void) { return s.wifi_on; }
 bool muse_settings_ble_on(void) { return s.ble_on; }
 bool muse_settings_proxy(void) { return s.proxy; }
 
+int muse_settings_proxy_level(void)
+{
+    return s.proxy ? (int)s.endpoint : MUSE_ENDPOINT_DIRECT;
+}
+
+int muse_settings_endpoint(void) { return (int)s.endpoint; }
+
 /* Home Link owns the saved networks (this is the first); the local copy is only a fallback. */
 void muse_settings_wifi(char ssid[MUSE_SSID_MAX + 1], char pass[MUSE_PASS_MAX + 1])
 {
@@ -217,10 +230,20 @@ void muse_settings_wifi(char ssid[MUSE_SSID_MAX + 1], char pass[MUSE_PASS_MAX + 
 void muse_settings_hatch_host(char out[MUSE_HOST_MAX + 1])
 {
     LOCKED({
-        /* The proxy wins while it is on: the stored host is the direct one,
-         * kept for the moment the switch goes back off. */
-        if (s.proxy && CONFIG_MUSE_PROXY_VM_HOST[0]) {
-            strlcpy(out, CONFIG_MUSE_PROXY_VM_HOST, MUSE_HOST_MAX + 1);
+        /* The relay wins while it is on: the stored host is the direct one,
+         * kept for the moment the switch goes back off. An unconfigured
+         * relay in this build falls back to the direct host instead of
+         * answering with an empty string. */
+        const char *relay = NULL;
+        if (s.proxy) {
+            relay = s.endpoint == MUSE_ENDPOINT_RELAY_2 ? CONFIG_MUSE_PROXY2_VM_HOST
+                                                        : CONFIG_MUSE_PROXY_VM_HOST;
+            if (!relay[0]) {
+                relay = NULL;
+            }
+        }
+        if (relay) {
+            strlcpy(out, relay, MUSE_HOST_MAX + 1);
         } else {
             strlcpy(out, s.host, MUSE_HOST_MAX + 1);
         }
@@ -330,6 +353,19 @@ void muse_settings_set_proxy(bool on)
 {
     s.proxy = on;
     save_u8("proxy", on);
+    notify(MUSE_SETTING_PROXY);
+}
+
+void muse_settings_set_endpoint(int level)
+{
+    if (level == MUSE_ENDPOINT_DIRECT) {
+        muse_settings_set_proxy(false);
+        return;
+    }
+    s.endpoint = (uint8_t)clampi(level, MUSE_ENDPOINT_RELAY_1, MUSE_ENDPOINT_RELAY_2);
+    save_u8("endpoint", s.endpoint);
+    s.proxy = true;
+    save_u8("proxy", 1);
     notify(MUSE_SETTING_PROXY);
 }
 

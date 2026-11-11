@@ -735,10 +735,17 @@ location / {
 CONFIG_MUSE_PROXY_API_URL="https://api-relay.example.com"
 CONFIG_MUSE_PROXY_VM_HOST="vm-relay.example.com"
 CONFIG_MUSE_PROXY_TOKEN="<your-token>"
+# 第二组中转（可选）：设备 MUSE 页的 Server 下拉里多一行
+CONFIG_MUSE_PROXY2_API_URL="https://api-relay2.example.com"
+CONFIG_MUSE_PROXY2_VM_HOST="vm-relay2.example.com"
 ```
 
 设备侧只填主机名，不带 `https://` 也可（固件自动补 scheme）；TTS 的服务器/音色/
 密钥可以在设备 **设置 → TTS** 页里填，不必编进固件。
+
+两组中转在设备上靠 **设置 → MUSE → Server** 选择，不手输：一行「官方直连」＋每组
+配齐的一行「中转 · <域名>」。选中转会把 Muse proxy 开关一起打开，选官方则关掉，
+两个控件始终一致；哪一组没配齐，那一行就不出现（公开构建只有官方一行）。
 
 ### 11.4 验收
 
@@ -748,7 +755,7 @@ curl -o /dev/null -w '%{http_code}\n' https://api-relay.example.com/
 curl -o /dev/null -w '%{http_code}\n' "https://api-relay.example.com/?k=<your-token>"
 ```
 
-板子串口应当看到：`muse endpoints: relay` → `link.vm_api: HTTP 200 … (attempt 1)`
+板子串口应当看到：`muse endpoints: relay 1`（或 `relay 2`）→ `link.vm_api: HTTP 200 … (attempt 1)`
 → `WebSocket upgraded to /v1/noise` → `connected to VM … in N ms`，全程无 403。
 
 ---

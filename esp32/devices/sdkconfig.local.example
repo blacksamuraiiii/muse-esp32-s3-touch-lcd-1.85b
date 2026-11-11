@@ -27,6 +27,11 @@ CONFIG_MUSE_TTS_URL=""
 # cannot reach them. Both empty (the shipped default) leaves the switch inert.
 CONFIG_MUSE_PROXY_API_URL=""
 CONFIG_MUSE_PROXY_VM_HOST=""
+# A second relay. The Server picker in MUSE settings offers one row per complete
+# pair (plus the direct default), so two relays mean two rows without typing a
+# hostname on a 360 px screen. Leave a pair empty to not offer it.
+CONFIG_MUSE_PROXY2_API_URL=""
+CONFIG_MUSE_PROXY2_VM_HOST=""
 
 # --- Attach to a specific network instead of provisioning ----------------------
 CONFIG_HOMEHUB_WIFI_SSID=""
