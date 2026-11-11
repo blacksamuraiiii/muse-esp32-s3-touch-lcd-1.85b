@@ -124,13 +124,19 @@ static muse_wordcards_open_set_cb_t s_open_set_cb;
 /* Category-page geometry: the minigame list's own numbers
  * (build_minigame in muse_interact_ui.c) -- 330 wide, top 84, rows
  * 58 high with a 10 px gap, radius 18, CARD fill (muse_card). The
- * hint sits under the last row, at the mockup v2 slot. */
+ * rows live in a scrolling column, like the minigame list: with four
+ * sets the fixed positions put the last row under the round screen's
+ * bottom curve, so the list scrolls (110 px bottom pad, scrollbar
+ * off) instead. The hint from mockup v2 ("免费 · 每类限时 2 分钟")
+ * is gone: with four rows its y=232 slot collides with the third
+ * row, and there is no free slot left for it (user-accepted
+ * 2026-11-11). */
 #define MUSE_WORDCARDS_SETS_W 330
 #define MUSE_WORDCARDS_SETS_TOP 84
 #define MUSE_WORDCARDS_SETS_ROW_H 58
 #define MUSE_WORDCARDS_SETS_GAP 10
 #define MUSE_WORDCARDS_SETS_RADIUS 18
-#define MUSE_WORDCARDS_SETS_HINT_Y 232
+#define MUSE_WORDCARDS_SETS_PAD_BOTTOM 110
 /* Set icon on a category row: 36 px, 12 px before the title. */
 #define MUSE_WORDCARDS_SETS_ICON_PX 36
 #define MUSE_WORDCARDS_SETS_ICON_SCALE \
@@ -594,23 +600,34 @@ void muse_wordcards_ui_build_sets(lv_obj_t *page, lv_event_cb_t back_cb,
     s_open_set_cb = open_cb;
     muse_back_button(page, back_cb);
     muse_page_title(page, "单词练习", 44);
-    /* One row per offered set, in table order: muse_card (the
-     * minigame list's row) with a flex row inside -- icon + title
-     * centred as one group (mockup v2: icon 36 px, 12 px gap,
-     * Noto 16 title, no count text). */
-    int row = 0;
+    /* Scrolling column, the minigame list's pattern (build_minigame
+     * in muse_interact_ui.c): flex column, vertical scroll only,
+     * scrollbar off, 10 px gaps, 110 px bottom pad so the last row
+     * can be scrolled clear of the bottom curve. One row per offered
+     * set, in table order: muse_card (the minigame list's row) with
+     * a flex row inside -- icon + title centred as one group
+     * (mockup v2: icon 36 px, 12 px gap, Noto 16 title, no count
+     * text). */
+    lv_obj_t *list = lv_obj_create(page);
+    lv_obj_remove_style_all(list);
+    lv_obj_set_size(list, MUSE_WORDCARDS_SETS_W,
+                    360 - MUSE_WORDCARDS_SETS_TOP);
+    lv_obj_align(list, LV_ALIGN_TOP_MID, 0, MUSE_WORDCARDS_SETS_TOP);
+    lv_obj_set_flex_flow(list, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(list, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
+                          LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_row(list, MUSE_WORDCARDS_SETS_GAP, 0);
+    lv_obj_set_style_pad_bottom(list, MUSE_WORDCARDS_SETS_PAD_BOTTOM, 0);
+    lv_obj_set_scroll_dir(list, LV_DIR_VER);
+    lv_obj_set_scrollbar_mode(list, LV_SCROLLBAR_MODE_OFF);
     for (int s = 0; s < MUSE_WORDCARDS_SETS; s++) {
         if (!muse_wordcards_set_has_art(s)) {
             continue;
         }
         const muse_wordcards_set_t *set = &MUSE_WORDCARDS_SETS_TABLE[s];
-        lv_obj_t *card = muse_card(page, MUSE_WORDCARDS_SETS_W,
+        lv_obj_t *card = muse_card(list, lv_pct(100),
                                    MUSE_WORDCARDS_SETS_ROW_H,
                                    MUSE_WORDCARDS_SETS_RADIUS);
-        lv_obj_set_pos(card, (360 - MUSE_WORDCARDS_SETS_W) / 2,
-                       MUSE_WORDCARDS_SETS_TOP +
-                           row * (MUSE_WORDCARDS_SETS_ROW_H +
-                                  MUSE_WORDCARDS_SETS_GAP));
         lv_obj_set_flex_flow(card, LV_FLEX_FLOW_ROW);
         lv_obj_set_flex_align(card, LV_FLEX_ALIGN_CENTER,
                               LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
@@ -633,13 +650,7 @@ void muse_wordcards_ui_build_sets(lv_obj_t *page, lv_event_cb_t back_cb,
         lv_label_set_text(t, set->title);
         lv_obj_add_event_cb(card, on_set_row, LV_EVENT_CLICKED,
                             (void *)(intptr_t)s);
-        row++;
     }
-    /* Hint under the list (mockup v2). Noto 16 is the only CJK size
-     * the firmware has, so the mockup's 14 px hint renders at 16 px. */
-    lv_obj_t *hint = label(page, muse_font_cjk(), MUSE_THEME_DIM);
-    lv_label_set_text(hint, "免费 · 每类限时 2 分钟");
-    lv_obj_align(hint, LV_ALIGN_TOP_MID, 0, MUSE_WORDCARDS_SETS_HINT_Y);
 }
 
 void muse_wordcards_ui_build(lv_obj_t *page, lv_event_cb_t back_cb)

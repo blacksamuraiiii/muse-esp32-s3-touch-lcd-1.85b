@@ -39,14 +39,16 @@ const muse_wordcards_set_t MUSE_WORDCARDS_SETS_TABLE[MUSE_WORDCARDS_SETS] = {
         },
     },
     {
-        "动物 · Animal",
+        "动物1 · Animal 1",
         {
             /* Art: game-icons, CC BY 3.0 (see muse_wordcards_art.h),
              * the closest matches, user-accepted 2026-11-10:
              * cat = lorc/cat, dog = delapouite/sitting-dog (no plain
              * dog in the set), bird = delapouite/hummingbird (no plain
              * bird in the set), fish = delapouite/tropical-fish.
-             * Colours are the mockup's per-animal recolours. */
+             * Colours are the mockup's per-animal recolours.
+             * Renamed from "动物 · Animal" in phase 2 (user decision
+             * 2026-11-11) so the two animal sets read 动物1 / 动物2. */
             {"cat", "猫", 0xe8a04c, 4},
             {"dog", "狗", 0xb07a4a, 5},
             {"bird", "鸟", 0x6ff0bf, 6},
@@ -128,6 +130,35 @@ const muse_wordcards_set_t MUSE_WORDCARDS_SETS_TABLE[MUSE_WORDCARDS_SETS] = {
             {"dad", "爸爸", 0xf2efff, MUSE_WORDCARDS_ART_NONE},
             {"sister", "姐妹", 0xf2efff, MUSE_WORDCARDS_ART_NONE},
             {"brother", "兄弟", 0xf2efff, MUSE_WORDCARDS_ART_NONE},
+        },
+    },
+    {
+        "动物2 · Animal 2",
+        {
+            /* Phase 2 (user decision 2026-11-11, from the practice
+             * workbook photo): bear is the bear-head (no whole bear
+             * in the set), fox is the fox-head. Colours are the
+             * preview v3 recolours. */
+            {"bear", "熊", 0xa8763e, 8},
+            {"duck", "鸭子", 0xf6cb4b, 9},
+            {"frog", "青蛙", 0x6ff0bf, 10},
+            {"fox", "狐狸", 0xff8c42, 11},
+        },
+    },
+    {
+        "物品 · Things",
+        {
+            /* Phase 2 (user decision 2026-11-11, from the textbook
+             * Units 4/6/7): balloon is the hot-air balloon, box is
+             * the cardboard box, bag is the hand-bag, robot is the
+             * robot golem. Colours are the preview v3 recolours.
+             * "bag" here is the hand-bag; the school set's "bag"
+             * (书包) shares the same English word, so both use the
+             * one pre-generated "bag" MP3. */
+            {"balloon", "气球", 0xff5c5c, 12},
+            {"box", "盒子", 0xb07a4a, 13},
+            {"bag", "包", 0xa77dff, 14},
+            {"robot", "机器人", 0x7dadcb, 15},
         },
     },
 };

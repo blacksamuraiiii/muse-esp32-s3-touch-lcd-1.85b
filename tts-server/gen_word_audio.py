@@ -25,7 +25,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import tts_server as srv            # noqa: E402
 
-# 水果 / 动物 / 颜色 / 身体 / 数字 / 学校 / 食物 / 家庭
+# 水果 / 动物1 / 颜色 / 身体 / 数字 / 学校 / 食物 / 家庭 / 动物2 / 物品
 WORDS = [
     "apple", "banana", "cherry", "peach",
     "cat", "dog", "bird", "fish",
@@ -35,6 +35,11 @@ WORDS = [
     "book", "pen", "bag", "pencil",
     "cake", "milk", "bread", "egg",
     "mum", "dad", "sister", "brother",
+    # Phase 2 (2026-11-11): animal 2 + things. "bag" is already
+    # listed above (school set); the things set's "bag" (手提包)
+    # shares that one MP3, so it is not repeated here.
+    "bear", "duck", "frog", "fox",
+    "balloon", "box", "robot",
 ]
 
 
