@@ -201,7 +201,6 @@ static void reset_round(muse_wordcards_t *g)
         g->seen[i] = false;
     }
     g->flipped_count = 0;
-    g->elapsed_ms = 0;
     g->pending_audio = -1;
 }
 
@@ -249,45 +248,11 @@ void muse_wordcards_start(muse_wordcards_t *g)
     g->phase = MUSE_WORDCARDS_PLAYING;
 }
 
-void muse_wordcards_pause(muse_wordcards_t *g)
-{
-    if (g->phase == MUSE_WORDCARDS_PLAYING) {
-        g->phase = MUSE_WORDCARDS_PAUSED;
-    }
-}
-
-void muse_wordcards_resume(muse_wordcards_t *g)
-{
-    if (g->phase == MUSE_WORDCARDS_PAUSED) {
-        g->phase = MUSE_WORDCARDS_PLAYING;
-    }
-}
-
 void muse_wordcards_restart(muse_wordcards_t *g)
 {
     g->set_gen++;
     reset_round(g);
     g->phase = MUSE_WORDCARDS_PLAYING;
-}
-
-void muse_wordcards_tick(muse_wordcards_t *g, uint32_t ms)
-{
-    if (g->phase != MUSE_WORDCARDS_PLAYING) {
-        return;
-    }
-    g->elapsed_ms += ms;
-    if (g->elapsed_ms >= MUSE_WORDCARDS_GAME_MS) {
-        g->elapsed_ms = MUSE_WORDCARDS_GAME_MS;
-        g->phase = MUSE_WORDCARDS_OVER;
-    }
-}
-
-uint32_t muse_wordcards_remaining_s(const muse_wordcards_t *g)
-{
-    if (g->elapsed_ms >= MUSE_WORDCARDS_GAME_MS) {
-        return 0;
-    }
-    return (MUSE_WORDCARDS_GAME_MS - g->elapsed_ms + 999u) / 1000u;
 }
 
 bool muse_wordcards_flip_to_back(muse_wordcards_t *g, int i)

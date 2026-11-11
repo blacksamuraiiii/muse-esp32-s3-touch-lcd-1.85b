@@ -6,8 +6,8 @@
  *      components/muse/muse_wordcards.c -o /tmp/wordcards
  * Covers the pure logic only (muse_wordcards.c has no LVGL and no
  * ESP-IDF -- the UI owns the 50 ms timer, the flip animation and the
- * audio tasks, so the harness drives the clock by calling
- * muse_wordcards_tick() directly):
+ * audio tasks; the round has no clock since 2026-11-11, so there is
+ * nothing time-based to drive):
  *  1. Word table: 10 sets x 4 words, fruit, animal 1, animal 2 and
  *     things fully wired (fruit art 0..3, animal 1 art 4..7,
  *     animal 2 art 8..11, things art 12..15, colours), every other
@@ -17,16 +17,15 @@
  *  2. Flip state machine: flip to back counts a card once (distinct),
  *     flip back and forth never inflates the count, replay only works
  *     on a flipped card, flips are refused outside PLAYING.
- *  3. 2-minute clock: ticks only while PLAYING, pauses freeze it,
- *     OVER at exactly 120000 ms, remaining seconds count down.
+ *  3. (removed) The 2-minute clock: the round has no time limit any
+ *     more (user decision 2026-11-11), so there is no clock to test.
  *  4. Cache bookkeeping: begin -> FETCHING, ready/failed marks,
  *     a mark from an older set generation is ignored (a slow fetch
  *     cannot resurrect audio for a round the player left), all-ready.
  *  5. MP3 prefix gate: the same >64 B + 0xFF/ID3 rule as the bridge.
  *  6. Pending audio: set by flip/replay, cleared on demand. (The UI
- *     also clears it when a card is flipped back or the round is
- *     paused -- that is UI behaviour, not logic, and is not covered
- *     here.)
+ *     also clears it when a card is flipped back or the page is left
+ *     -- that is UI behaviour, not logic, and is not covered here.)
  */
 #include <assert.h>
 #include <stdbool.h>
@@ -159,22 +158,21 @@ static void test_select_set(void)
     assert(g.set == 1);
     assert(g.phase == MUSE_WORDCARDS_START);
     assert(g.set_gen == gen + 1);
-    assert(g.elapsed_ms == 0 && g.flipped_count == 0);
+    assert(g.flipped_count == 0);
     for (int i = 0; i < MUSE_WORDCARDS_WORDS; i++) {
         assert(!g.flipped[i] && !g.seen[i]);
         assert(g.cache[i] == MUSE_WORDCARDS_CACHE_EMPTY);
     }
-    /* A round in the new set plays: flips count, the clock runs. */
+    /* A round in the new set plays and flips count. */
     muse_wordcards_start(&g);
     assert(muse_wordcards_flip_to_back(&g, 0));
     assert(g.flipped_count == 1);
-    muse_wordcards_tick(&g, 1000);
     /* Selecting the fruit set back resets the round: the animal
-     * flips and elapsed time do not carry over. */
+     * flips do not carry over. */
     assert(muse_wordcards_select_set(&g, 0));
     assert(g.set == 0);
     assert(g.phase == MUSE_WORDCARDS_START);
-    assert(g.elapsed_ms == 0 && g.flipped_count == 0);
+    assert(g.flipped_count == 0);
     for (int i = 0; i < MUSE_WORDCARDS_WORDS; i++) {
         assert(!g.flipped[i] && !g.seen[i]);
     }
@@ -236,50 +234,16 @@ static void test_flip_counts_distinct(void)
     assert(muse_wordcards_pending_audio(&g) == -1);
 }
 
-static void test_clock(void)
+static void test_restart(void)
 {
     muse_wordcards_t g = playing_game();
-    assert(MUSE_WORDCARDS_GAME_MS == 120000u);
-    assert(muse_wordcards_remaining_s(&g) == 120);
-    muse_wordcards_tick(&g, 50);
-    assert(g.elapsed_ms == 50);
-    assert(muse_wordcards_remaining_s(&g) == 120);
-    muse_wordcards_tick(&g, 950);
-    assert(g.elapsed_ms == 1000);
-    assert(muse_wordcards_remaining_s(&g) == 119);
-    /* Pausing freezes the clock; the tick is a no-op. */
-    muse_wordcards_pause(&g);
-    assert(g.phase == MUSE_WORDCARDS_PAUSED);
-    muse_wordcards_tick(&g, 60000);
-    assert(g.elapsed_ms == 1000);
-    assert(muse_wordcards_remaining_s(&g) == 119);
-    /* Flips are refused while paused, and resume thaws the clock. */
-    assert(!muse_wordcards_flip_to_back(&g, 0));
-    muse_wordcards_resume(&g);
-    assert(g.phase == MUSE_WORDCARDS_PLAYING);
-    muse_wordcards_tick(&g, 1000);
-    assert(g.elapsed_ms == 2000);
-    /* The round ends at exactly 120000 ms, not one tick early. */
-    muse_wordcards_tick(&g, 117999);
-    assert(g.phase == MUSE_WORDCARDS_PLAYING);
-    assert(muse_wordcards_remaining_s(&g) == 1);
-    muse_wordcards_tick(&g, 1);
-    assert(g.elapsed_ms == 120000);
-    assert(g.phase == MUSE_WORDCARDS_OVER);
-    assert(muse_wordcards_remaining_s(&g) == 0);
-    /* Ticking past the end stays OVER; flips are refused. */
-    muse_wordcards_tick(&g, 5000);
-    assert(g.phase == MUSE_WORDCARDS_OVER);
-    assert(g.elapsed_ms == 120000);
-    assert(!muse_wordcards_flip_to_back(&g, 0));
+    assert(muse_wordcards_flip_to_back(&g, 1));
     /* Restart: a fresh round, a new generation, same set. */
     uint32_t gen = g.set_gen;
     muse_wordcards_restart(&g);
     assert(g.phase == MUSE_WORDCARDS_PLAYING);
     assert(g.set_gen == gen + 1);
-    assert(g.elapsed_ms == 0);
     assert(g.flipped_count == 0);
-    assert(muse_wordcards_remaining_s(&g) == 120);
     for (int i = 0; i < MUSE_WORDCARDS_WORDS; i++) {
         assert(!g.flipped[i] && !g.seen[i]);
     }
@@ -368,7 +332,7 @@ int main(void)
     test_table();
     test_select_set();
     test_flip_counts_distinct();
-    test_clock();
+    test_restart();
     test_cache();
     test_mp3_gate();
     printf("ok\n");

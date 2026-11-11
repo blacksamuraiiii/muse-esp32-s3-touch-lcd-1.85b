@@ -4,9 +4,12 @@
  *
  * Free learning mode only (user decision 2026-11-10): no entry fee,
  * no coins, no quiz mode -- the quiz (listen and pick the picture) is
- * a later phase and is deliberately NOT in this module. One round is
- * 2 minutes of PLAYING time; the clock stops while paused, exactly
- * like 毛毛跳跃's 60 s clock (user decision 2026-11-08, same rule).
+ * a later phase and is deliberately NOT in this module. A round has
+ * NO time limit (user decision 2026-11-11, was 2 minutes): the cards
+ * stay on screen until the player taps the back arrow, so there is no
+ * clock, no countdown, no OVER phase and no "学了几张" summary. The
+ * flipped count is still tracked (it is what the logic knows about
+ * progress and the host tests pin it), it is simply never shown.
  *
  * A round shows one set of 4 cards, 2x2, on the 240x240 field at
  * (60,60) -- cards are 116 px with an 8 px gap (mockup v4). The front
@@ -42,10 +45,10 @@
  * not offered. Colours were explicitly rejected by the user
  * 2026-11-11 ("too simple") -- do not activate that set.
  *
- * Timing is in milliseconds and advances only through
- * muse_wordcards_tick(), so the host test drives it deterministically
- * (no lv_tick_get() here). The UI calls tick every 50 ms and pauses
- * its timer while paused, so tick() also no-ops unless PLAYING.
+ * Timing lives in the UI's own 50 ms timer, which only drains the
+ * pending-audio mark and pokes the idle timer; the logic has no clock
+ * at all, so the host test drives every state transition explicitly
+ * (no lv_tick_get() here).
  */
 #pragma once
 
@@ -53,13 +56,9 @@
 #include <stddef.h>
 #include <stdint.h>
 
-/* One round lasts 2 minutes of PLAYING time (user 2026-11-10, free
- * learning mode). The clock runs only while PLAYING -- the UI pauses
- * its timer while paused, so tick() also no-ops unless PLAYING.
- * When it runs out the round ends on the summary page. */
-#define MUSE_WORDCARDS_GAME_MS 120000u
-#define MUSE_WORDCARDS_TICK_MS 50u
-/* Field geometry, the same 240x240 square the other games use. */
+/* A round has no time limit (user 2026-11-11): the player leaves with
+ * the back arrow, so there is no clock to tick down and no OVER state.
+ * Field geometry, the same 240x240 square the other games use. */
 #define MUSE_WORDCARDS_FIELD_X 60
 #define MUSE_WORDCARDS_FIELD_Y 60
 #define MUSE_WORDCARDS_FIELD_SIZE 240
@@ -80,8 +79,6 @@
 typedef enum {
     MUSE_WORDCARDS_START = 0,
     MUSE_WORDCARDS_PLAYING,
-    MUSE_WORDCARDS_PAUSED,
-    MUSE_WORDCARDS_OVER,
 } muse_wordcards_phase_t;
 
 /* Prefetch state of one word's MP3 in the PSRAM cache. */
@@ -110,7 +107,6 @@ typedef struct {
     bool flipped[MUSE_WORDCARDS_WORDS];   /* true while the back shows */
     bool seen[MUSE_WORDCARDS_WORDS];      /* flipped at least once */
     uint32_t flipped_count;               /* distinct cards flipped */
-    uint32_t elapsed_ms;                  /* PLAYING time this round */
     muse_wordcards_cache_t cache[MUSE_WORDCARDS_WORDS];
     size_t cache_bytes[MUSE_WORDCARDS_WORDS];
     uint32_t set_gen;                     /* bumped on every (re)start */
@@ -140,32 +136,19 @@ void muse_wordcards_init(muse_wordcards_t *g);
  * is never offered, so this only fires on a programming error. */
 bool muse_wordcards_select_set(muse_wordcards_t *g, int set);
 
-/* START -> PLAYING, resetting the round and the cache bookkeeping
- * for the current set. No-op from any other phase (use restart for
- * a new round after OVER/PAUSED). */
+/* START -> PLAYING, resetting the round for the current set. No-op
+ * from any other phase (use restart for a clean repeat). */
 void muse_wordcards_start(muse_wordcards_t *g);
 
-/* PLAYING -> PAUSED. No-op from any other phase. */
-void muse_wordcards_pause(muse_wordcards_t *g);
-
-/* PAUSED -> PLAYING. No-op from any other phase. */
-void muse_wordcards_resume(muse_wordcards_t *g);
-
-/* Any phase -> PLAYING with a fresh round (same set, reshuffled only
- * in the sense that every card is front-up again: the set order is
- * fixed, so "reshuffle" here means a clean repeat). Free, so no
- * charge is involved. Bumps set_gen, so a prefetch from the previous
- * round cannot mark words ready in this one. */
+/* PLAYING with a fresh round (same set, every card front-up again:
+ * the set order is fixed, so "reshuffle" here means a clean repeat).
+ * Free, so no charge is involved. Bumps set_gen, so a prefetch from
+ * the previous round cannot mark words ready in this one. */
 void muse_wordcards_restart(muse_wordcards_t *g);
 
-/* Advance the round clock by `ms`. No-op unless PLAYING. Ends the
- * round (OVER) the moment the 2-minute clock runs out. */
-void muse_wordcards_tick(muse_wordcards_t *g, uint32_t ms);
-
-/* Whole seconds left in the round, rounded up (120 at the start, 0
- * at the end), for the HUD countdown. Same ceiling formula as
- * 金币雨 / 毛毛跳跃. */
-uint32_t muse_wordcards_remaining_s(const muse_wordcards_t *g);
+/* No clock any more (user decision 2026-11-11): a round runs until the
+ * player leaves the page, so the module has no tick() and no countdown
+ * -- do not add one back without the user asking for a time limit. */
 
 /* Flip card `i` (0..3) to its back. False when not PLAYING, when the
  * index is out of range, or when the card is already flipped. On

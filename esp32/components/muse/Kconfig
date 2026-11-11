@@ -317,6 +317,28 @@ menu "Muse"
             Empty by default, for the same reason as the API base: the host is
             personal infrastructure. Set it in devices/sdkconfig.local.
 
+    config MUSE_PROXY2_API_URL
+        string "Second relay's account API base (the Server picker's relay 2)"
+        default ""
+        help
+            The MUSE settings page offers one Server row per relay the build
+            knows: relay 1 is MUSE_PROXY_API_URL / MUSE_PROXY_VM_HOST, relay 2
+            is this pair. Picking a relay also turns the Muse proxy switch on,
+            so both pairs are otherwise identical.
+
+            Empty by default (nothing is offered) and for the same reason as
+            relay 1: a relay address is personal infrastructure. Set it in
+            devices/sdkconfig.local.
+
+    config MUSE_PROXY2_VM_HOST
+        string "Second relay's VM host (the Server picker's relay 2)"
+        default ""
+        help
+            VM host for relay 2, the same role MUSE_PROXY_VM_HOST has for
+            relay 1. Empty by default: with either half of a pair empty the
+            picker does not offer that relay and the firmware falls back to a
+            direct link rather than to an empty host.
+
     config MUSE_POWER_TEST
         bool "Isolated board BSP power-characterization firmware"
         # Test only: this replaces app_main, so it can never sit beside the
