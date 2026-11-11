@@ -60,6 +60,15 @@ static const char *TAG = "muse.wordcards_audio";
 #define WC_SPEECH_MIN_MS   200u     /* audible this long before trimming */
 #define WC_TAIL_SILENCE_MS 200u     /* silent this long: the word is done */
 
+/* A TLS client costs tens of KB of internal RAM (mbedTLS buffers) and the
+ * LVGL renderer draws from the same pool. On 2026-11-11 a prefetch that
+ * started while the chat session was reconnecting dropped the board into
+ * `Guru Meditation (StoreProhibited)` inside lv_draw_sw_mask: internal heap
+ * was down to 10 KB free / 4 KB largest, so the mask buffer came back NULL.
+ * Below this much largest-free internal RAM the prefetch is skipped and the
+ * cards stay silent -- a quiet card beats a crash. */
+#define WC_MIN_INTERNAL_FOR_TLS (16u * 1024u)
+
 /* PSRAM slots: one per word of the current set. Allocated on the
  * first prefetch and kept: a round reuses them, a restart refills
  * them. 32 KB each is the MUSE_WORDCARDS_MAX_MP3_BYTES cap. */
@@ -136,9 +145,12 @@ static size_t id3_len(const uint8_t *p, size_t n)
     return 10 + sz + ((p[5] & 0x10) ? 10 : 0);
 }
 
-static bool ensure_slots(void)
+static bool ensure_slots(const muse_wordcards_t *g)
 {
-    for (int i = 0; i < MUSE_WORDCARDS_WORDS; i++) {
+    /* One slot per REAL word: a 4-word set uses 4 x 32 KB, the merged
+     * animal set 8 x 32 KB, instead of always reserving eight. */
+    const int words = muse_wordcards_set_words(g->set);
+    for (int i = 0; i < words; i++) {
         if (!s_slot[i]) {
             s_slot[i] = (uint8_t *)heap_caps_malloc(
                 MUSE_WORDCARDS_MAX_MP3_BYTES, MALLOC_CAP_SPIRAM);
@@ -322,8 +334,25 @@ static void fetch_task(void *arg)
     muse_wordcards_t *g = req->g;
     uint32_t gen = req->gen;
     free(req);
-    if (!ensure_slots()) {
-        for (int i = 0; i < MUSE_WORDCARDS_WORDS; i++) {
+    const int words = muse_wordcards_set_words(g->set);
+    if (words == 0) {
+        fetch_task_exit();
+    }
+    if (!ensure_slots(g)) {
+        for (int i = 0; i < words; i++) {
+            muse_wordcards_cache_failed(g, i, gen);
+        }
+        fetch_task_exit();
+    }
+    /* Refuse to open a TLS client when the internal pool cannot spare the
+     * buffers: this is the same pool the renderer allocates its masks and
+     * layers from (see WC_MIN_INTERNAL_FOR_TLS). */
+    size_t largest_int = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL);
+    if (largest_int < WC_MIN_INTERNAL_FOR_TLS) {
+        size_t free_int = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+        ESP_LOGW(TAG, "prefetch skipped: internal %uK free, largest %uK",
+                 (unsigned)(free_int / 1024), (unsigned)(largest_int / 1024));
+        for (int i = 0; i < words; i++) {
             muse_wordcards_cache_failed(g, i, gen);
         }
         fetch_task_exit();
@@ -334,9 +363,12 @@ static void fetch_task(void *arg)
         vTaskDelay(pdMS_TO_TICKS(100));
     }
     muse_wordcards_cache_begin(g);
-    for (int i = 0; i < MUSE_WORDCARDS_WORDS; i++) {
+    for (int i = 0; i < words; i++) {
         if (s_fetch_abort || gen != g->set_gen) {
             break;
+        }
+        if (muse_wordcards_cache_is_ready(g, i)) {
+            continue; /* already in PSRAM for this generation */
         }
         int r = fetch_one(g, i, gen);
         if (r == 0) {
@@ -346,12 +378,16 @@ static void fetch_task(void *arg)
              * of the set would fail the same way -- mark them FAILED
              * now instead of paying three more timeouts. */
             muse_wordcards_cache_failed(g, i, gen);
-            for (int j = i + 1; j < MUSE_WORDCARDS_WORDS; j++) {
+            for (int j = i + 1; j < words; j++) {
                 muse_wordcards_cache_failed(g, j, gen);
             }
             break;
         }
     }
+    /* The set is in PSRAM now: close the connection instead of holding a
+     * TLS client (tens of KB of internal RAM) for the rest of the round.
+     * Playback never needs it again -- it plays from the slots. */
+    drop_client();
     fetch_task_exit();
 }
 

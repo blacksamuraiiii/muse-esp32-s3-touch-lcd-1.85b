@@ -37,8 +37,10 @@
 
 static void test_table(void)
 {
-    assert(MUSE_WORDCARDS_SETS == 10);
-    assert(MUSE_WORDCARDS_WORDS == 4);
+    assert(MUSE_WORDCARDS_SETS == 9);
+    assert(MUSE_WORDCARDS_WORDS == 8);
+    assert(MUSE_WORDCARDS_PER_PAGE == 4);
+    assert(MUSE_WORDCARDS_PAGES == 2);
     /* Fruit set: fully wired, art 0..3, in table order. */
     const muse_wordcards_set_t *fruit = &MUSE_WORDCARDS_SETS_TABLE[0];
     assert(strcmp(fruit->title, "水果 · Fruit") == 0);
@@ -58,11 +60,10 @@ static void test_table(void)
     assert(strcmp(fruit->words[3].zh, "桃子") == 0);
     assert(fruit->words[3].color == 0xffaa78);
     assert(fruit->words[3].art == 3);
-    /* Animal 1 set: fully wired, art 4..7, in table order. Renamed
-     * from "动物 · Animal" in phase 2 so the two animal sets read
-     * 动物1 / 动物2. */
+    /* Animal set: the merged 8-word group (user decision 2026-11-11),
+     * art 4..11, page 1 cat/dog/bird/fish, page 2 bear/duck/frog/fox. */
     const muse_wordcards_set_t *animal = &MUSE_WORDCARDS_SETS_TABLE[1];
-    assert(strcmp(animal->title, "动物1 · Animal 1") == 0);
+    assert(strcmp(animal->title, "动物 · Animal") == 0);
     assert(strcmp(animal->words[0].en, "cat") == 0);
     assert(strcmp(animal->words[0].zh, "猫") == 0);
     assert(animal->words[0].color == 0xe8a04c);
@@ -79,27 +80,24 @@ static void test_table(void)
     assert(strcmp(animal->words[3].zh, "鱼") == 0);
     assert(animal->words[3].color == 0x6aa8ff);
     assert(animal->words[3].art == 7);
-    /* Animal 2 set: fully wired, art 8..11, table index 8. */
-    const muse_wordcards_set_t *animal2 = &MUSE_WORDCARDS_SETS_TABLE[8];
-    assert(strcmp(animal2->title, "动物2 · Animal 2") == 0);
-    assert(strcmp(animal2->words[0].en, "bear") == 0);
-    assert(strcmp(animal2->words[0].zh, "熊") == 0);
-    assert(animal2->words[0].color == 0xa8763e);
-    assert(animal2->words[0].art == 8);
-    assert(strcmp(animal2->words[1].en, "duck") == 0);
-    assert(strcmp(animal2->words[1].zh, "鸭子") == 0);
-    assert(animal2->words[1].color == 0xf6cb4b);
-    assert(animal2->words[1].art == 9);
-    assert(strcmp(animal2->words[2].en, "frog") == 0);
-    assert(strcmp(animal2->words[2].zh, "青蛙") == 0);
-    assert(animal2->words[2].color == 0x6ff0bf);
-    assert(animal2->words[2].art == 10);
-    assert(strcmp(animal2->words[3].en, "fox") == 0);
-    assert(strcmp(animal2->words[3].zh, "狐狸") == 0);
-    assert(animal2->words[3].color == 0xff8c42);
-    assert(animal2->words[3].art == 11);
-    /* Things set: fully wired, art 12..15, table index 9. */
-    const muse_wordcards_set_t *things = &MUSE_WORDCARDS_SETS_TABLE[9];
+    assert(strcmp(animal->words[4].en, "bear") == 0);
+    assert(strcmp(animal->words[4].zh, "熊") == 0);
+    assert(animal->words[4].color == 0xa8763e);
+    assert(animal->words[4].art == 8);
+    assert(strcmp(animal->words[5].en, "duck") == 0);
+    assert(strcmp(animal->words[5].zh, "鸭子") == 0);
+    assert(animal->words[5].color == 0xf6cb4b);
+    assert(animal->words[5].art == 9);
+    assert(strcmp(animal->words[6].en, "frog") == 0);
+    assert(strcmp(animal->words[6].zh, "青蛙") == 0);
+    assert(animal->words[6].color == 0x6ff0bf);
+    assert(animal->words[6].art == 10);
+    assert(strcmp(animal->words[7].en, "fox") == 0);
+    assert(strcmp(animal->words[7].zh, "狐狸") == 0);
+    assert(animal->words[7].color == 0xff8c42);
+    assert(animal->words[7].art == 11);
+    /* Things set: fully wired, art 12..15, table index 8. */
+    const muse_wordcards_set_t *things = &MUSE_WORDCARDS_SETS_TABLE[8];
     assert(strcmp(things->title, "物品 · Things") == 0);
     assert(strcmp(things->words[0].en, "balloon") == 0);
     assert(strcmp(things->words[0].zh, "气球") == 0);
@@ -117,21 +115,32 @@ static void test_table(void)
     assert(strcmp(things->words[3].zh, "机器人") == 0);
     assert(things->words[3].color == 0x7dadcb);
     assert(things->words[3].art == 15);
-    /* Every other set is data-only: no art, so not offered. */
-    assert(muse_wordcards_offered_sets() == 4);
+    /* Every other set is data-only: no art, so not offered. Slots past
+     * the set's four words are empty (en == NULL). */
+    assert(muse_wordcards_offered_sets() == 3);
     assert(muse_wordcards_set_has_art(0));
     assert(muse_wordcards_set_has_art(1));
     assert(muse_wordcards_set_has_art(8));
-    assert(muse_wordcards_set_has_art(9));
+    assert(!muse_wordcards_set_has_art(2));
     for (int s = 2; s < 8; s++) {
         assert(!muse_wordcards_set_has_art(s));
+        assert(muse_wordcards_set_words(s) == 4);
         for (int i = 0; i < MUSE_WORDCARDS_WORDS; i++) {
-            assert(MUSE_WORDCARDS_SETS_TABLE[s].words[i].art ==
-                   MUSE_WORDCARDS_ART_NONE);
-            assert(MUSE_WORDCARDS_SETS_TABLE[s].words[i].en[0] != '\0');
-            assert(MUSE_WORDCARDS_SETS_TABLE[s].words[i].zh[0] != '\0');
+            const muse_wordcards_word_t *w =
+                &MUSE_WORDCARDS_SETS_TABLE[s].words[i];
+            if (i < 4) {
+                assert(w->art == MUSE_WORDCARDS_ART_NONE);
+                assert(w->en && w->en[0] != '\0');
+                assert(w->zh && w->zh[0] != '\0');
+            } else {
+                assert(w->en == NULL);
+            }
         }
     }
+    assert(muse_wordcards_set_words(0) == 4);
+    assert(muse_wordcards_set_words(1) == 8);
+    assert(muse_wordcards_set_words(8) == 4);
+    assert(muse_wordcards_set_words(MUSE_WORDCARDS_SETS) == 0);
     assert(!muse_wordcards_set_has_art(-1));
     assert(!muse_wordcards_set_has_art(MUSE_WORDCARDS_SETS));
 }
@@ -268,13 +277,22 @@ static void test_cache(void)
     }
     assert(!muse_wordcards_cache_all_ready(&g));
     muse_wordcards_cache_begin(&g);
+    /* The fruit set has four words: only those become FETCHING, the
+     * four empty slots stay EMPTY (nothing to download). */
     for (int i = 0; i < MUSE_WORDCARDS_WORDS; i++) {
-        assert(g.cache[i] == MUSE_WORDCARDS_CACHE_FETCHING);
+        assert(g.cache[i] == (i < MUSE_WORDCARDS_PER_PAGE
+                                  ? MUSE_WORDCARDS_CACHE_FETCHING
+                                  : MUSE_WORDCARDS_CACHE_EMPTY));
     }
     muse_wordcards_cache_ready(&g, 0, g.set_gen, 1234);
     assert(muse_wordcards_cache_is_ready(&g, 0));
     assert(g.cache_bytes[0] == 1234);
     assert(!muse_wordcards_cache_all_ready(&g));
+    /* A second begin keeps a READY word READY (re-entering the page must
+     * not re-download it) and re-arms the others. */
+    muse_wordcards_cache_begin(&g);
+    assert(muse_wordcards_cache_is_ready(&g, 0));
+    assert(g.cache[1] == MUSE_WORDCARDS_CACHE_FETCHING);
     muse_wordcards_cache_failed(&g, 1, g.set_gen);
     assert(g.cache[1] == MUSE_WORDCARDS_CACHE_FAILED);
     assert(g.cache_bytes[1] == 0);

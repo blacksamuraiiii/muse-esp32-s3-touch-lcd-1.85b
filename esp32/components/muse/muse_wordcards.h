@@ -64,8 +64,14 @@
 #define MUSE_WORDCARDS_FIELD_SIZE 240
 #define MUSE_WORDCARDS_CARD 116
 #define MUSE_WORDCARDS_GAP 8
-#define MUSE_WORDCARDS_WORDS 4
-#define MUSE_WORDCARDS_SETS 10
+/* A set holds up to 8 words (user decision 2026-11-11: animal 1 + animal 2
+ * merged into one 8-word group), shown 4 per page on the card page; the
+ * player swipes left/right between pages, the same horizontal strip idiom
+ * the feed page uses. Sets with 4 words simply have one page. */
+#define MUSE_WORDCARDS_WORDS 8
+#define MUSE_WORDCARDS_PER_PAGE 4
+#define MUSE_WORDCARDS_PAGES 2
+#define MUSE_WORDCARDS_SETS 9
 /* One pre-generated word MP3 is a few KB (a single word at 16 kHz
  * 32 kbps mono); 32 KB per word is far above any real one and keeps
  * a corrupt or wrong file from eating PSRAM. Four words fit in tens
@@ -90,7 +96,7 @@ typedef enum {
 } muse_wordcards_cache_t;
 
 typedef struct {
-    const char *en;   /* English word, lower-case [a-z]+ */
+    const char *en;   /* English word, lower-case [a-z]+; NULL = unused slot */
     const char *zh;   /* Chinese meaning, shown small under the word */
     uint32_t color;   /* recolour for the single-colour art master */
     int art;          /* index into the art table, or ART_NONE */
@@ -113,9 +119,9 @@ typedef struct {
     int pending_audio;                    /* word waiting to play, or -1 */
 } muse_wordcards_t;
 
-/* The sets table (10 sets x 4 words). Sets 0 (fruit), 1 (animal 1),
- * 8 (animal 2) and 9 (things) have art and are offered; the rest are
- * data for later phases. */
+/* The sets table (9 sets x up to 8 words). Set 0 (fruit), 1 (animal, 8
+ * words) and 8 (things) have art and are offered; the rest are data for
+ * later phases. Slots past a set's real word count have en == NULL. */
 extern const muse_wordcards_set_t MUSE_WORDCARDS_SETS_TABLE[MUSE_WORDCARDS_SETS];
 
 /* How many sets are actually offered (fruit + animal 1 + animal 2 +
@@ -124,6 +130,10 @@ int muse_wordcards_offered_sets(void);
 
 /* True when every word of `set` has an art master. */
 bool muse_wordcards_set_has_art(int set);
+
+/* How many words `set` really has (0 when it has no art): 4 for the
+ * single-page sets, 8 for the merged animal set. */
+int muse_wordcards_set_words(int set);
 
 void muse_wordcards_init(muse_wordcards_t *g);
 
@@ -179,7 +189,9 @@ void muse_wordcards_clear_pending_audio(muse_wordcards_t *g);
  * muse_wordcards_audio.c) --- */
 
 /* Mark every word of the current set FETCHING at the start of a
- * prefetch. Called once per set entry, by the audio module. */
+ * prefetch, EXCEPT words already READY for this generation: those keep
+ * their bytes, so re-entering the page costs no network. Called once per
+ * set entry, by the audio module. */
 void muse_wordcards_cache_begin(muse_wordcards_t *g);
 
 /* The fetch of word `i` finished: READY with `bytes` of validated
