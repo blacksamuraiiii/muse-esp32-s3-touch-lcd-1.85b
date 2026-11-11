@@ -8,9 +8,10 @@
  * ESP-IDF -- the UI owns the 50 ms timer, the flip animation and the
  * audio tasks, so the harness drives the clock by calling
  * muse_wordcards_tick() directly):
- *  1. Word table: 8 sets x 4 words, fruit and animal sets fully
- *     wired (fruit art 0..3, animal art 4..7, colours), every other
- *     set data-only (ART_NONE) and not offered; offered_sets() == 2.
+ *  1. Word table: 10 sets x 4 words, fruit, animal 1, animal 2 and
+ *     things fully wired (fruit art 0..3, animal 1 art 4..7,
+ *     animal 2 art 8..11, things art 12..15, colours), every other
+ *     set data-only (ART_NONE) and not offered; offered_sets() == 4.
  *     select_set() switches sets for a fresh round and refuses a
  *     set without art or out of range.
  *  2. Flip state machine: flip to back counts a card once (distinct),
@@ -37,7 +38,7 @@
 
 static void test_table(void)
 {
-    assert(MUSE_WORDCARDS_SETS == 8);
+    assert(MUSE_WORDCARDS_SETS == 10);
     assert(MUSE_WORDCARDS_WORDS == 4);
     /* Fruit set: fully wired, art 0..3, in table order. */
     const muse_wordcards_set_t *fruit = &MUSE_WORDCARDS_SETS_TABLE[0];
@@ -58,9 +59,11 @@ static void test_table(void)
     assert(strcmp(fruit->words[3].zh, "桃子") == 0);
     assert(fruit->words[3].color == 0xffaa78);
     assert(fruit->words[3].art == 3);
-    /* Animal set: fully wired, art 4..7, in table order. */
+    /* Animal 1 set: fully wired, art 4..7, in table order. Renamed
+     * from "动物 · Animal" in phase 2 so the two animal sets read
+     * 动物1 / 动物2. */
     const muse_wordcards_set_t *animal = &MUSE_WORDCARDS_SETS_TABLE[1];
-    assert(strcmp(animal->title, "动物 · Animal") == 0);
+    assert(strcmp(animal->title, "动物1 · Animal 1") == 0);
     assert(strcmp(animal->words[0].en, "cat") == 0);
     assert(strcmp(animal->words[0].zh, "猫") == 0);
     assert(animal->words[0].color == 0xe8a04c);
@@ -77,11 +80,51 @@ static void test_table(void)
     assert(strcmp(animal->words[3].zh, "鱼") == 0);
     assert(animal->words[3].color == 0x6aa8ff);
     assert(animal->words[3].art == 7);
+    /* Animal 2 set: fully wired, art 8..11, table index 8. */
+    const muse_wordcards_set_t *animal2 = &MUSE_WORDCARDS_SETS_TABLE[8];
+    assert(strcmp(animal2->title, "动物2 · Animal 2") == 0);
+    assert(strcmp(animal2->words[0].en, "bear") == 0);
+    assert(strcmp(animal2->words[0].zh, "熊") == 0);
+    assert(animal2->words[0].color == 0xa8763e);
+    assert(animal2->words[0].art == 8);
+    assert(strcmp(animal2->words[1].en, "duck") == 0);
+    assert(strcmp(animal2->words[1].zh, "鸭子") == 0);
+    assert(animal2->words[1].color == 0xf6cb4b);
+    assert(animal2->words[1].art == 9);
+    assert(strcmp(animal2->words[2].en, "frog") == 0);
+    assert(strcmp(animal2->words[2].zh, "青蛙") == 0);
+    assert(animal2->words[2].color == 0x6ff0bf);
+    assert(animal2->words[2].art == 10);
+    assert(strcmp(animal2->words[3].en, "fox") == 0);
+    assert(strcmp(animal2->words[3].zh, "狐狸") == 0);
+    assert(animal2->words[3].color == 0xff8c42);
+    assert(animal2->words[3].art == 11);
+    /* Things set: fully wired, art 12..15, table index 9. */
+    const muse_wordcards_set_t *things = &MUSE_WORDCARDS_SETS_TABLE[9];
+    assert(strcmp(things->title, "物品 · Things") == 0);
+    assert(strcmp(things->words[0].en, "balloon") == 0);
+    assert(strcmp(things->words[0].zh, "气球") == 0);
+    assert(things->words[0].color == 0xff5c5c);
+    assert(things->words[0].art == 12);
+    assert(strcmp(things->words[1].en, "box") == 0);
+    assert(strcmp(things->words[1].zh, "盒子") == 0);
+    assert(things->words[1].color == 0xb07a4a);
+    assert(things->words[1].art == 13);
+    assert(strcmp(things->words[2].en, "bag") == 0);
+    assert(strcmp(things->words[2].zh, "包") == 0);
+    assert(things->words[2].color == 0xa77dff);
+    assert(things->words[2].art == 14);
+    assert(strcmp(things->words[3].en, "robot") == 0);
+    assert(strcmp(things->words[3].zh, "机器人") == 0);
+    assert(things->words[3].color == 0x7dadcb);
+    assert(things->words[3].art == 15);
     /* Every other set is data-only: no art, so not offered. */
-    assert(muse_wordcards_offered_sets() == 2);
+    assert(muse_wordcards_offered_sets() == 4);
     assert(muse_wordcards_set_has_art(0));
     assert(muse_wordcards_set_has_art(1));
-    for (int s = 2; s < MUSE_WORDCARDS_SETS; s++) {
+    assert(muse_wordcards_set_has_art(8));
+    assert(muse_wordcards_set_has_art(9));
+    for (int s = 2; s < 8; s++) {
         assert(!muse_wordcards_set_has_art(s));
         for (int i = 0; i < MUSE_WORDCARDS_WORDS; i++) {
             assert(MUSE_WORDCARDS_SETS_TABLE[s].words[i].art ==

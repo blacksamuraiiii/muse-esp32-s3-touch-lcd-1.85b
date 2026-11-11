@@ -9,6 +9,7 @@
 |---|---|---|
 | `20261110-TTS低时延与1.5.2c收口.md` | 本版收口：板子新建 HTTPS 连接 3.5–4.3 s 的根因、单词取音与回复语音改 keep-alive 复用 + 预热、播放栈 24 KB、nginx upstream keep-alive、调研结论（xiaozhi 单连接方案 / session ticket 的 IDF bug）与未做项 | 再动语音链路、或怀疑「服务器慢」之前先看；实测数字全在这里 |
 | `wordcards-tts-server.md` | 单词卡片发音：服务端 1.6 的 `word=1` 磁盘缓存、32 词预生成、取音 keep-alive 提速、nginx upstream keep-alive（内网地址用占位符） | 部署单词发音、改词表或改单词语音时看 |
+| `wordcards-phase2.md` | 单词练习第二期（分支 `feat/wordcards-phase2-20261111`）：动物2 + 物品两组、动物1 改名、分类页改可滚 + 提示行删除、预生成 32→39 词（bag 共用）、验证结果与合入后用户侧步骤 | 合入第二期、改词表或复核第二期改动时看 |
 
 ## 1.5.1
 

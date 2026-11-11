@@ -30,14 +30,17 @@
  * failed simply stays silent -- the card still flips, nothing
  * blocks, and no word is retried more than once per set entry.
  *
- * Word sets: 8 sets x 4 words were planned (fruit / animal / colour
- * / body / number / school / food / family, 32 words, per 人教新起点
- * 一年级上册 + 牛津初级). Phase 1 (user decision 2026-11-10) ships
- * the fruit and animal sets; the other six are data in the table
- * with their art marked MUSE_WORDCARDS_ART_NONE and a comment
- * naming the closest game-icons file, so adding a set is a data
- * change plus its four A8 masters -- no logic change. Do not ship
- * placeholder art that looks broken: a set without art is not offered.
+ * Word sets: 10 sets x 4 words (fruit / animal 1 / colour / body /
+ * number / school / food / family / animal 2 / things, 40 words, per
+ * 人教新起点一年级上册 + 牛津初级). Phase 1 (user decision
+ * 2026-11-10) ships the fruit and animal 1 sets; phase 2 (user
+ * decision 2026-11-11) adds animal 2 and things; the other six are
+ * data in the table with their art marked MUSE_WORDCARDS_ART_NONE
+ * and a comment naming the closest game-icons file, so adding a set
+ * is a data change plus its four A8 masters -- no logic change. Do
+ * not ship placeholder art that looks broken: a set without art is
+ * not offered. Colours were explicitly rejected by the user
+ * 2026-11-11 ("too simple") -- do not activate that set.
  *
  * Timing is in milliseconds and advances only through
  * muse_wordcards_tick(), so the host test drives it deterministically
@@ -63,7 +66,7 @@
 #define MUSE_WORDCARDS_CARD 116
 #define MUSE_WORDCARDS_GAP 8
 #define MUSE_WORDCARDS_WORDS 4
-#define MUSE_WORDCARDS_SETS 8
+#define MUSE_WORDCARDS_SETS 10
 /* One pre-generated word MP3 is a few KB (a single word at 16 kHz
  * 32 kbps mono); 32 KB per word is far above any real one and keeps
  * a corrupt or wrong file from eating PSRAM. Four words fit in tens
@@ -114,11 +117,13 @@ typedef struct {
     int pending_audio;                    /* word waiting to play, or -1 */
 } muse_wordcards_t;
 
-/* The sets table (8 sets x 4 words). Sets 0 (fruit) and 1 (animal)
- * have art and are offered; the rest are data for later phases. */
+/* The sets table (10 sets x 4 words). Sets 0 (fruit), 1 (animal 1),
+ * 8 (animal 2) and 9 (things) have art and are offered; the rest are
+ * data for later phases. */
 extern const muse_wordcards_set_t MUSE_WORDCARDS_SETS_TABLE[MUSE_WORDCARDS_SETS];
 
-/* How many sets are actually offered (fruit + animal in phase 1). */
+/* How many sets are actually offered (fruit + animal 1 + animal 2 +
+ * things). */
 int muse_wordcards_offered_sets(void);
 
 /* True when every word of `set` has an art master. */
