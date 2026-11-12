@@ -56,6 +56,14 @@
 // would not fit in `out`.
 bool muse_tts_url_for_text(const char *text, char *out, size_t cap);
 
+// A new turn started: audio fetched for the old turn is stale, whatever state
+// the previous turn ended in. Bumping the generation makes the worker drop
+// those bytes instead of feeding them into the ring of the reply that
+// replaces it (C4; the word prefetch already does this when a set restarts).
+// The next muse_tts_speak() bumps it again, so this never affects the new
+// turn's own audio.
+void muse_tts_new_turn(void);
+
 // Open the reply connection now, while the model is still writing: the TLS
 // handshake (3-4 s on this board) then costs nothing the listener waits for.
 // Fire and forget -- it returns at once, does nothing when a reply is already
@@ -66,14 +74,24 @@ void muse_tts_prewarm(void);
 
 // Start speaking `text`. Returns false when a fetch is already running or the
 // task could not be started. The text is copied, so the caller may free it.
-bool muse_tts_speak(const char *text);
+// `last` is the message's final unit (C2): its last request carries &last=1,
+// so the bridge can mark the last chunk and the turn can end on drained audio.
+bool muse_tts_speak(const char *text, bool last);
 
 // Queue `text` behind the request in flight, so its audio starts arriving while
 // the current one is still being read out. Meant for the streaming speaker's
 // next sentence. The buffered audio is kept, unlike muse_tts_speak(), which
 // starts a fresh reply. The queue is one deep: false while a request is in
-// flight (muse_tts_active()) or when nothing has fetched yet.
-bool muse_tts_enqueue(const char *text);
+// flight (muse_tts_active()) or when nothing has fetched yet. `last` is the
+// message's final unit, as for muse_tts_speak().
+bool muse_tts_enqueue(const char *text, bool last);
+
+// True when the most recent completed fetch carried the bridge's last-chunk
+// marker (X-TTS-Last: 1): the audio of the reply's final unit really arrived.
+// False after a new message starts, after a cancel, and for every fetch whose
+// response did not carry the marker (including an old bridge that never sends
+// one), so a missing marker is a slow finish, never a stuck one.
+bool muse_tts_last_chunk(void);
 
 // Copy up to `cap` bytes of MP3 out of the fetch, without blocking. Returns how
 // many were copied, 0 when nothing is ready.

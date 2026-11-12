@@ -47,7 +47,7 @@ def env_file_text():
               "TTS_RATE", "TTS_PITCH",
               # latency knobs and the BADPACKET regression hook
               "TTS_STREAM_HEAD", "TTS_SEND_BYTES", "TTS_AZURE_POOL",
-              "TTS_TEST_HOOKS", "TTS_FORCE_BAD")
+              "TTS_PACING", "TTS_TEST_HOOKS", "TTS_FORCE_BAD")
 
     lines = []
     with open(os.path.join(HERE, ".env")) as f:

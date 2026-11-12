@@ -257,6 +257,7 @@ struct turn_t {
     uint8_t *mp3;            /* MP3_BUF */
     size_t mp3_len;
     bool mp3_ended;
+    int64_t drain_us;        /* C2: when the playback queue first ran dry */
     mp3dec_t dec;
     resampler_t down;
     int kbps;
@@ -1041,6 +1042,10 @@ static void drop_connection(const char *why);
 /* Ends any turn in progress and starts a fresh one. False if Hatch can't be reached. */
 static bool turn_start(uint32_t gen, bool text)
 {
+    /* C4: a new turn invalidates audio fetched for the old one, whatever state
+     * the previous turn ended in -- the fetch worker drops those bytes instead
+     * of feeding them into this turn's reply. */
+    muse_tts_new_turn();
     if (s_turn.phase != P_IDLE) {
         if (s_turn.text) {
             turn_fail("INTERRUPTED");
@@ -1638,8 +1643,10 @@ static void on_chat_ack(stream_t *s)
 
 /* Hands one sentence to the speech service. `first` starts the message: it owns
  * pcm_start, the MP3 buffer and the decoder, so that the sentences after it
- * simply append to the stream already being played. */
-static void hand_sentence(int i, const char *text, size_t unit, size_t buffered)
+ * simply append to the stream already being played. `last` is the message's
+ * final unit (C2): the fetch tags its last request &last=1, so the bridge can
+ * mark the last chunk and the turn can end on the drained audio. */
+static void hand_sentence(int i, const char *text, size_t unit, size_t buffered, bool last)
 {
     msg_t &m = s_turn.msgs[i];
     bool first = (s_turn.tts_msg < 0);
@@ -1648,7 +1655,7 @@ static void hand_sentence(int i, const char *text, size_t unit, size_t buffered)
     unit_text[unit] = '\0';
     ESP_LOGI(TAG, "speaking message %s sentence %u chars (%u/%u buffered)", m.id, (unsigned)unit,
              (unsigned)(m.spoken + unit), (unsigned)buffered);
-    bool ok = first ? muse_tts_speak(unit_text) : muse_tts_enqueue(unit_text);
+    bool ok = first ? muse_tts_speak(unit_text, last) : muse_tts_enqueue(unit_text, last);
     if (!ok) {
         if (!first) {
             return;   /* queue full or no fetch: try again on the next pass */
@@ -1671,6 +1678,7 @@ static void hand_sentence(int i, const char *text, size_t unit, size_t buffered)
         s_turn.silent = false;
         s_turn.mp3_len = 0;
         s_turn.mp3_ended = false;
+        s_turn.drain_us = 0;   /* C2: the drain margin starts when it drains */
         s_turn.kbps = 0;
         s_turn.down_rate = 0;
         mp3dec_init(&s_turn.dec);
@@ -1697,8 +1705,11 @@ static void start_tts_streaming(void)
         const char *text = s_turn.texts + i * TEXT_MAX;
         size_t buffered = strlen(text);
         size_t unit = 0;
+        /* C2: a finished message's tail walks the normal sentence path instead
+         * of flushing whole: the next sentence, or the final fragment when no
+         * boundary is left. An unfinished message still waits for a boundary. */
         if (m.done) {
-            unit = buffered - m.spoken;   /* the tail, boundary or not */
+            unit = muse_sentence_next_unit_final(text + m.spoken, buffered - m.spoken);
         } else {
             unit = muse_sentence_next_unit(text + m.spoken, buffered - m.spoken);
         }
@@ -1709,7 +1720,8 @@ static void start_tts_streaming(void)
             }
             return;   /* nothing speakable yet; later messages wait too */
         }
-        hand_sentence(i, text + m.spoken, unit, buffered);
+        bool last = m.done && (m.spoken + unit >= buffered);
+        hand_sentence(i, text + m.spoken, unit, buffered, last);
         return;
     }
 }
@@ -1755,7 +1767,8 @@ static void start_tts(void)
             mp3dec_init(&s_turn.dec);
             ESP_LOGI(TAG, "speaking message %s (%u chars)", m.id,
                      (unsigned)m.len);
-            if (!muse_tts_speak(s_turn.texts + i * TEXT_MAX)) {
+            /* The whole message at once: it is also its own last unit. */
+            if (!muse_tts_speak(s_turn.texts + i * TEXT_MAX, true)) {
                 /* Nothing is coming back: read the captions at reading pace so
                  * the turn still ends on its own. */
                 s_turn.silent = true;
@@ -1845,6 +1858,13 @@ static void pace_silently(void)
     }
 }
 
+/* C2: after the playback queue runs dry, how long to wait before ending the
+ * message -- a margin for the decoder's trailing frame and the output buffer.
+ * Short once the last chunk's marker arrived; the grace is for an old bridge
+ * (or a lost marker), so the message still finishes instead of hanging. */
+#define TTS_DRAIN_MARGIN_US (120 * 1000LL)
+#define TTS_DRAIN_GRACE_US (2 * 1000 * 1000LL)
+
 /* Decodes buffered MP3 while the reply buffer has room. */
 static void decode(void)
 {
@@ -1914,6 +1934,25 @@ static void decode(void)
              * pace_silently() finishes it. */
             s_turn.silent = true;
             m.pcm_frames = (uint32_t)(m.len * MIC_RATE / TEXT_CHARS_PER_S);
+            return;
+        }
+        /* C2: wait for the playback queue to drain plus a margin for the
+         * decoder's trailing frame and the output buffer before ending the
+         * message, so a long tail is never cut by the turn ending under it.
+         * The margin is short once the last chunk's marker arrived; without
+         * it (an old bridge, or a lost marker) the same wait gets a grace
+         * period and the message still finishes -- a missing marker must
+         * never hang a turn. */
+        if (!xStreamBufferIsEmpty(s_out)) {
+            s_turn.drain_us = 0;   /* still draining: the margin starts later */
+            return;
+        }
+        if (!s_turn.drain_us) {
+            s_turn.drain_us = now_us();
+            return;
+        }
+        int64_t margin = muse_tts_last_chunk() ? TTS_DRAIN_MARGIN_US : TTS_DRAIN_GRACE_US;
+        if (now_us() - s_turn.drain_us < margin) {
             return;
         }
         m.pcm_frames = s_turn.pcm_out - m.pcm_start;
