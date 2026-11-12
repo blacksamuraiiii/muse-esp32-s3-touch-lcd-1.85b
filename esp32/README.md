@@ -82,23 +82,28 @@ commands outside the sandbox.
 
 ## Or do it yourself
 
-### 1. Install ESP-IDF v6.0.1
+### 1. Install ESP-IDF v6.0.3
 
-This firmware is built with Espressif's ESP-IDF, **version 6.0.1**. Other
+This firmware is built with Espressif's ESP-IDF, **version 6.0.3**. Other
 versions aren't supported. If you already have it installed, skip ahead.
 
 On macOS, install the prerequisites first with `brew install cmake ninja
 dfu-util python3`. On Linux, follow
-[Espressif's prerequisites](https://docs.espressif.com/projects/esp-idf/en/v6.0.1/esp32c5/get-started/linux-macos-setup.html).
+[Espressif's prerequisites](https://docs.espressif.com/projects/esp-idf/en/v6.0.3/esp32c5/get-started/linux-macos-setup.html).
 Then:
 
 ```sh
-git clone -b v6.0.1 --recursive https://github.com/espressif/esp-idf.git ~/esp/esp-idf-v6
+git clone -b v6.0.3 --recursive https://github.com/espressif/esp-idf.git ~/esp/esp-idf-v6
 ~/esp/esp-idf-v6/install.sh esp32c5,esp32s3,esp32c6,esp32
 . ~/esp/esp-idf-v6/export.sh
 ```
 
 Run the last line in every new terminal you build from.
+
+To move an existing clone from an earlier v6.0 release, run
+`git fetch --tags && git checkout v6.0.3 && git submodule update --init --recursive`
+in it, then its `install.sh` again. Delete each build directory's generated
+`sdkconfig` afterwards (see Configuration gotchas in `AGENTS.md`).
 
 ### 2. Build
 
@@ -279,8 +284,18 @@ keyboard input, and can render scripted screenshots without a display server.
 
 Replies from Muse are text: push-to-talk sends your voice note, Muse
 transcribes it and answers in writing, and boards with a screen show the
-answer as captions (Voice PE and reSpeaker Lite replies show up in the Muse app). Two
-things you can change:
+answer as captions (Voice PE and reSpeaker Lite replies show up in the Muse app).
+On boards with the full UI other than the Watcher, voice notes require a
+600 ms button hold and at least 500 ms of audio captured during that hold
+before uploading starts. Pre-roll and the release tail are preserved in
+accepted notes but do not count toward either minimum. These checks measure
+duration, not whether speech is present; a shorter press shows "Hold longer
+to talk". A press that wakes the screen only wakes it unless it is held long
+enough for a note. The Watcher keeps its existing wheel click/hold gesture.
+Buffering the hold costs about 5 KB more internal RAM on boards without
+PSRAM, and about 19 KB more PSRAM on the others.
+
+Two things you can change:
 
 - **Shorter answers.** Ask for them in the message itself, such as "Answer in
   one sentence."

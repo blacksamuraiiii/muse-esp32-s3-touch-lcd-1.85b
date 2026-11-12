@@ -203,6 +203,51 @@ class BatteryTest(HarnessCase):
         self.assertEqual((kept["uptime"], stopped["uptime"]), (500, 110))
         self.assertEqual({**kept, "running": False, "uptime": 0}, {**stopped, "uptime": 0})
 
+    def test_unknown_reading_holds_the_run(self) -> None:
+        # A bus glitch (pct -1, no USB) must not end a run or move the last
+        # good percentage; the next good sample resumes it.
+        held, resumed = self.measure("p 0 -1 0", "j", "p 0 98 4050", "j")
+        self.assertEqual(held["running"], True)
+        self.assertEqual(held["battery_pct"], [100, 99])
+        self.assertEqual(held["battery_mv"], [4190, 4100])
+        self.assertEqual(resumed["running"], True)
+        self.assertEqual(resumed["battery_pct"], [100, 98])
+
+    def test_unknown_reading_with_usb_stops_it(self) -> None:
+        # USB is read off the hardware, not the gauge: a confirmed arrival
+        # stops the run even when the gauge itself reads unknown.
+        stopped, = self.measure("p 1 -1 0", "j")
+        self.assertEqual(stopped["running"], False)
+        self.assertEqual(stopped["battery_pct"], [100, 99])
+
+    def test_charging_stops_the_run(self) -> None:
+        # A charger pushing current is external power even when native USB
+        # host detection misses the adapter (usb 0 here).
+        stopped, = self.measure("p 0 80 4100 1 250", "j")
+        self.assertEqual(stopped["running"], False)
+
+    def test_no_run_starts_while_charging(self) -> None:
+        read, j = self.run_harness("t 5000000", START, "p 0 80 4100 1 250", "r", "j")
+        self.assertEqual(read["started"], 0)
+        self.assertEqual(j["started"], False)
+
+    def test_relaxation_does_not_stop_it(self) -> None:
+        # DSG clear with no current is relaxation, not charging: the run goes on.
+        kept, = self.measure("p 0 99 4100 0 0", "j")
+        self.assertEqual(kept["running"], True)
+
+    def test_learn_ignores_relaxation_and_unknown(self) -> None:
+        # At rest with 100% but no charging current the cycle must not count
+        # a "full" - only a charge does. Unknown readings change nothing.
+        lines = self.run_harness_raw(
+            "p 0 100 4190", "l",
+            "p 0 100 4190 1 120", "l",
+            "p 0 10 3800", "l",
+            "p 0 100 4190 1 120", "l",
+            "p 0 -1 0", "l")
+        self.assertEqual(lines, ["Charge to 100%", "Discharge to 10%", "Charge to 100% again",
+                                 "Charge to 100% (1 done)", "Charge to 100% (1 done)"])
+
     def test_reset(self) -> None:
         running, stopped = self.measure("t 120000000", "x", "t 130000000", "j", "p 1 99 4150", "x", "j")
         self.assertEqual(running["secs"], 10)
