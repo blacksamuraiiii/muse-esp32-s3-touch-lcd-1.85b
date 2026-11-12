@@ -204,7 +204,7 @@ static void refresh_display(void)
             LV_PART_MAIN);
         lv_obj_remove_flag(s_verdict, LV_OBJ_FLAG_HIDDEN);
     } else if (s_game.phase == MUSE_QUIZ_PLAYING) {
-        char buf[16];
+        char buf[32];
         snprintf(buf, sizeof(buf), "第 %d/5 题", s_game.q + 1);
         set_label(s_verdict, buf);
         lv_obj_set_style_text_color(s_verdict, lv_color_hex(MUSE_THEME_DIM),

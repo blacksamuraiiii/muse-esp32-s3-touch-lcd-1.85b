@@ -598,6 +598,7 @@ static void play_task(void *arg)
     play_req_t *req = (play_req_t *)arg;
     size_t len = req->len;
     const char *en = req->en;
+    const uint8_t *slot = req->slot;
     free(req);
     ESP_LOGI(TAG, "play %s: %u bytes (stack %u left at start)",
              en, (unsigned)len,
@@ -610,7 +611,7 @@ static void play_task(void *arg)
      * pointer, into this task -- the bytes stay put until the next
      * prefetch, which waits for this task to finish. */
     mp3dec_init(s_dec);
-    uint8_t *p = (uint8_t *)req->slot;
+    uint8_t *p = (uint8_t *)slot;
     size_t n = len;
     size_t drop = id3_len(p, n);
     if (drop && drop < n) {
