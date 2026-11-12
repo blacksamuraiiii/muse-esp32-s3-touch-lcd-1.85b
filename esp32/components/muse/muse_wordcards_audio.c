@@ -70,13 +70,16 @@ static const char *TAG = "muse.wordcards_audio";
  * cards stay silent -- a quiet card beats a crash.
  *
  * 16 KB was a guess (the crash case measured 4 KB largest). 2026-11-12, with
- * IDF 6.0.3, this board sits at 7.68 KB largest after boot (1.5.2d on 6.0.1 had
- * 12.3 KB), so 16 KB refused every prefetch and every word and quiz card went
- * silent -- the chat replies were unaffected, which made it look like a server
- * problem. Measured with the guard off: a TLS client opens and a whole set
- * plays fine at 7.68 KB largest, no crash over a full test session. 6 KB keeps
- * the floor the crash case needed (4 KB largest) and lets the cards work. */
-#define WC_MIN_INTERNAL_FOR_TLS (6u * 1024u)
+ * IDF 6.0.3, this board sits at 7.68 KB largest after boot and ~5 KB once Link
+ * is connected (1.5.2d on 6.0.1 ran at 12.3 KB), so 16 KB refused every
+ * prefetch and every word and quiz card went silent -- chat replies were
+ * unaffected, which made it look like a server problem. Measured with the guard
+ * off: a TLS client opens and whole sets play fine at that ~5 KB, no crash over
+ * a full session (mbedTLS buffers come from PSRAM, so the client's internal
+ * share is small). The floor now sits between the two measured points: 4.5 KB
+ * refuses only below the 4 KB largest that crashed the renderer on 2026-11-11,
+ * and lets the prefetch through at the ~5 KB this board actually runs at. */
+#define WC_MIN_INTERNAL_FOR_TLS 4608u
 
 /* PSRAM slots: one per word of the current set. Allocated on the
  * first prefetch and kept: a round reuses them, a restart refills
@@ -378,8 +381,9 @@ static void fetch_task(void *arg)
     size_t largest_int = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL);
     if (largest_int < WC_MIN_INTERNAL_FOR_TLS) {
         size_t free_int = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
-        ESP_LOGW(TAG, "prefetch skipped: internal %uK free, largest %uK",
-                 (unsigned)(free_int / 1024), (unsigned)(largest_int / 1024));
+        ESP_LOGW(TAG, "prefetch skipped: internal %u B free, largest %u B (floor %u)",
+                 (unsigned)free_int, (unsigned)largest_int,
+                 (unsigned)WC_MIN_INTERNAL_FOR_TLS);
         for (int i = 0; i < words; i++) {
             list.mark_failed(list.ctx, i, gen);
         }
