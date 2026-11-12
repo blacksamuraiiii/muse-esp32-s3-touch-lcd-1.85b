@@ -373,11 +373,10 @@ static bool fetch_once(const char *url, int timeout_ms)
      * the request carried &last=1; an old bridge sends no such header. Only a
      * fetch of the current generation counts: a stale fetch that finished
      * after a new turn started must not mark the new turn's audio. */
-    char last_hdr[8];
-    size_t last_len = sizeof(last_hdr);
+    char *last_val = NULL;
     if (s_fetch_gen == s_gen && !s_abort
-        && esp_http_client_get_header(c, "X-TTS-Last", last_hdr, &last_len) == ESP_OK
-        && last_hdr[0] == '1') {
+        && esp_http_client_get_header(c, "X-TTS-Last", &last_val) == ESP_OK
+        && last_val && last_val[0] == '1') {
         s_last_chunk = true;
     }
     gate_finish();
