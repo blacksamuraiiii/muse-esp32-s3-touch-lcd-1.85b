@@ -139,6 +139,10 @@
 #define IC_GRID_CARD_W 140
 #define IC_GRID_CARD_H 95
 #define IC_GRID_ICON 56
+/* The A8 masters are MUSE_MAIN_GRID_ART_PX square; LV_IMAGE_ALIGN_CENTER draws
+ * a 1:1 source at its own size, so a 56 px box alone only crops the master.
+ * Scale it, the word-cards idiom. */
+#define IC_GRID_ICON_SCALE (256 * IC_GRID_ICON / MUSE_MAIN_GRID_ART_PX)
 #define IC_GRID_X0 35
 #define IC_GRID_X1 185
 #define IC_GRID_Y0 80
@@ -151,6 +155,8 @@
 #define IC_RADIUS 18
 #define IC_FEED_CARD 100
 #define IC_FEED_ICON 80
+/* Same as IC_GRID_ICON_SCALE: the learn cards use the 128 px A8 masters. */
+#define IC_FEED_ICON_SCALE (256 * IC_FEED_ICON / MUSE_LEARN_ART_PX)
 #define IC_GAME_CHOICE 100
 #define IC_HAND_RESULT 130
 #define IC_FORTUNE_CARD_W 300
@@ -542,6 +548,7 @@ static void grid_card(lv_obj_t *parent, int x, int y,
     lv_obj_set_pos(b, x, y);
     lv_obj_t *img = lv_image_create(b);
     lv_image_set_src(img, art);
+    lv_image_set_scale(img, IC_GRID_ICON_SCALE);
     lv_obj_set_size(img, IC_GRID_ICON, IC_GRID_ICON);
     lv_obj_align(img, LV_ALIGN_TOP_MID, 0, 8);
     lv_obj_set_style_image_recolor(img, lv_color_hex(MUSE_THEME_TEXT), 0);
@@ -1415,6 +1422,7 @@ static void learn_card(lv_obj_t *parent, int x, int slot, const char *name,
     lv_obj_t *card = muse_card(item, IC_FEED_CARD, IC_FEED_CARD, IC_RADIUS);
     lv_obj_t *img = lv_image_create(card);
     lv_image_set_src(img, MUSE_LEARN_ART[slot]);
+    lv_image_set_scale(img, IC_FEED_ICON_SCALE);
     lv_obj_set_size(img, IC_FEED_ICON, IC_FEED_ICON);
     lv_obj_center(img);
     lv_obj_set_style_image_recolor(img,
