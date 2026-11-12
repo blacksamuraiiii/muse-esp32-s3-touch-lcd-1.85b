@@ -252,6 +252,10 @@ void muse_audio_chirp(int v)
 {
     (void)v;
 }
+void muse_audio_sfx(muse_sfx_t sfx)
+{
+    (void)sfx;
+}
 void muse_audio_loopback_test(int v)
 {
     (void)v;

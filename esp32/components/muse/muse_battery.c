@@ -482,6 +482,30 @@ static void learn_note(const muse_power_t *p)
     }
 }
 
+/* The low-battery beep fires once per discharge below the threshold:
+ * armed until a reading comes in under it, then quiet until the pack is
+ * back at or above it (or USB/charging, or an unknown reading, re-arms
+ * it). The poll is every 2 s awake / 10 s paused, so an edge gate -- not
+ * a timer -- is the whole of the throttling. */
+static bool s_low_beep_armed = true;
+
+bool muse_battery_low_beep_due(const muse_power_t *p)
+{
+    if (p->battery_pct < 0 || p->usb || p->charging) {
+        s_low_beep_armed = true;
+        return false;
+    }
+    if (p->battery_pct >= MUSE_BATTERY_LOW_PCT) {
+        s_low_beep_armed = true;
+        return false;
+    }
+    if (!s_low_beep_armed) {
+        return false;
+    }
+    s_low_beep_armed = false;
+    return true;
+}
+
 void muse_battery_note_power(const muse_power_t *p, bool on_battery)
 {
     xSemaphoreTake(s_lock, portMAX_DELAY);

@@ -793,6 +793,10 @@ static void hold_rec(bool tried)
     s_rec = NULL;
     if (tried) {
         back_off();
+        /* The one send-failure sound: this note went live and Hatch
+         * failed it. Retries of a saved note (send_held) stay silent,
+         * and so does an offline save (tried == false). */
+        muse_audio_sfx(MUSE_SFX_BAD);
     }
     ESP_LOGI(TAG, "saved a %.1fs note to send later (%d waiting)", (double)s_rec_n / MUSE_AUDIO_RATE, s_held_count);
     go_idle(tried ? "SAVED, WILL TRY AGAIN" : "SAVED, SENDS WHEN ONLINE");
