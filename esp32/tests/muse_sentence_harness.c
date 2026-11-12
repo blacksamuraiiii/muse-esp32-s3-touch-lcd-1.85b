@@ -15,20 +15,24 @@
  */
 
 /* Host harness for muse_sentence_next_unit(): reads reply text on stdin,
- * prints one unit length per line, then the unspoken tail as "rest N". */
+ * prints one unit length per line, then the unspoken tail as "rest N".
+ * With argv[1] == "final" it uses muse_sentence_next_unit_final(), the
+ * finished-message tail: the last fragment is a unit too, so rest is 0. */
 
 #include <stdio.h>
 #include <string.h>
 
 #include "muse_sentence.h"
 
-int main(void)
+int main(int argc, char **argv)
 {
     static char buf[1 << 20];
     size_t len = fread(buf, 1, sizeof(buf), stdin);
+    bool final = argc > 1 && strcmp(argv[1], "final") == 0;
     size_t off = 0;
     while (off < len) {
-        size_t n = muse_sentence_next_unit(buf + off, len - off);
+        size_t n = final ? muse_sentence_next_unit_final(buf + off, len - off)
+                         : muse_sentence_next_unit(buf + off, len - off);
         if (!n) {
             break;
         }
