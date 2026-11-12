@@ -52,6 +52,14 @@ void muse_battery_init(void);
  * which ">nap" sets on USB so the bench can measure; and the screen and CPU
  * state. */
 void muse_battery_note_power(const muse_power_t *p, bool on_battery);
+
+/* Low-battery beep gate: true once when a fresh on-battery reading drops
+ * below MUSE_BATTERY_LOW_PCT, then quiet until the pack is back at or above
+ * it (or USB/charging, or an unknown reading, re-arms it). The caller plays
+ * MUSE_SFX_LOW_BATT. Pure state machine, no audio here, so the host test
+ * drives it directly. */
+#define MUSE_BATTERY_LOW_PCT 20
+bool muse_battery_low_beep_due(const muse_power_t *p);
 void muse_battery_note_state(bool screen_off, bool resting);
 
 /* Whether the CPU powers down in light sleep, for the JSON; may come before init. */

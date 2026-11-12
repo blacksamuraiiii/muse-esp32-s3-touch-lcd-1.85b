@@ -87,6 +87,26 @@ class SentenceTest(unittest.TestCase):
         self.assertEqual(data[off:], data[len(data) - rest :] if rest else b"")
         return out, data[off:]
 
+    def units_final(self, text: str) -> list[bytes]:
+        """The finished-message tail (C2): every unit, and nothing left over."""
+        proc = subprocess.run(
+            [str(self.binary), "final"],
+            input=text.encode(),
+            capture_output=True,
+            check=True,
+        )
+        lines = proc.stdout.decode().splitlines()
+        self.assertEqual(lines[-1], "rest 0")
+        data = text.encode()
+        out: list[bytes] = []
+        off = 0
+        for line in lines[:-1]:
+            n = int(line)
+            out.append(data[off : off + n])
+            off += n
+        self.assertEqual(off, len(data))
+        return out
+
     def test_ascii_sentences(self) -> None:
         units, rest = self.units("Hello world. How are you? Fine!")
         self.assertEqual(units, [b"Hello world.", b" How are you?", b" Fine!"])
@@ -174,6 +194,22 @@ class SentenceTest(unittest.TestCase):
         units, rest = self.units("   ")
         self.assertEqual(units, [])
         self.assertEqual(rest, b"   ")
+
+    def test_final_tail_goes_sentence_by_sentence(self) -> None:
+        # C2: a finished message's tail walks the normal sentence path instead
+        # of flushing whole, so a long tail is several units, not one gulp.
+        self.assertEqual(
+            self.units_final("今天天气不错。我们去公园吧！尾巴没句号"),
+            ["今天天气不错。".encode(), "我们去公园吧！".encode(), "尾巴没句号".encode()],
+        )
+
+    def test_final_tail_without_a_boundary_is_one_unit(self) -> None:
+        self.assertEqual(self.units_final("hello world"), [b"hello world"])
+        self.assertEqual(self.units_final(""), [])
+
+    def test_final_long_tail_still_cuts_at_180(self) -> None:
+        units = self.units_final("a" * 200)
+        self.assertEqual(units, [b"a" * 180, b"a" * 20])
 
 
 if __name__ == "__main__":

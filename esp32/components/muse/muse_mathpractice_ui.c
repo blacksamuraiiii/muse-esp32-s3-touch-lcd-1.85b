@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 /*
- * muse_mathpractice_ui.c -- 加减练习 subpage, see muse_mathpractice_ui.h.
+ * muse_mathpractice_ui.c -- 数学练习 subpage, see muse_mathpractice_ui.h.
  *
  * 2026-11-08 (user decision): 凑十法练习 was fused into this page, so
  * one game carries both kinds of question -- 个位数相加（凑十法）and
@@ -9,7 +9,7 @@
  * replace the old green-check / red-cross pair.
  *
  * Layout (mockup 2026-11-08, 360x360 round screen, dark theme like the
- * other games): the title "加减练习" sits in the top crescent (y=38,
+ * other games): the title "数学练习" sits in the top crescent (y=38,
  * the same slot and ACCENT colour the snake page uses for its name);
  * the question ("8 + 5 ? 13" / "14 - 6 ? 8") is one large line at
  * y=126 in Montserrat 28, drawn through transform_scale 439 (~1.71x,
@@ -42,9 +42,9 @@
  * Overlays follow the snake page (2026-11-01, one style across the
  * mini games): the PAUSED card is just the 98x66 ACCENT-bordered 继续
  * button (the page title becomes "已暂停"), and the OVER card is the
- * 再来一局 button with the price "- 10 金币" under its label -- the
- * moment it is pressed the fee is charged, so the price belongs on
- * the button. The START overlay is NOT dimmed (the question stays
+ * 再来一局 button only -- no price line: entry is free (user
+ * decision 2026-11-12, 学习全部免费). The START overlay is NOT dimmed
+ * (the question stays
  * visible behind it) and carries one hint line at y=296: "借十法，
  * 凑十法" (user 2026-11-08: the two long 口诀 lines were dropped).
  * Pausing is a LONG HOLD on the question area (finger within ~12 px
@@ -53,17 +53,16 @@
  * button, and the back arrow stays hidden while playing -- hold first,
  * then leave from the pause card.
  *
- * Payout (same as snake / whack-a-mole / goldrain / doodle): at OVER
- * the HUD turns gold and reads "本局 n 分，+m 金币" with m the GROSS
- * payout the wallet actually accepted (s_round_coins, from
+ * Payout: entry is free (user decision 2026-11-12, 学习全部免费),
+ * so at OVER the HUD turns gold and reads "本局 n 分，+m 金币" with m
+ * the GROSS payout the wallet actually accepted (s_round_coins, from
  * muse_pet_round_coins_cap() with this game's own 20-coin ceiling --
- * 1 point per coin; the score is settled once, at OVER). The net is
- * deliberately NOT printed: kids cannot tell net apart. The score
- * only ever goes up (a wrong pick is +0, never -1), so the HUD never
+ * 1 point per coin; the score is settled once, at OVER). There is no
+ * fee to net against any more, so payout IS the net. The score only
+ * ever goes up (a wrong pick is +0, never -1), so the HUD never
  * shows a negative.
  *
- * Message slot: the band at y=308 hosts exactly one line -- the
- * refusal note wins it, otherwise the score line does.
+ * Message slot: the band at y=308 shows only the score line.
  *
  * Power: no sensor is used (unlike 金币雨 / 毛毛跳跃, there is no
  * tilt here), so there is nothing to wake or sleep. A running round
@@ -81,7 +80,7 @@
 #include "muse_audio.h"   /* game sound effects */
 #include "muse_font.h"
 #include "muse_widgets.h"
-#include "muse_pet.h"        /* snapshot + request: the entry fee */
+#include "muse_pet.h"        /* PET_PLAY_REWARD at OVER (free entry) */
 #include "muse_pet_model.h"
 #include "muse_state.h"
 #include "muse_theme.h"
@@ -143,18 +142,15 @@ static lv_obj_t *s_back;
 static lv_obj_t *s_name;
 static lv_obj_t *s_hud;
 static lv_obj_t *s_verdict;
-static lv_obj_t *s_note;
 static lv_timer_t *s_timer;
 
-/* Status / message slot under the buttons: the HUD and the refusal
- * note share it, one at a time, so both are below the play area. The
- * verdict gets its own line just above it (y=280), where the old
- * 凑十法练习 hint line used to sit. ~299 px of chord at y=280 and
- * ~253 px at the HUD's bottom (325), so both long strings clear the
- * bezel. */
+/* Status line under the buttons: the HUD lives here, below the play
+ * area. The verdict gets its own line just above it (y=280), where
+ * the old 凑十法练习 hint line used to sit. ~299 px of chord at y=280
+ * and ~253 px at the HUD's bottom (325), so both long strings clear
+ * the bezel. */
 #define MUSE_MATHPRACTICE_VERDICT_Y 280
 #define MUSE_MATHPRACTICE_HUD_Y 308
-#define MUSE_MATHPRACTICE_NOTE_Y 308
 
 /* --- small helpers, same shapes as the sudoku page ---------------- */
 
@@ -181,32 +177,9 @@ static lv_obj_t *fill(lv_obj_t *parent, uint32_t bg)
     return obj;
 }
 
-static void sync_message_band(void)
-{
-    bool note_shown = !lv_obj_has_flag(s_note, LV_OBJ_FLAG_HIDDEN);
-    if (note_shown) {
-        lv_obj_add_flag(s_hud, LV_OBJ_FLAG_HIDDEN);
-    } else {
-        lv_obj_remove_flag(s_hud, LV_OBJ_FLAG_HIDDEN);
-    }
-}
-
 static void set_label(lv_obj_t *l, const char *text)
 {
     lv_label_set_text(l, text);
-}
-
-static void show_note(const char *text)
-{
-    set_label(s_note, text);
-    lv_obj_remove_flag(s_note, LV_OBJ_FLAG_HIDDEN);
-    sync_message_band();
-}
-
-static void hide_note(void)
-{
-    lv_obj_add_flag(s_note, LV_OBJ_FLAG_HIDDEN);
-    sync_message_band();
 }
 
 /* White ring on one comparison button, or no ring at all. The buttons
@@ -288,20 +261,18 @@ static void refresh_display(void)
     }
     set_label(s_hud, hud_buf);
     /* The START page shows no 本局 score line (user 2026-11-08): it
-     * only appears once the round has been paid for and started. A
-     * refusal note still wins the slot there, which is why only the
-     * plain HUD is hidden here. */
+     * only appears once the round has started. */
     if (s_game.phase == MUSE_MATHPRACTICE_START) {
         lv_obj_add_flag(s_hud, LV_OBJ_FLAG_HIDDEN);
     } else {
-        sync_message_band();
+        lv_obj_remove_flag(s_hud, LV_OBJ_FLAG_HIDDEN);
     }
     /* Title: the game name, "已暂停" while paused, or "游戏结束" at
      * OVER (user 2026-11-08: the pause title moves to the title slot
      * on every game, so the pause card is just the 继续 button). */
     set_label(s_name, s_game.phase == MUSE_MATHPRACTICE_OVER ? "游戏结束"
                      : s_game.phase == MUSE_MATHPRACTICE_PAUSED ? "已暂停"
-                                                                : "加减练习");
+                                                                : "数学练习");
     /* Overlays: exactly one visible at a time. */
     if (s_game.phase == MUSE_MATHPRACTICE_START) {
         lv_obj_remove_flag(s_start_ov, LV_OBJ_FLAG_HIDDEN);
@@ -339,34 +310,7 @@ static void refresh_display(void)
                          LV_PART_MAIN);
 }
 
-/* --- economy, same shape as the doodle page ---------------------- */
-
-static bool charge_for_game(void)
-{
-    muse_pet_model_t snap;
-    if (!muse_pet_snapshot(&snap)) {
-        show_note("互动未就绪");
-        return false;
-    }
-    if (snap.coins < MUSE_PET_GAME_STAKE) {
-        /* Short copy on purpose (see MUSE_MATHPRACTICE_NOTE_Y): the slot
-         * at the bottom leaves ~253 px of chord and the long sentence is
-         * ~272 px wide. Same wording as the sudoku page's note. */
-        char note[32];
-        snprintf(note, sizeof(note), "金币不够（需 %u 枚）",
-                 (unsigned)MUSE_PET_GAME_STAKE);
-        show_note(note);
-        /* Refused at the door: the low sound. */
-        muse_audio_sfx(MUSE_SFX_BAD);
-        return false;
-    }
-    if (!muse_pet_request(PET_FEE)) {
-        show_note("互动未就绪");
-        return false;
-    }
-    hide_note();
-    return true;
-}
+/* --- game actions ------------------------------------------------- */
 
 static void seed_once(void)
 {
@@ -376,15 +320,11 @@ static void seed_once(void)
     }
 }
 
-/* --- game actions ------------------------------------------------- */
-
 static void begin_game(bool restart)
 {
-    if (!charge_for_game()) {
-        return;
-    }
-    /* Charged: the round starts with the start chirp (also on 再来一局,
-     * which comes through here with restart=true). */
+    /* Free entry (user decision 2026-11-12, 学习全部免费): no fee,
+     * no snapshot gate -- the round starts with the start chirp
+     * (also on 再来一局, which comes through here with restart=true). */
     muse_audio_sfx(MUSE_SFX_START);
     seed_once();
     /* A new round: its payout has not been settled yet. */
@@ -432,8 +372,9 @@ static void pause_game(void)
  * ceiling retuned to 20 on 2026-11-08). This game converts through
  * muse_pet_round_coins_cap() with its own ceiling (not the shared
  * muse_pet_round_coins() curve) -- 1 point per right pick, 20 coins per
- * round ceiling -- and the 10-coin entry fee was already charged at start, so
- * the round's net is payout minus 10. The score only ever goes up, so
+ * round ceiling (user decision 2026-11-12: unchanged) -- and entry is
+ * free (user decision 2026-11-12, 学习全部免费), so the round's net
+ * IS the payout: nothing is deducted. The score only ever goes up, so
  * no floor helper is needed. A refused request (worker not ready /
  * queue full) leaves s_round_coins at 0 so the card never claims coins
  * the wallet did not get. */
@@ -687,16 +628,9 @@ void muse_mathpractice_ui_build(lv_obj_t *page, lv_event_cb_t back_cb)
     lv_obj_t *again_btn = centre_btn(s_over_ov, 131, 147);
     lv_obj_t *again_lb = label(again_btn, muse_font_cjk(), MUSE_THEME_TEXT);
     lv_label_set_text(again_lb, "再来一局");
-    lv_obj_align(again_lb, LV_ALIGN_TOP_MID, 0, 12);
-    /* on_restart charges through charge_for_game() the moment it is
-     * pressed, so the price belongs on the button (same as snake; the
-     * amount comes from the macro, not a literal). */
-    char price_buf[16];
-    snprintf(price_buf, sizeof(price_buf), "- %u 金币",
-             (unsigned)MUSE_PET_GAME_STAKE);
-    lv_obj_t *again_price = label(again_btn, muse_font_cjk(), MUSE_THEME_GOLD);
-    lv_label_set_text(again_price, price_buf);
-    lv_obj_align(again_price, LV_ALIGN_TOP_MID, 0, 34);
+    /* Free entry (user decision 2026-11-12): no price line any more --
+     * the label is centred like the START button's. */
+    lv_obj_center(again_lb);
     lv_obj_add_event_cb(again_btn, on_restart, LV_EVENT_CLICKED, NULL);
 
     /* Back arrow: the shared transparent one (no filled background,
@@ -710,17 +644,12 @@ void muse_mathpractice_ui_build(lv_obj_t *page, lv_event_cb_t back_cb)
      * the buttons: page-level, above the dim overlays, so they stay
      * readable in every state. refresh_display() swaps the title to
      * "已暂停" / "游戏结束" and shows the verdict. */
-    s_name = muse_page_title(page, "加减练习", 38);
+    s_name = muse_page_title(page, "数学练习", 38);
     s_verdict = label(page, muse_font_cjk(), MUSE_THEME_OK);
     lv_obj_align(s_verdict, LV_ALIGN_TOP_MID, 0, MUSE_MATHPRACTICE_VERDICT_Y);
     lv_obj_add_flag(s_verdict, LV_OBJ_FLAG_HIDDEN);
     s_hud = label(page, muse_font_cjk(), MUSE_THEME_TEXT);
     lv_obj_align(s_hud, LV_ALIGN_TOP_MID, 0, MUSE_MATHPRACTICE_HUD_Y);
-
-    /* Refusal note: at the bottom, sharing the score line's slot. */
-    s_note = label(page, muse_font_cjk(), MUSE_THEME_DANGER);
-    lv_obj_align(s_note, LV_ALIGN_TOP_MID, 0, MUSE_MATHPRACTICE_NOTE_Y);
-    lv_obj_add_flag(s_note, LV_OBJ_FLAG_HIDDEN);
 
     s_timer = lv_timer_create(on_tick, MUSE_MATHPRACTICE_TICK_MS, NULL);
     lv_timer_pause(s_timer);
@@ -740,20 +669,5 @@ void muse_mathpractice_ui_hide(void)
         lv_timer_pause(s_timer);
     }
     s_press_active = false;
-    refresh_display();
-}
-
-void muse_mathpractice_ui_fee_refused(void)
-{
-    if (s_game.phase == MUSE_MATHPRACTICE_PLAYING ||
-        s_game.phase == MUSE_MATHPRACTICE_PAUSED) {
-        /* The game never settled: back to START, no score kept. */
-        muse_mathpractice_init(&s_game);
-        lv_timer_pause(s_timer);
-    }
-    char note[32];
-    snprintf(note, sizeof(note), "金币不够（需 %u 枚）",
-             (unsigned)MUSE_PET_GAME_STAKE);
-    show_note(note);
     refresh_display();
 }

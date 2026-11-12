@@ -482,6 +482,30 @@ static void learn_note(const muse_power_t *p)
     }
 }
 
+/* The low-battery beep fires once per discharge below the threshold:
+ * armed until a reading comes in under it, then quiet until the pack is
+ * back at or above it (or USB/charging, or an unknown reading, re-arms
+ * it). The poll is every 2 s awake / 10 s paused, so an edge gate -- not
+ * a timer -- is the whole of the throttling. */
+static bool s_low_beep_armed = true;
+
+bool muse_battery_low_beep_due(const muse_power_t *p)
+{
+    if (p->battery_pct < 0 || p->usb || p->charging) {
+        s_low_beep_armed = true;
+        return false;
+    }
+    if (p->battery_pct >= MUSE_BATTERY_LOW_PCT) {
+        s_low_beep_armed = true;
+        return false;
+    }
+    if (!s_low_beep_armed) {
+        return false;
+    }
+    s_low_beep_armed = false;
+    return true;
+}
+
 void muse_battery_note_power(const muse_power_t *p, bool on_battery)
 {
     xSemaphoreTake(s_lock, portMAX_DELAY);
@@ -493,7 +517,23 @@ void muse_battery_note_power(const muse_power_t *p, bool on_battery)
             save_boots(0);   /* charged: a later power-on from battery counts from 1 */
         }
     }
-    if (on_battery && !s_running) {
+    if (p->battery_pct < 0) {
+        /* Unknown gauge reading (a bus glitch, a missing battery, an
+         * uninitialized gauge): hold the measurement state and the last good
+         * percentage. Only a confirmed USB arrival stops a run - the USB flag
+         * is read off the hardware, not the gauge. */
+        if (p->usb && s_running) {
+            stop();
+        }
+        xSemaphoreGive(s_lock);
+        return;
+    }
+    /* Charging current is the only signal a charge-only adapter gives (native
+     * USB host detection misses its VBUS): while the charger pushes current
+     * the device is on external power, not on battery, so no run starts and a
+     * running one stops. */
+    bool battery = on_battery && !p->charging;
+    if (battery && !s_running) {
         /* Once a boot, and only one that began on battery: a run started
          * after unplugging, or by power.reset, isn't a boot. */
         if (!s_seen_usb && !s_counted) {
@@ -501,7 +541,7 @@ void muse_battery_note_power(const muse_power_t *p, bool on_battery)
             save_boots(s_boots + 1);
         }
         start();
-    } else if (!on_battery && s_running) {
+    } else if (!battery && s_running) {
         stop();
     }
     if (s_running) {

@@ -8,9 +8,9 @@
  * ESP-IDF -- the UI owns the 50 ms timer, the flip animation and the
  * audio tasks; the round has no clock since 2026-11-11, so there is
  * nothing time-based to drive):
- *  1. Word table: 10 sets x 4 words, fruit, animal 1, animal 2 and
- *     things fully wired (fruit art 0..3, animal 1 art 4..7,
- *     animal 2 art 8..11, things art 12..15, colours), every other
+ *  1. Word table: 10 sets x 4 words, fruit, animal (8 words), things
+ *     and food fully wired (fruit art 0..3, animal art 4..11, things
+ *     art 12..15, food art 16..19, colours), every other
  *     set data-only (ART_NONE) and not offered; offered_sets() == 4.
  *     select_set() switches sets for a fresh round and refuses a
  *     set without art or out of range.
@@ -115,14 +115,38 @@ static void test_table(void)
     assert(strcmp(things->words[3].zh, "机器人") == 0);
     assert(things->words[3].color == 0x7dadcb);
     assert(things->words[3].art == 15);
+    /* Food set (1.5.3a B1, user decision 2026-11-11): fully wired,
+     * art 16..19, table index 6, user-confirmed colours. */
+    const muse_wordcards_set_t *food = &MUSE_WORDCARDS_SETS_TABLE[6];
+    assert(strcmp(food->title, "食物 · Food") == 0);
+    assert(strcmp(food->words[0].en, "cake") == 0);
+    assert(strcmp(food->words[0].zh, "蛋糕") == 0);
+    assert(food->words[0].color == 0xff8fb3);
+    assert(food->words[0].art == 16);
+    assert(strcmp(food->words[1].en, "milk") == 0);
+    assert(strcmp(food->words[1].zh, "牛奶") == 0);
+    assert(food->words[1].color == 0x8ec9ff);
+    assert(food->words[1].art == 17);
+    assert(strcmp(food->words[2].en, "bread") == 0);
+    assert(strcmp(food->words[2].zh, "面包") == 0);
+    assert(food->words[2].color == 0xe0a458);
+    assert(food->words[2].art == 18);
+    assert(strcmp(food->words[3].en, "egg") == 0);
+    assert(strcmp(food->words[3].zh, "鸡蛋") == 0);
+    assert(food->words[3].color == 0xffd23e);
+    assert(food->words[3].art == 19);
     /* Every other set is data-only: no art, so not offered. Slots past
      * the set's four words are empty (en == NULL). */
-    assert(muse_wordcards_offered_sets() == 3);
+    assert(muse_wordcards_offered_sets() == 4);
     assert(muse_wordcards_set_has_art(0));
     assert(muse_wordcards_set_has_art(1));
+    assert(muse_wordcards_set_has_art(6));
     assert(muse_wordcards_set_has_art(8));
     assert(!muse_wordcards_set_has_art(2));
     for (int s = 2; s < 8; s++) {
+        if (s == 6) {
+            continue; /* food has art since 1.5.3a B1 */
+        }
         assert(!muse_wordcards_set_has_art(s));
         assert(muse_wordcards_set_words(s) == 4);
         for (int i = 0; i < MUSE_WORDCARDS_WORDS; i++) {

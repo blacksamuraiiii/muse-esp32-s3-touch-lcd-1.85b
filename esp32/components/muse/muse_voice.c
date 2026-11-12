@@ -71,15 +71,24 @@ static const char *TAG = "muse_voice";
 #define MIN_PEAK_DBFS ((float)CONFIG_MUSE_VOICE_MIN_PEAK_DBFS)
 #define TAIL_FRAMES (MUSE_AUDIO_RATE * 12 / 100)   /* capture lag + poll interval, stops before the release click */
 #define MAX_FRAMES (MUSE_AUDIO_RATE * MAX_SECS)
-/* 1 s: presses shorter than this are taps, not speech (user-set 2026-10-16;
- * was 3/10 s). Also governs held_on_waking(): a press that wakes the screen
- * must stay held this long or it only wakes Muse. */
-#define MIN_HELD_FRAMES (MUSE_AUDIO_RATE * 1)
+/* A voice note needs a 600 ms hold and at least 500 ms of audio captured
+ * while held (upstream d0a65ab, user decision 2026-11-11): presses just over
+ * the old 300 ms cutoff sent accidental short notes, partly because audio
+ * captured after release counted toward it. Pre-roll and the release tail
+ * stay in accepted notes but don't count toward either minimum; both checks
+ * measure duration, not detected speech. A 300-600 ms press shows "Hold
+ * longer to talk". This replaces the 1 s hold the user set 2026-10-16 (which
+ * itself replaced upstream's 3/10 s); the 3 s patch is dead, do not revive it. */
+#define NOTE_MIN_HOLD_US 600000
+#define CALL_TAP_US 300000   /* a tap's length; tap-to-call keeps it on boards with calls */
+#define CHUNK_US (MUSE_AUDIO_CHUNK * 1000000 / MUSE_AUDIO_RATE)
+#define NOTE_MIN_RECORD_FRAMES (MUSE_AUDIO_RATE / 2)   /* duration, not detected speech */
 #if CONFIG_MUSE_BOARD_M5STACK_CARDPUTER_ADV || CONFIG_MUSE_BOARD_AI_PASSPORT
 #define PRE_CHUNKS 6                                   /* 120 ms; a 320 ms upload burst stalls on the ADV and C3 */
 #else
 #define PRE_CHUNKS 16                                  /* 320 ms of audio kept from before the press */
 #endif
+#define PRE_CAP_CHUNKS (PRE_CHUNKS + NOTE_MIN_HOLD_US / CHUNK_US)
 /* Barge-in (talk pressed while Muse is speaking) throws away this much
  * capture first: it is the speaker's own tail still sounding. Tunable per
  * board at build time (MUSE_BARGE_IN_SETTLE_MS); 200 ms is the measured
@@ -103,6 +112,7 @@ static const char *TAG = "muse_voice";
 #define ACK_WAIT_US (30LL * 1000000)            /* asleep, waiting for the VM to have a note */
 
 static QueueHandle_t s_queue;
+static int64_t s_press_us;
 static volatile bool s_monitor;
 static volatile float s_monitor_db = -100.0f;
 static volatile bool s_chirp;
@@ -123,7 +133,7 @@ typedef struct {
 #endif
 } pre_chunk_t;
 
-static pre_chunk_t *s_pre;   /* PRE_CHUNKS, a ring */
+static pre_chunk_t *s_pre;   /* PRE_CAP_CHUNKS: idle pre-roll plus the unsent hold */
 static size_t s_pre_next, s_pre_fill;
 #if MUSE_LOW_MEM
 static muse_adpcm_t s_pre_enc;
@@ -158,7 +168,7 @@ static int64_t s_send_backoff_us = RETRY_MIN_US;
 /* The i-th oldest pre-roll chunk, into out. */
 static void pre_get(size_t i, int16_t *out)
 {
-    const pre_chunk_t *c = &s_pre[(s_pre_next + PRE_CHUNKS - s_pre_fill + i) % PRE_CHUNKS];
+    const pre_chunk_t *c = &s_pre[(s_pre_next + PRE_CAP_CHUNKS - s_pre_fill + i) % PRE_CAP_CHUNKS];
 #if MUSE_LOW_MEM
     muse_adpcm_t dec = c->start;
     muse_adpcm_decode_block(&dec, c->adpcm, MUSE_AUDIO_CHUNK, out);
@@ -172,6 +182,27 @@ static void pre_reset(void)
 {
     s_pre_fill = 0;
     s_settle = SETTLE_CHUNKS;
+}
+
+/* The fresh chunk into the ring. */
+static void pre_put(void)
+{
+    pre_chunk_t *c = &s_pre[s_pre_next];
+#if MUSE_LOW_MEM
+    c->start = s_pre_enc;
+    muse_adpcm_encode_block(&s_pre_enc, s_chunk, MUSE_AUDIO_CHUNK, c->adpcm);
+#else
+    memcpy(c->pcm, s_chunk, sizeof(c->pcm));
+#endif
+    s_pre_next = (s_pre_next + 1) % PRE_CAP_CHUNKS;
+    s_pre_fill = s_pre_fill < PRE_CAP_CHUNKS ? s_pre_fill + 1 : PRE_CAP_CHUNKS;
+}
+
+/* Outside a note's hold, the ring keeps only PRE_CHUNKS of pre-roll. */
+static void pre_put_preroll(void)
+{
+    pre_put();
+    if (s_pre_fill > PRE_CHUNKS) s_pre_fill = PRE_CHUNKS;
 }
 
 /* One 20 ms idle read: feeds the pre-roll ring and the settings mic meter. */
@@ -189,24 +220,21 @@ static void idle_capture(void)
         s_settle--;
         return;
     }
-    pre_chunk_t *c = &s_pre[s_pre_next];
-#if MUSE_LOW_MEM
-    c->start = s_pre_enc;
-    muse_adpcm_encode_block(&s_pre_enc, s_chunk, MUSE_AUDIO_CHUNK, c->adpcm);
-#else
-    memcpy(c->pcm, s_chunk, sizeof(c->pcm));
-#endif
-    s_pre_next = (s_pre_next + 1) % PRE_CHUNKS;
-    s_pre_fill = s_pre_fill < PRE_CHUNKS ? s_pre_fill + 1 : PRE_CHUNKS;
+    pre_put_preroll();
 }
 
 /* Non-blocking: returns true if an event of `type` arrived (others dropped). */
+/* Drains the queue, true if the type was seen. A DOWN seen here is the press
+ * note_held() will qualify (an interruption found while a reply plays, or a
+ * press that arrived during a recording): its timestamp is the hold's start,
+ * so the hold is measured from the press, not from when the task got to it. */
 static bool got_event(muse_ptt_t type)
 {
     muse_input_event_t ev;
     bool hit = false;
     while (xQueueReceive(s_queue, &ev, 0) == pdTRUE) {
         muse_state_poke();
+        if (ev.type == MUSE_PTT_DOWN) s_press_us = ev.at_us;
         hit |= ev.type == type;
     }
     return hit;
@@ -299,21 +327,36 @@ static void take(rec_stats_t *st, const int16_t *pcm)
     feed_live();
 }
 
+/* Consume buffered audio in order, freeing ring space for new mic reads. */
+static void take_pre(rec_stats_t *st, size_t chunks)
+{
+    while (chunks-- && s_pre_fill) {
+        pre_get(0, s_chunk);
+        s_pre_fill--;
+        take(st, s_chunk);
+    }
+}
+
 /*
- * Records speech until release or MAX_SECS, starting with the pre-roll; *held
- * gets the part after the press. It streams to Hatch as it goes if it can.
+ * Records an admitted note until release or MAX_SECS, starting with the
+ * buffered pre-roll and hold. It streams to Hatch as it goes if it can.
  * If not, the note is kept in s_rec to send later, and streams from partway
  * if Hatch comes within reach. Returns false if Hatch failed the turn with no
  * kept note to fall back on (why says what failed). There is no start chirp:
  * anything played now would land on top of the first words.
+ *
+ * Admission (600 ms hold, 500 ms captured while held) already happened in
+ * note_held(): this only records. The gate still measures the room over the
+ * replayed pre-roll, as before -- take_pre() feeds it through take() with
+ * gate_db still 0, so pre-roll never counts as voice. The replayed hold
+ * does count: it is post-press speech, taken with the gate live.
  */
-static bool record(bool barge_in, size_t *held, char *why, size_t cap)
+static bool record(char *why, size_t cap)
 {
     muse_state_set_mode(MUSE_MODE_LISTENING);
     muse_state_set_progress(0);
     s_rec_n = s_sent = 0;
     s_live = s_tried = false;
-    *held = 0;   /* the aborts below return before the length is known */
     /* With a buffer to hold the take (HOLD_NOTES), the turn is opened only once
      * the gate has seen something worth sending, so a false touch uploads
      * nothing at all. Without one there is nowhere to keep the pre-roll while
@@ -328,25 +371,22 @@ static bool record(bool barge_in, size_t *held, char *why, size_t cap)
     char text[96];
     rec_stats_t st = { .loud_db = -100.0f };
 
-    size_t n = 0;
-    if (barge_in) {
-        /* Pressed during playback: the queued tail of the reply is still sounding. */
-        for (int i = 0; i < SETTLE_CHUNKS; i++) {
-            muse_audio_read(s_chunk, MUSE_AUDIO_CHUNK);
-        }
-    } else {
-        for (size_t i = 0; i < s_pre_fill; i++) {
-            pre_get(i, s_chunk);
-            take(&st, s_chunk);
-            n += MUSE_AUDIO_CHUNK;
-        }
-    }
-    size_t pre = n;
-    /* The room, measured over the pre-roll. Barge-in has none: the capture
-     * before the press was the speaker's own tail, not the room, so it assumes
-     * a quiet one rather than deriving a threshold from a reply. */
-    float room_db = pre ? st.floor_db : GATE_NOISE_DEFAULT;
+    size_t n = s_pre_fill * MUSE_AUDIO_CHUNK;
+    /* Replay the pre-roll first: it is the room the threshold is measured
+     * against, not evidence. Only then set the gate and replay the hold:
+     * the user was speaking while holding, so it counts toward the gate
+     * like live capture does -- otherwise a note whose mic dies just after
+     * admission would be dropped as "not speech" despite a ring full of
+     * loud audio. Without PSRAM the hold stays buffered and drains between
+     * mic reads below, already past the gate, in short bursts rather than
+     * stalling capture while sending the prefix. */
+    take_pre(&st, MUSE_LOW_MEM ? PRE_CHUNKS : (s_pre_fill < PRE_CHUNKS ? s_pre_fill : PRE_CHUNKS));
+    /* The room, measured over the pre-roll. Barge-in has none: note_held()
+     * cleared the ring and settled the speaker's tail, so it assumes a quiet
+     * one rather than deriving a threshold from a reply. */
+    float room_db = n ? st.floor_db : GATE_NOISE_DEFAULT;
     st.gate_db = gate_thresh(room_db);
+    if (!MUSE_LOW_MEM) take_pre(&st, s_pre_fill);
     ESP_LOGI(TAG, "gate: room %.1f dBFS, threshold %.1f dBFS (gain %d dB)",
              room_db, st.gate_db, muse_settings_mic_gain());
     bool released = false;
@@ -356,7 +396,16 @@ static bool record(bool barge_in, size_t *held, char *why, size_t cap)
             break;
         }
         muse_state_set_level(muse_audio_level(s_chunk, MUSE_AUDIO_CHUNK));
-        take(&st, s_chunk);
+#if MUSE_LOW_MEM
+        if (s_pre_fill) {
+            /* Keep new input behind the opening backlog until it drains. */
+            pre_put();
+            take_pre(&st, PRE_CHUNKS);
+        } else
+#endif
+        {
+            take(&st, s_chunk);   /* fresh PCM needs no lossy buffer round-trip */
+        }
         /* Live transcript as the caption. A failure stops the streaming; the
          * kept note goes later, or without one the failure is the caption. */
         muse_hatch_ev_t ev;
@@ -401,8 +450,8 @@ static bool record(bool barge_in, size_t *held, char *why, size_t cap)
             stop_at = n + TAIL_FRAMES < MAX_FRAMES ? n + TAIL_FRAMES : MAX_FRAMES;
         }
     }
+    take_pre(&st, s_pre_fill);
     muse_state_set_level(0);
-    *held = n - pre;
 
     char tail[160];
     int tl = 0;
@@ -608,21 +657,91 @@ static void set_resting(bool rest)
     ESP_LOGI(TAG, "%s", rest ? "resting: codecs off, Wi-Fi modem sleep" : "awake: codecs on");
 }
 
-/*
- * A press that woke the screen: listen from now, into the pre-roll, and
- * record only if it's still held after a tap's length. False if it was let
- * go sooner: it only woke Muse.
- */
-static bool held_on_waking(void)
+/* A press too short to count: only the hint-length notice, not a held state.
+ * Upstream 16adad8 makes this a 5 s hint; here it is a plain caption until
+ * that lands -- see notes/20261112-上游同步-D流.md. */
+static void too_short(void)
 {
-    s_settle = 0;   /* nothing played: no tail of Muse's own to skip */
-    for (size_t n = 0; n < MIN_HELD_FRAMES; n += MUSE_AUDIO_CHUNK) {
-        if (got_event(MUSE_PTT_UP)) {
-            return false;
-        }
-        idle_capture();
+    muse_state_set_progress(0);
+    muse_state_set_mode(MUSE_MODE_IDLE);
+    muse_state_set_caption("HOLD LONGER TO TALK");
+}
+
+static bool note_requires_hold(void)
+{
+#if CONFIG_MUSE_BOARD_SENSECAP_WATCHER
+    /* The Watcher's input layer already distinguishes wheel clicks from holds,
+     * so the hold check does not apply there. Upstream also exempts it only
+     * when realtime voice is off; this fork has no realtime voice at all. */
+    return false;
+#else
+    return true;
+#endif
+}
+
+typedef enum {
+    NOTE_ACCEPTED,
+    NOTE_TAP,               /* released within CALL_TAP_US: may start a call */
+    NOTE_SHORT_HOLD,        /* released after a tap but before NOTE_MIN_HOLD_US */
+    NOTE_INSUFFICIENT_CAPTURE,   /* held long enough but not enough audio was captured */
+    NOTE_CAPTURE_ERROR,
+    NOTE_CANCELLED,         /* a new DOWN arrived while holding */
+} note_result_t;
+
+/*
+ * Wait for the current press to qualify as a note: held for at least
+ * NOTE_MIN_HOLD_US with at least NOTE_MIN_RECORD_FRAMES captured while
+ * held. The clock uses the input layer's timestamp, not the voice task's,
+ * so a delayed task can't stretch the press: the press had to actually last
+ * long enough, and the audio had to actually be captured. Buffered audio
+ * stays in the ring while waiting, so it becomes the note's prefix once
+ * admitted.
+ *
+ * Callers with a tap-to-call board use NOTE_TAP to start the call; this
+ * fork has no calls, so a tap is just a tap. A waking press returns early
+ * without changing the mode or caption: nothing shows until it qualifies.
+ * The settle tail of a barge-in is discarded before the gate measures the
+ * room, so the reply doesn't inflate the room measurement.
+ */
+static note_result_t note_held(bool wake, bool barge_in)
+{
+    if (wake || barge_in) s_pre_fill = 0;
+    int settle = barge_in ? SETTLE_CHUNKS : 0;
+    size_t captured = 0;
+    if (!wake) {
+        muse_state_set_mode(MUSE_MODE_LISTENING);
+        muse_state_set_caption("RECORDING...");
     }
-    return !got_event(MUSE_PTT_UP);
+    for (;;) {
+        muse_input_event_t ev;
+        bool edge = xQueuePeek(s_queue, &ev, 0) == pdTRUE;
+        int64_t until = edge ? ev.at_us : esp_timer_get_time();
+        bool eligible = !settle && (!note_requires_hold() ||
+            (until - s_press_us >= NOTE_MIN_HOLD_US && captured >= NOTE_MIN_RECORD_FRAMES));
+        if (edge) {
+            if (ev.type == MUSE_PTT_UP) {
+                if (eligible) return NOTE_ACCEPTED;
+                xQueueReceive(s_queue, &ev, 0);
+                int64_t held_us = until - s_press_us;
+                return held_us < CALL_TAP_US ? NOTE_TAP :
+                    held_us < NOTE_MIN_HOLD_US ? NOTE_SHORT_HOLD : NOTE_INSUFFICIENT_CAPTURE;
+            }
+            /* A later DOWN: a stale edge for the next gesture. */
+            return NOTE_CANCELLED;
+        }
+        if (eligible) return NOTE_ACCEPTED;
+        if (muse_audio_read(s_chunk, MUSE_AUDIO_CHUNK) != ESP_OK) {
+            return NOTE_CAPTURE_ERROR;
+        }
+        if (settle) {
+            settle--;
+            continue;
+        }
+        pre_put();
+        if (!wake) muse_state_set_level(muse_audio_level(s_chunk, MUSE_AUDIO_CHUNK));
+        /* Conservatively exclude a block whose read overlapped release. */
+        if (xQueuePeek(s_queue, &ev, 0) != pdTRUE) captured += MUSE_AUDIO_CHUNK;
+    }
 }
 
 static void drop_rec(void)
@@ -661,7 +780,7 @@ static void hold_rec(bool tried)
     }
     if (!s_rec_n) {   /* nothing captured: realloc to 0 would free s_rec and return NULL */
         drop_rec();
-        go_idle("HOLD LONGER TO TALK");
+        too_short();
         return;
     }
     int16_t *pcm = heap_caps_realloc(s_rec, s_rec_n * sizeof(int16_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
@@ -674,6 +793,10 @@ static void hold_rec(bool tried)
     s_rec = NULL;
     if (tried) {
         back_off();
+        /* The one send-failure sound: this note went live and Hatch
+         * failed it. Retries of a saved note (send_held) stay silent,
+         * and so does an offline save (tried == false). */
+        muse_audio_sfx(MUSE_SFX_BAD);
     }
     ESP_LOGI(TAG, "saved a %.1fs note to send later (%d waiting)", (double)s_rec_n / MUSE_AUDIO_RATE, s_held_count);
     go_idle(tried ? "SAVED, WILL TRY AGAIN" : "SAVED, SENDS WHEN ONLINE");
@@ -981,27 +1104,43 @@ static void voice_task(void *arg)
             if (ev.type != MUSE_PTT_DOWN) {
                 continue;
             }
+            s_press_us = ev.at_us;
             wake = ev.wake;
         }
-        if (wake && !held_on_waking()) {
-            continue;   /* a tap: it only woke Muse */
+        note_result_t result = NOTE_CANCELLED;
+        if (wake) {
+            /* A waking press only wakes until it qualifies as a note: no
+             * readiness check, mode or caption change before that. */
+            result = note_held(true, false);
+            if (result != NOTE_ACCEPTED) {
+                pre_reset();
+                muse_state_set_level(0);
+                if (result == NOTE_CAPTURE_ERROR && muse_state_mode(NULL) != MUSE_MODE_OFF) {
+                    go_idle("MICROPHONE ERROR - TRY AGAIN");
+                }
+                continue;
+            }
         }
         muse_wifi_power(MUSE_WIFI_FULL);
         if (!can_record()) {
             pending_down = false;
+            pre_reset();
             continue;
         }
-        size_t held;
-        char why[96];
-        bool ok = record(pending_down, &held, why, sizeof(why));
+        if (!wake) result = note_held(false, pending_down);
         pending_down = false;
-        if (held < MIN_HELD_FRAMES && !wake) {
-            muse_hatch_turn_cancel();
+        if (result != NOTE_ACCEPTED) {
             drop_rec();
             pre_reset();
-            go_idle("HOLD LONGER TO TALK");
+            muse_state_set_level(0);
+            if (muse_state_mode(NULL) == MUSE_MODE_OFF) continue;
+            if (result == NOTE_CAPTURE_ERROR) go_idle("MICROPHONE ERROR - TRY AGAIN");
+            else if (result == NOTE_CANCELLED) go_idle("");
+            else too_short();
             continue;
         }
+        char why[96];
+        bool ok = record(why, sizeof(why));
         if (!ok) {
             pre_reset();
             go_idle(why);   /* Hatch failed it while recording */
@@ -1029,7 +1168,7 @@ esp_err_t muse_voice_start(QueueHandle_t queue)
 {
     s_queue = queue;
     if (!s_pre) {
-        s_pre = heap_caps_malloc(PRE_CHUNKS * sizeof(pre_chunk_t), MUSE_BIG_CAPS);
+        s_pre = heap_caps_malloc(PRE_CAP_CHUNKS * sizeof(pre_chunk_t), MUSE_BIG_CAPS);
     }
     esp_err_t err = ESP_ERR_NO_MEM;
     for (int attempt = 1; attempt <= VOICE_INIT_ATTEMPTS; attempt++) {

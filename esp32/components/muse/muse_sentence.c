@@ -132,3 +132,9 @@ size_t muse_sentence_next_unit(const char *p, size_t len)
     }
     return cut;
 }
+
+size_t muse_sentence_next_unit_final(const char *p, size_t len)
+{
+    size_t unit = muse_sentence_next_unit(p, len);
+    return unit ? unit : len;
+}

@@ -74,6 +74,11 @@ static volatile bool s_abort;
  * instead of being pushed into the ring of whatever is playing now. */
 static volatile uint32_t s_gen;
 static volatile uint32_t s_fetch_gen;
+/* C2: the unit being fetched is the message's last (set by speak/enqueue,
+ * read by fetch_reply), and the most recent completed fetch carried the
+ * bridge's last-chunk marker. */
+static volatile bool s_last_unit;
+static volatile bool s_last_chunk;
 static portMUX_TYPE s_lock = portMUX_INITIALIZER_UNLOCKED;  /* s_pending/s_busy handoff */
 static volatile bool s_busy;          /* a reply is being fetched right now */
 static bool s_short_wait;            /* this fetch started on TTS_HTTP_FIRST_MS */
@@ -347,6 +352,7 @@ static bool fetch_once(const char *url, int timeout_ms)
     s_prefix_n = 0;
     s_payload_open = false;
     s_payload_bad = false;
+    s_last_chunk = false;   /* set below, only when this response carries it */
     int64_t t0 = esp_timer_get_time();
     esp_err_t err = esp_http_client_perform(c);
     int status = esp_http_client_get_status_code(c);
@@ -362,6 +368,17 @@ static bool fetch_once(const char *url, int timeout_ms)
         ESP_LOGW(TAG, "TTS endpoint answered %d", status);
         drop_client();
         return false;
+    }
+    /* C2: the bridge marks the last chunk of the reply (X-TTS-Last: 1) when
+     * the request carried &last=1; an old bridge sends no such header. Only a
+     * fetch of the current generation counts: a stale fetch that finished
+     * after a new turn started must not mark the new turn's audio. */
+    char last_hdr[8];
+    size_t last_len = sizeof(last_hdr);
+    if (s_fetch_gen == s_gen && !s_abort
+        && esp_http_client_get_header(c, "X-TTS-Last", last_hdr, &last_len) == ESP_OK
+        && last_hdr[0] == '1') {
+        s_last_chunk = true;
     }
     gate_finish();
     if (s_payload_bad || s_abort) {
@@ -518,6 +535,8 @@ static void fetch_reply(char *text)
     size_t pos = 0;
     size_t total = strlen(text);
     int timeout_ms = s_reply_first ? TTS_HTTP_FIRST_MS : TTS_HTTP_TIMEOUT_MS;
+    bool first_req = s_reply_first;
+    bool last_unit = s_last_unit;
     s_reply_first = false;
     s_fetch_gen = s_gen;   /* from here on, bytes of an older generation stop here */
     while (pos < total && !s_abort && s_fetch_gen == s_gen) {
@@ -528,14 +547,25 @@ static void fetch_reply(char *text)
         }
         const size_t enc_len = strlen(encoded);
         const size_t suf_len = strlen(suffix);
-        size_t need = prefix_len + enc_len + suf_len + 1;
+        /* C1: the first request of a reply carries &first=1, so the bridge
+         * cuts the first sentence at its first comma and streams the head
+         * first; the tail follows in the same response.
+         * C2: the last request of the message's final unit carries &last=1,
+         * so the bridge can mark the last chunk of the reply. */
+        const char *first_flag = (first_req && pos == 0) ? "&first=1" : "";
+        const char *last_flag = (last_unit && pos + n >= total) ? "&last=1" : "";
+        const size_t flag_len = strlen(first_flag) + strlen(last_flag);
+        size_t need = prefix_len + enc_len + suf_len + flag_len + 1;
         char *u = (char *)malloc(need);
         if (!u) break;
         /* Assembled by hand: the template is a runtime string now (it can come
          * from the settings page), so snprintf would trip format-truncation. */
         memcpy(u, url, prefix_len);
         memcpy(u + prefix_len, encoded, enc_len);
-        memcpy(u + prefix_len + enc_len, suffix, suf_len + 1);
+        memcpy(u + prefix_len + enc_len, suffix, suf_len);
+        memcpy(u + prefix_len + enc_len + suf_len, first_flag, strlen(first_flag));
+        memcpy(u + prefix_len + enc_len + suf_len + strlen(first_flag),
+               last_flag, strlen(last_flag) + 1);
         bool ok = fetch(u, timeout_ms);
         timeout_ms = TTS_HTTP_TIMEOUT_MS;
         free(u);
@@ -641,7 +671,7 @@ void muse_tts_prewarm(void)
     }
 }
 
-bool muse_tts_speak(const char *text)
+bool muse_tts_speak(const char *text, bool last)
 {
     if (!tts_template()[0] || s_busy || !text || !text[0]) {
         return false;
@@ -679,6 +709,8 @@ bool muse_tts_speak(const char *text)
     s_fetch_done = false;
     s_busy = true;
     s_gen++;
+    s_last_unit = last;
+    s_last_chunk = false;   /* no last chunk seen yet for this message */
     if (ring_dirty) s_ring_dirty = true;
     taskEXIT_CRITICAL(&s_lock);
     free(stale);
@@ -690,7 +722,7 @@ bool muse_tts_speak(const char *text)
  * arrives while this one is still being read out, so the gap between sentences
  * is only the service's first byte, not its whole synthesis time. The ring is
  * deliberately not reset - the bytes of the sentence playing are in it. */
-bool muse_tts_enqueue(const char *text)
+bool muse_tts_enqueue(const char *text, bool last)
 {
     if (!tts_template()[0] || s_busy || !s_ring || !s_task || !text || !text[0]) {
         return false;
@@ -711,6 +743,7 @@ bool muse_tts_enqueue(const char *text)
      * with s_abort still true, fetch_reply() skipped its loop, and the whole
      * reply after the first sentence played silent. */
     s_abort = false;
+    s_last_unit = last;
     taskEXIT_CRITICAL(&s_lock);
     free(stale);
     xTaskNotifyGive(s_task);
@@ -728,6 +761,19 @@ bool muse_tts_drained(void)
     return s_fetch_done && (!s_ring || xStreamBufferIsEmpty(s_ring));
 }
 
+/* C4: a new turn invalidates whatever the old turn was still fetching. The
+ * fetch paths all check the generation on every chunk, so the bytes of a
+ * fetch that started before this call are dropped, never played. */
+void muse_tts_new_turn(void)
+{
+    s_gen++;
+}
+
+bool muse_tts_last_chunk(void)
+{
+    return s_last_chunk;
+}
+
 bool muse_tts_active(void)
 {
     return s_busy;
@@ -741,6 +787,8 @@ void muse_tts_cancel(void)
      * replaces it speak at once instead of coming out as a silent turn. */
     s_abort = true;
     s_gen++;
+    s_last_chunk = false;
+    s_last_unit = false;
     /* The reset fails while the worker is blocked in ring_send on the cancelled
      * fetch; s_ring_dirty makes the worker clear the ring before the next text
      * is fetched, so the old reply's tail cannot play into the new one. */

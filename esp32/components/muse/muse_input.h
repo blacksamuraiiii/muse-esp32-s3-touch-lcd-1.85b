@@ -17,6 +17,7 @@
 #pragma once
 
 #include <stdbool.h>
+#include <stdint.h>
 
 #include "esp_err.h"
 #include "freertos/FreeRTOS.h"
@@ -41,6 +42,7 @@ typedef enum {
 typedef struct {
     muse_ptt_t type;
     bool wake;   /* a press that woke the screen: a tap only wakes */
+    int64_t at_us;   /* input edge time, before queueing or voice-task delays */
 } muse_input_event_t;
 
 /*
