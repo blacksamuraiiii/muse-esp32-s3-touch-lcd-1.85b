@@ -77,6 +77,7 @@ typedef enum {
     MUSE_SFX_EAT,    /* feed paid: 740 Hz twice, 40 ms gap, 140 ms */
     MUSE_SFX_PET,    /* face tap: 523 Hz, 80 ms, half volume */
     MUSE_SFX_FORTUNE, /* fresh daily draw: 784 -> 988 -> 1174 Hz, 180 ms */
+    MUSE_SFX_LOW_BATT, /* low battery: two 262 Hz beeps, 120 ms each, 80 ms gap, 320 ms */
     MUSE_SFX_START,  /* start / play again: reuses muse_audio_chirp(1) */
 } muse_sfx_t;
 
@@ -105,11 +106,12 @@ static inline size_t muse_audio_sfx_render(muse_sfx_t sfx, int16_t *out, size_t 
         uint8_t first;  /* first note of this sound in the table */
         uint8_t count;  /* notes in this sound */
     } muse_sfx_def_t;
-    /* Table-driven: retune by changing numbers, not logic. GOOD, WIN
-     * and FORTUNE are two/three notes back to back, each with its own
-     * envelope and phase -- the same shape as the reference renders in
+    /* Table-driven: retune by changing numbers, not logic. GOOD, WIN,
+     * FORTUNE and LOW_BATT are two/three notes back to back, each with its
+     * own envelope and phase -- the same shape as the reference renders in
      * sfx-demo/gen-v4.py (one note() call per note, concatenated). EAT's
-     * middle note is a 40 ms silent gap (amp 0), not a tone.
+     * middle note is a 40 ms silent gap (amp 0), not a tone; LOW_BATT's
+     * middle note is the same idea at 80 ms, between two 262 Hz beeps.
      * BAD is the loudest entry on purpose (user 2026-11-09: the wrong
      * answer / bomb sound was too quiet). Its old 200 -> 100 Hz sat in
      * the band where this small speaker gives almost no output, so the
@@ -127,6 +129,8 @@ static inline size_t muse_audio_sfx_render(muse_sfx_t sfx, int16_t *out, size_t 
         /* PET   */ {523.0f, 523.0f, 80, 4000},
         /* FORTUNE */ {784.0f, 784.0f, 60, 7000}, {988.0f, 988.0f, 60, 7000},
                     {1174.0f, 1174.0f, 60, 7000},
+        /* LOW_BATT */ {262.0f, 262.0f, 120, 7000}, {262.0f, 262.0f, 80, 0},
+                    {262.0f, 262.0f, 120, 7000},
     };
     static const muse_sfx_def_t defs[] = {
         [MUSE_SFX_GOOD] = {0, 2},
@@ -137,6 +141,7 @@ static inline size_t muse_audio_sfx_render(muse_sfx_t sfx, int16_t *out, size_t 
         [MUSE_SFX_EAT] = {8, 3},
         [MUSE_SFX_PET] = {11, 1},
         [MUSE_SFX_FORTUNE] = {12, 3},
+        [MUSE_SFX_LOW_BATT] = {15, 3},
     };
     if (sfx < 0 || sfx >= MUSE_SFX_START || out == NULL) {
         return 0;

@@ -18,6 +18,8 @@
  *   t <us>                 the clock
  *   dump ... end           the lines esp_pm_dump_locks() prints from now on
  *   p <usb> <pct> <mv> [<charging> <ma>]   a battery reading
+ *   low <usb> <pct> <mv> [<charging> <ma>]  the low-battery beep gate:
+ *                          prints {"low_beep_due":0|1} for that reading
  *   l                                  the learning-cycle instruction
  *   s <off> <resting>      the screen and CPU state
  *   w <us>                 a wake from light sleep, after <us> asleep
@@ -251,6 +253,14 @@ int main(void)
             p.charging = charging;
             p.battery_ma = ma;
             muse_battery_note_power(&p, !p.usb && p.battery_pct >= 0);
+        } else if (!strncmp(line, "low ", 4)) {
+            int usb, charging = 0, ma = 0;
+            muse_power_t p = { 0 };
+            sscanf(line + 4, "%d %d %d %d %d", &usb, &p.battery_pct, &p.battery_mv, &charging, &ma);
+            p.usb = usb;
+            p.charging = charging;
+            p.battery_ma = ma;
+            printf("{\"low_beep_due\":%d}\n", muse_battery_low_beep_due(&p));
         } else if (!strcmp(line, "l")) {
             char text[64];
             muse_battery_learn_text(text, sizeof(text));

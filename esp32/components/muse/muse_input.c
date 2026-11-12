@@ -44,6 +44,7 @@
 #include "muse_rtc.h"
 #include "muse_link.h"
 #include "muse_tts.h"
+#include "muse_audio.h"
 #include "muse_audio_play.h"
 #include "muse_mem.h"
 #include "muse_menu.h"
@@ -963,6 +964,13 @@ static void input_task(void *arg)
             if (muse_board->read_power && muse_board->read_power(&p) == ESP_OK) {
                 muse_state_set_power(&p);
                 muse_battery_note_power(&p, muse_state_on_battery());
+                /* Low battery, once per discharge below 20%: the gate in
+                 * muse_battery.c re-arms at 20% or on USB/charging, so a
+                 * 2 s poll can never repeat it. muse_audio_write is
+                 * mutex-guarded, so this is safe beside a reply playing. */
+                if (muse_battery_low_beep_due(&p)) {
+                    muse_audio_sfx(MUSE_SFX_LOW_BATT);
+                }
             }
         }
 
