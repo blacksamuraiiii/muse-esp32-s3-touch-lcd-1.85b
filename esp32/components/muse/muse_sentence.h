@@ -47,3 +47,9 @@ bool muse_sentence_break_before(const char *p, size_t i);
  * a forced cut at that limit, backed off to a UTF-8 boundary and preferably
  * to an earlier break, the same cut the request splitter makes. */
 size_t muse_sentence_next_unit(const char *p, size_t len);
+
+/* The next unit for a finished message's tail (C2): the next sentence, or the
+ * whole remainder when no boundary is left (the fragment after the last full
+ * stop). Never 0 when `len` is non-zero, so a finished message's tail always
+ * makes progress instead of waiting for more text that will never arrive. */
+size_t muse_sentence_next_unit_final(const char *p, size_t len);

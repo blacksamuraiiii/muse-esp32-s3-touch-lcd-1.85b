@@ -26,6 +26,8 @@ typedef enum { NVS_READONLY, NVS_READWRITE } nvs_open_mode_t;
 
 // The harness keeps the keys, with a file for the flash: "flash <file>" before the boot.
 esp_err_t nvs_open(const char *name, nvs_open_mode_t mode, nvs_handle_t *handle);
+esp_err_t nvs_get_u8(nvs_handle_t handle, const char *key, uint8_t *value);
+esp_err_t nvs_set_u8(nvs_handle_t handle, const char *key, uint8_t value);
 esp_err_t nvs_get_u16(nvs_handle_t handle, const char *key, uint16_t *value);
 esp_err_t nvs_set_u16(nvs_handle_t handle, const char *key, uint16_t value);
 esp_err_t nvs_get_blob(nvs_handle_t handle, const char *key, void *value, size_t *length);

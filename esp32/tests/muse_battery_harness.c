@@ -17,7 +17,10 @@
 /* Drives the battery meter (muse_battery.c) for test_muse_battery.py, one command a line:
  *   t <us>                 the clock
  *   dump ... end           the lines esp_pm_dump_locks() prints from now on
- *   p <usb> <pct> <mv>     a battery reading
+ *   p <usb> <pct> <mv> [<charging> <ma>]   a battery reading
+ *   low <usb> <pct> <mv> [<charging> <ma>]  the low-battery beep gate:
+ *                          prints {"low_beep_due":0|1} for that reading
+ *   l                                  the learning-cycle instruction
  *   s <off> <resting>      the screen and CPU state
  *   w <us>                 a wake from light sleep, after <us> asleep
  *   h <free> <min> <largest> [<ret_free> <ret_largest>]   internal RAM: free now, lowest since boot,
@@ -154,6 +157,17 @@ esp_err_t nvs_set_blob(nvs_handle_t handle, const char *key, const void *value, 
     return ESP_OK;
 }
 
+esp_err_t nvs_get_u8(nvs_handle_t handle, const char *key, uint8_t *value)
+{
+    size_t length = sizeof(*value);
+    return nvs_get_blob(handle, key, value, &length);
+}
+
+esp_err_t nvs_set_u8(nvs_handle_t handle, const char *key, uint8_t value)
+{
+    return nvs_set_blob(handle, key, &value, sizeof(value));
+}
+
 esp_err_t nvs_get_u16(nvs_handle_t handle, const char *key, uint16_t *value)
 {
     size_t length = sizeof(*value);
@@ -232,11 +246,25 @@ int main(void)
                 strlcat(s_dump_text, line, sizeof(s_dump_text));
             }
         } else if (!strncmp(line, "p ", 2)) {
-            int usb;
+            int usb, charging = 0, ma = 0;
             muse_power_t p = { 0 };
-            sscanf(line + 2, "%d %d %d", &usb, &p.battery_pct, &p.battery_mv);
+            sscanf(line + 2, "%d %d %d %d %d", &usb, &p.battery_pct, &p.battery_mv, &charging, &ma);
             p.usb = usb;
+            p.charging = charging;
+            p.battery_ma = ma;
             muse_battery_note_power(&p, !p.usb && p.battery_pct >= 0);
+        } else if (!strncmp(line, "low ", 4)) {
+            int usb, charging = 0, ma = 0;
+            muse_power_t p = { 0 };
+            sscanf(line + 4, "%d %d %d %d %d", &usb, &p.battery_pct, &p.battery_mv, &charging, &ma);
+            p.usb = usb;
+            p.charging = charging;
+            p.battery_ma = ma;
+            printf("{\"low_beep_due\":%d}\n", muse_battery_low_beep_due(&p));
+        } else if (!strcmp(line, "l")) {
+            char text[64];
+            muse_battery_learn_text(text, sizeof(text));
+            printf("%s\n", text);
         } else if (!strncmp(line, "s ", 2)) {
             int off, resting;
             sscanf(line + 2, "%d %d", &off, &resting);

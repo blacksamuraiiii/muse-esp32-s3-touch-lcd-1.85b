@@ -10,22 +10,31 @@
  *     button is 56x48 with its top at y = 28, so its centre is x = 68
  *     (NOT x = 28: at y = 52 the circle chord starts near x = 54 and a
  *     button centred at 28 would be clipped by the round edge).
- *   - Main page (three-row list, restored 2026-10-31, user decision):
- *     three rows 330x58, radius 18, x = 15, y = 84 / 150 / 216
- *     (row 58 + gap 8): 喂饭, 小游戏, 今日运势. The middle row is a
- *     menu into the mini-game list page, not a game itself, so its
- *     copy ("小游戏 ｜ 每种 -10金币") is constant and it never dims
- *     or intercepts -- the coin gate lives inside each game. Coin
- *     line at y = 302. The main page has NO back arrow (its header
- *     back callback is NULL); the face is one swipe away.
+ *   - Main page (2x2 grid, 1.5.3a A flow, user decision 2026-11-11):
+ *     four cards 140x95, radius 18, at (35,80) / (185,80) /
+ *     (35,185) / (185,185): 今日运势, 喂饭, 学习, 小游戏. Each card
+ *     carries a 56 px icon + title, no subline (user decision:
+ *     未抽 / 免费 / 每种 +10金币 / 每种 -10金币 all gone; the fee
+ *     lives on each game page). The far corners sit 176.1 px from
+ *     the centre, inside the circle (mockup v3). The 学习 card opens
+ *     the 学习 page, the 小游戏 card the mini-game list. Coin line
+ *     at y = 302. The main page has NO back arrow (its header back
+ *     callback is NULL); the face is one swipe away.
+ *   - 学习 page (1.5.3a A flow): title "学习" with a back arrow,
+ *     and a VERTICALLY SCROLLING column like the mini-game list's
+ *     (same 58px rows, 10px gaps, 110px bottom pad): three rows,
+ *     数学练习 / 英语单词 / 英语口语, all visible at once. All
+ *     three are free (user decision 2026-11-12, 学习全部免费): no
+ *     entry fee, no dimming. Back lands on the main page; the three
+ *     games' own back arrows land here, not on the mini-game list.
  *   - Mini-game list page: title "小游戏" with a back arrow, and a
  *     VERTICALLY SCROLLING column like the settings page's list
- *     (2026-11-01, user request): seven 330x58 cards in a flex column,
+ *     (2026-11-01, user request): six 330x58 cards in a flex column,
  *     10px gaps, with the coin line as the column's last item. The
  *     rows keep the main list's 58px height -- the earlier 48px
  *     "compressed" pitch is gone -- and the column scrolls instead,
  *     with a 110px bottom pad so the last row can clear the bottom
- *     curve of the bezel. All seven games cost 10 coins per start (user
+ *     curve of the bezel. All six games cost 10 coins per start (user
  *     decision 2026-10-31, retuned 2026-11-08); the rows only dim when
  *     poor, they are never disabled.
  *   - Subpages are groups inside the interaction tile, all with the same
@@ -47,7 +56,7 @@
  *     -10 金币" cost hint at y = 84 (swapped, 2026-11-01, user request),
  *     because the result / streak lines already own y = 240 / 272.
  *     Tile swipe is DISABLED on every interaction subpage (feed,
- *     fortune, minigame list and the seven game boards): a subpage
+ *     fortune, 学习, minigame list and the game boards): a subpage
  *     leaves only through its "<" back arrow, one level up, and the
  *     interaction main page is the only one that swipes (right to the
  *     face). The lock started with the four GAME pages on 2026-10-31
@@ -114,6 +123,9 @@
 #include "muse_tictactoe_ui.h"
 #include "muse_widgets.h" /* the shared back arrow / card / title (1.5g) */
 #include "muse_wordcards_ui.h"
+#include "muse_quiz_ui.h"
+#include "muse_main_grid_art.h"
+#include "muse_learn_art.h"     /* 学习子页 three-card icons (mockup v6) */
 
 /* --- colours: muse_theme.h (see file header for the DANGER note) --- */
 
@@ -121,11 +133,19 @@
 #define IC_LIST_W 330
 #define IC_LIST_TOP 84
 #define IC_ROW_H 58
-#define IC_ROW_GAP 8
-/* Mini-game menu list (2026-11-01, user request): the settings page's
- * scrolling-column pattern instead of a compressed fixed pitch. 58px
- * rows keep the main list's height; 10px gaps and a 110px bottom pad
- * match muse_settings_ui.c's list exactly. */
+/* Main-page 2x2 grid card (1.5.3a A flow): 140x95, icon 56 px at the
+ * top, title under it. The far corners sit 176.1 px from the centre,
+ * inside the circle (mockup v3). */
+#define IC_GRID_CARD_W 140
+#define IC_GRID_CARD_H 95
+#define IC_GRID_ICON 56
+#define IC_GRID_X0 35
+#define IC_GRID_X1 185
+#define IC_GRID_Y0 80
+#define IC_GRID_Y1 185
+/* Mini-game / 学习 scrolling columns (2026-11-01, user request): the
+ * settings page's pattern instead of a compressed fixed pitch. 58px
+ * rows, 10px gaps, 110px bottom pad. */
 #define IC_MG_ROW_SPACE 10
 #define IC_MG_LIST_PAD_BOTTOM 110
 #define IC_RADIUS 18
@@ -187,6 +207,8 @@ enum {
     IC_PAGE_TICTACTOE,
     IC_PAGE_WORDCARDS,
     IC_PAGE_WORDCARDS_SETS,
+    IC_PAGE_QUIZ,
+    IC_PAGE_LEARN,
 };
 
 enum {
@@ -200,12 +222,10 @@ static lv_obj_t *s_tile;
 static lv_obj_t *s_main_page, *s_feed_page, *s_game_page, *s_fortune_page, *s_sudoku_page;
 static lv_obj_t *s_minigame_page, *s_snake_page, *s_whackamole_page,
     *s_goldrain_page, *s_doodle_page, *s_mathpractice_page, *s_tictactoe_page,
-    *s_wordcards_page, *s_wordcards_sets_page;
-static lv_obj_t *s_btn_feed, *s_btn_game, *s_btn_fortune;
-static lv_obj_t *s_btn_feed_lbl, *s_btn_game_lbl, *s_btn_fortune_lbl;
+    *s_wordcards_page, *s_wordcards_sets_page, *s_quiz_page, *s_learn_page;
 static lv_obj_t *s_minigame_coins;
 static lv_obj_t *s_mg_rps_lbl, *s_mg_snake_lbl, *s_mg_whack_lbl,
-    *s_mg_goldrain_lbl, *s_mg_doodle_lbl, *s_mg_mathpractice_lbl,
+    *s_mg_goldrain_lbl, *s_mg_doodle_lbl,
     *s_mg_tictactoe_lbl;
 /* s_mg_sudoku_lbl was here: removed 2026-11-08 with the archived 数独
  * row (see build_minigame). Re-add it when restoring 数独. */
@@ -237,8 +257,9 @@ static lv_obj_t *s_fortune_card, *s_fortune_grade, *s_fortune_rule,
 /* Bottom gold row (y = 302) on the feed and fortune subpages, added
  * 2026-11-01 so every interaction page ends with the same coin line.
  * Written by refresh_status() from the snapshot, same as s_status1 and
- * s_minigame_coins above. */
-static lv_obj_t *s_feed_coins, *s_fortune_coins;
+ * s_minigame_coins above. The learn page joined them in the v6 card
+ * redesign (2026-11-12): its bottom row is the coin line too. */
+static lv_obj_t *s_feed_coins, *s_fortune_coins, *s_learn_coins;
 
 static const char *TAG = "muse_ic";
 
@@ -318,6 +339,8 @@ static void show_page(int page)
     lv_obj_add_flag(s_tictactoe_page, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(s_wordcards_page, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(s_wordcards_sets_page, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(s_quiz_page, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(s_learn_page, LV_OBJ_FLAG_HIDDEN);
     lv_obj_t *show = s_main_page;
     if (page == IC_PAGE_FEED) show = s_feed_page;
     if (page == IC_PAGE_GAME) show = s_game_page;
@@ -332,6 +355,8 @@ static void show_page(int page)
     if (page == IC_PAGE_TICTACTOE) show = s_tictactoe_page;
     if (page == IC_PAGE_WORDCARDS) show = s_wordcards_page;
     if (page == IC_PAGE_WORDCARDS_SETS) show = s_wordcards_sets_page;
+    if (page == IC_PAGE_QUIZ) show = s_quiz_page;
+    if (page == IC_PAGE_LEARN) show = s_learn_page;
     lv_obj_remove_flag(show, LV_OBJ_FLAG_HIDDEN);
     /* The swipe lock takes effect here, not at the next 0.25 s chrome tick
      * (muse_ui.c): chrome polling left up to 250 ms after leaving a subpage
@@ -343,10 +368,11 @@ static void show_page(int page)
 
 bool muse_interact_ui_swipe_locked(void)
 {
-    /* Any interaction subpage: 喂食, 今日运势, 小游戏 (the minigame list)
-     * and the eight game boards (加减练习 / 石头剪刀布 / 贪吃蛇 / 打地鼠 /
-     * 金币雨 / 毛毛跳跃 / OX棋 / 单词练习) plus the word-cards category
-     * page. Only the
+    /* Any interaction subpage: 喂食, 今日运势, 学习, 小游戏 (the minigame
+     * list) and the six game boards (石头剪刀布 / 贪吃蛇 / 打地鼠 /
+     * 金币雨 / 毛毛跳跃 / OX棋) plus the three learning games
+     * (数学练习 / 英语单词 / 英语口语, reached through the 学习 page)
+     * and the word-cards category page. Only the
      * main page swipes, right to the face. A subpage leaves through its
      * "<" back arrow, one level up; BOOT is the exception, and it does not
      * go through here (the voice task switches to the face and starts a
@@ -363,15 +389,17 @@ static void on_back(lv_event_t *e)
      * menu) to the menu, from the menu and the other subpages to the
      * main page, and from the main page to the face. The word-cards
      * card page is one level deeper: it lands on the category page,
-     * which lands on the menu. A subpage back that skipped a level
-     * would break the "left < = one level up" rule. The eight menu
-     * games (game, mathpractice, snake, whack-a-mole, goldrain,
-     * doodle, tictactoe, wordcards) all land on the menu; feed and fortune are main-page rows,
-     * so they still land on the main page. Leaving a game page pauses a
-     * running game through its hide hook (snake keeps its board,
-     * whack-a-mole, goldrain, doodle, mathpractice, tictactoe and wordcards resume from their
-     * pause overlays), so none plays on off-screen; the other subpages
-     * keep their own return-visit rules. */
+     * which lands on the 学习 page. A subpage back that skipped a level
+     * would break the "left < = one level up" rule. The six menu
+     * games (game, snake, whack-a-mole, goldrain, doodle, tictactoe)
+     * all land on the menu; the three learning games (mathpractice,
+     * wordcards, quiz) land on the 学习 page; feed and fortune are
+     * main-page cards, so they still land on the main page. Leaving a
+     * game page pauses a running game through its hide hook (snake
+     * keeps its board, whack-a-mole, goldrain, doodle, mathpractice,
+     * tictactoe, wordcards and quiz resume from their pause overlays),
+     * so none plays on off-screen; the other subpages keep their own
+     * return-visit rules. */
     if (s_page == IC_PAGE_SNAKE) {
         muse_snake_ui_hide();
     }
@@ -393,6 +421,9 @@ static void on_back(lv_event_t *e)
     if (s_page == IC_PAGE_WORDCARDS) {
         muse_wordcards_ui_hide();
     }
+    if (s_page == IC_PAGE_QUIZ) {
+        muse_quiz_ui_hide();
+    }
     if (s_page == IC_PAGE_MAIN) {
         muse_ui_show_face();
     } else if (s_page == IC_PAGE_WORDCARDS) {
@@ -403,10 +434,13 @@ static void on_back(lv_event_t *e)
                s_page == IC_PAGE_SNAKE || s_page == IC_PAGE_WHACKAMOLE ||
                s_page == IC_PAGE_GOLDRAIN ||
                s_page == IC_PAGE_DOODLE ||
-               s_page == IC_PAGE_MATHPRACTICE ||
-               s_page == IC_PAGE_TICTACTOE ||
-               s_page == IC_PAGE_WORDCARDS_SETS) {
+               s_page == IC_PAGE_TICTACTOE) {
         show_page(IC_PAGE_MINIGAME);
+    } else if (s_page == IC_PAGE_MATHPRACTICE ||
+               s_page == IC_PAGE_QUIZ ||
+               s_page == IC_PAGE_WORDCARDS_SETS) {
+        /* Reached through the 学习 page, so back lands there. */
+        show_page(IC_PAGE_LEARN);
     } else {
         show_page(IC_PAGE_MAIN);
     }
@@ -449,16 +483,17 @@ static void set_label(lv_obj_t *l, const char *text)
 static void refresh_status(void)
 {
     /* Gold rows on the main page and the mini-game menu (same text,
-     * both live statuses). The touch / feed count line of the v15
-     * cards is gone with the rows: the feed row shows done / not done,
-     * and the counts live in the face captions, not on the main page. */
+     * both live statuses). The main page's grid cards carry icon +
+     * title only (1.5.3a A flow): there is no per-row copy any more,
+     * so the feed-done / fortune-grade copy that used to live on the
+     * rows is gone with them -- the feed subpage keeps its own
+     * result line, the fortune page its grade. */
     if (!s_have_snap) {
         set_label(s_status1, "金币 --/100");
         set_label(s_minigame_coins, "金币 --/100");
         set_label(s_feed_coins, "金币 --/100");
         set_label(s_fortune_coins, "金币 --/100");
-        set_label(s_btn_feed_lbl, "喂饭 ｜ 每种 +10金币");
-        set_label(s_btn_fortune_lbl, "今日运势 ｜ 未抽");
+        set_label(s_learn_coins, "金币 --/100");
         return;
     }
     char buf[64];
@@ -467,33 +502,11 @@ static void refresh_status(void)
     set_label(s_minigame_coins, buf);
     set_label(s_feed_coins, buf);
     set_label(s_fortune_coins, buf);
+    set_label(s_learn_coins, buf);
 
-    /* Dynamic row copy (design §5.2). Dimming is a pre-press signal,
-     * not a disable: a fully claimed feed row still works (happy only),
-     * and a poor mini-game row still explains itself on press.
-     * 1.5a: the feed row is done only when ALL six foods paid.
-     * The main middle row is a menu, not a game: its copy is constant
-     * and it never dims -- the coin gate lives inside each game. */
-    const uint32_t all_fed = (1u << MUSE_PET_FEED_KINDS) - 1u;
-    bool feed_done = (s_snap.feed_mask & all_fed) == all_fed;
-    set_label(s_btn_feed_lbl,
-              feed_done ? "喂饭 ｜ 今日已领满" : "喂饭 ｜ 每种 +10金币");
-    lv_obj_set_style_text_color(s_btn_feed_lbl,
-                                lv_color_hex(feed_done ? MUSE_THEME_DIM : MUSE_THEME_TEXT), 0);
-    set_label(s_btn_game_lbl, "小游戏 ｜ 每种 -10金币");
-    lv_obj_set_style_text_color(s_btn_game_lbl, lv_color_hex(MUSE_THEME_TEXT), 0);
-    if (s_snap.fortune_day >= 0) {
-        const char *grade = muse_pet_fortune_grade(s_snap.fortune);
-        char fbuf[48];
-        snprintf(fbuf, sizeof(fbuf), "今日运势 ｜ %s", grade ? grade : "已抽");
-        set_label(s_btn_fortune_lbl, fbuf);
-    } else {
-        set_label(s_btn_fortune_lbl, "今日运势 ｜ 未抽");
-    }
-
-    /* Mini-game rows: snake, whack-a-mole, goldrain, doodle,
-     * 加减练习 and OX棋 cost 10 coins per start, so they dim together
-     * when nothing can be started. (数独 used to cost 5 once per
+    /* Mini-game rows: snake, whack-a-mole, goldrain, doodle and
+     * OX棋 cost 10 coins per start, so they dim together when
+     * nothing can be started. (数独 used to cost 5 once per
      * calendar day -- a day's ticket already paid meant it stayed
      * bright even at 0 coins -- but it is ARCHIVED 2026-11-08, see
      * build_minigame; its dimming line and sudoku_paid lookup below
@@ -514,26 +527,29 @@ static void refresh_status(void)
     lv_obj_set_style_text_color(s_mg_whack_lbl, lv_color_hex(mg_color), 0);
     lv_obj_set_style_text_color(s_mg_goldrain_lbl, lv_color_hex(mg_color), 0);
     lv_obj_set_style_text_color(s_mg_doodle_lbl, lv_color_hex(mg_color), 0);
-    lv_obj_set_style_text_color(s_mg_mathpractice_lbl, lv_color_hex(mg_color), 0);
     lv_obj_set_style_text_color(s_mg_tictactoe_lbl, lv_color_hex(mg_color), 0);
 }
 
-/* One list row: full-width button with a single centred label, at the
- * main list's IC_ROW_H. The label is returned for refresh_status() when
- * its copy changes (feed / fortune / mini-game dimming), or NULL for a
- * static row. The card look comes from muse_card. */
-static lv_obj_t *main_button(lv_obj_t *parent, int y, const char *text,
-                             lv_event_cb_t cb, lv_obj_t **lbl_out)
+/* One card of the main page's 2x2 grid (1.5.3a A flow): 140x95 card,
+ * 56 px icon at the top, title under it, no subline. The icon is an
+ * A8 master recoloured white (MUSE_THEME_TEXT), the word-cards art
+ * idiom. The image is not clickable: the card takes the click. */
+static void grid_card(lv_obj_t *parent, int x, int y,
+                      const lv_image_dsc_t *art, const char *title,
+                      lv_event_cb_t cb)
 {
-    lv_obj_t *b = muse_card(parent, IC_LIST_W, IC_ROW_H, IC_RADIUS);
-    lv_obj_set_pos(b, (360 - IC_LIST_W) / 2, y);
-    lv_obj_t *l = label(b, muse_font_btn(), MUSE_THEME_TEXT, text);
-    lv_obj_center(l);
+    lv_obj_t *b = muse_card(parent, IC_GRID_CARD_W, IC_GRID_CARD_H, IC_RADIUS);
+    lv_obj_set_pos(b, x, y);
+    lv_obj_t *img = lv_image_create(b);
+    lv_image_set_src(img, art);
+    lv_obj_set_size(img, IC_GRID_ICON, IC_GRID_ICON);
+    lv_obj_align(img, LV_ALIGN_TOP_MID, 0, 8);
+    lv_obj_set_style_image_recolor(img, lv_color_hex(MUSE_THEME_TEXT), 0);
+    lv_obj_set_style_image_recolor_opa(img, LV_OPA_COVER, 0);
+    lv_obj_remove_flag(img, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_t *l = label(b, muse_font_btn(), MUSE_THEME_TEXT, title);
+    lv_obj_align(l, LV_ALIGN_TOP_MID, 0, 70);
     lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, NULL);
-    if (lbl_out) {
-        *lbl_out = l;
-    }
-    return b;
 }
 
 /* One row of the mini-game menu's scrolling column: same card look and the
@@ -1137,8 +1153,8 @@ static void drain_feedback(void)
                 /* Snapshot was stale: the 10 coins were never deducted,
                  * so there is nothing to refund -- cancel the game
                  * (which was only a start of a never-settled game).
-                 * Snake, whack-a-mole, goldrain, doodle, mathpractice
-                 * and tictactoe share PET_FEE; all six expose a cancel
+                 * Snake, whack-a-mole, goldrain, doodle and
+                 * tictactoe share PET_FEE; all five expose a cancel
                  * hook, so route by the visible page so a refusal for
                  * one game never touches another's overlay. */
                 if (s_page == IC_PAGE_WHACKAMOLE) {
@@ -1149,8 +1165,6 @@ static void drain_feedback(void)
                     muse_snake_ui_fee_refused();
                 } else if (s_page == IC_PAGE_GOLDRAIN) {
                     muse_goldrain_ui_fee_refused();
-                } else if (s_page == IC_PAGE_MATHPRACTICE) {
-                    muse_mathpractice_ui_fee_refused();
                 } else if (s_page == IC_PAGE_TICTACTOE) {
                     muse_tictactoe_ui_fee_refused();
                 }
@@ -1164,8 +1178,6 @@ static void drain_feedback(void)
                     muse_snake_ui_fee_refused();
                 } else if (s_page == IC_PAGE_GOLDRAIN) {
                     muse_goldrain_ui_fee_refused();
-                } else if (s_page == IC_PAGE_MATHPRACTICE) {
-                    muse_mathpractice_ui_fee_refused();
                 } else if (s_page == IC_PAGE_TICTACTOE) {
                     muse_tictactoe_ui_fee_refused();
                 }
@@ -1285,7 +1297,7 @@ static void on_open_tictactoe(lv_event_t *e)
 static void on_open_wordcards(lv_event_t *e)
 {
     (void)e;
-    /* The minigame list's "单词练习" row opens the category page,
+    /* The 学习 page's "英语单词" row opens the category page,
      * not a set directly (user decision 2026-11-10, three levels). */
     show_page(IC_PAGE_WORDCARDS_SETS);
 }
@@ -1297,6 +1309,16 @@ static void on_open_wordcards_set(int set)
     muse_wordcards_ui_open_set(set);
     show_page(IC_PAGE_WORDCARDS);
     muse_wordcards_ui_show();
+}
+
+/* The 学习 page's "英语口语" row opens the quiz page directly
+ * (moved here from the minigame list in the 1.5.3a A flow -- only
+ * the entry moved, the quiz module itself did not). */
+static void on_open_quiz(lv_event_t *e)
+{
+    (void)e;
+    show_page(IC_PAGE_QUIZ);
+    muse_quiz_ui_show();
 }
 
 /* ARCHIVED 2026-11-08 with 数独 (see build_minigame). Uncomment
@@ -1313,6 +1335,12 @@ static void on_open_minigame(lv_event_t *e)
 {
     (void)e;
     show_page(IC_PAGE_MINIGAME);
+}
+
+static void on_open_learn(lv_event_t *e)
+{
+    (void)e;
+    show_page(IC_PAGE_LEARN);
 }
 
 static void on_open_snake(lv_event_t *e)
@@ -1338,17 +1366,24 @@ static lv_obj_t *page_group(lv_obj_t *tile)
 static void build_main(void)
 {
     page_header(s_main_page, "互动", NULL);
-    /* Three-row list: the middle row is a menu into the mini-game
-     * list page. The handlers are the same subpage openers the card
-     * grid used, except the middle row now opens the menu. */
-    s_btn_feed = main_button(s_main_page, IC_LIST_TOP, "喂饭 ｜ 每种 +10金币",
-                             on_open_feed, &s_btn_feed_lbl);
-    s_btn_game = main_button(s_main_page, IC_LIST_TOP + IC_ROW_H + IC_ROW_GAP,
-                             "小游戏 ｜ 每种 -10金币", on_open_minigame, &s_btn_game_lbl);
-    s_btn_fortune = main_button(s_main_page,
-                                IC_LIST_TOP + 2 * (IC_ROW_H + IC_ROW_GAP),
-                                "今日运势 ｜ 未抽", on_fortune_open,
-                                &s_btn_fortune_lbl);
+    /* 2x2 grid (1.5.3a A flow, user decision 2026-11-11): this page
+     * used to be a three-row list, and before that a card grid --
+     * with four entries the grid fits again, all four visible at
+     * once, no scroll. Order: 今日运势, 喂饭, 学习, 小游戏. The
+     * handlers are the same subpage openers the list used. Cards
+     * are 140x95 at (35,80) / (185,80) / (35,185) / (185,185); the
+     * far corners sit 176.1 px from the centre, inside the circle
+     * (mockup v3). */
+    grid_card(s_main_page, IC_GRID_X0, IC_GRID_Y0,
+              MUSE_MAIN_GRID_ART[MUSE_MAIN_GRID_FORTUNE], "今日运势",
+              on_fortune_open);
+    grid_card(s_main_page, IC_GRID_X1, IC_GRID_Y0,
+              MUSE_MAIN_GRID_ART[MUSE_MAIN_GRID_FEED], "喂饭", on_open_feed);
+    grid_card(s_main_page, IC_GRID_X0, IC_GRID_Y1,
+              MUSE_MAIN_GRID_ART[MUSE_MAIN_GRID_LEARN], "学习", on_open_learn);
+    grid_card(s_main_page, IC_GRID_X1, IC_GRID_Y1,
+              MUSE_MAIN_GRID_ART[MUSE_MAIN_GRID_GAMES], "小游戏",
+              on_open_minigame);
     /* Coin line, the page's last row. It sat at y = 280 first (6 px under the
      * 今日运势 row, which ends at 274 -- too tight), then pinned to the bottom
      * (-22) which read as too low. 302 splits the gap: 28 px below the row,
@@ -1356,6 +1391,68 @@ static void build_main(void)
      * the width of "金币 100/100". */
     s_status1 = label(s_main_page, muse_font_cjk(), MUSE_THEME_TEXT, "金币 --/100");
     lv_obj_align(s_status1, LV_ALIGN_TOP_MID, 0, 302);
+}
+
+/* One card of the learn page's three-card row (mockup v6, 2026-11-12):
+ * the feed page's item-column pattern -- a 100x128 column holding a
+ * 100x100 card (icon 80 px, centred) and the name 8 px below it, so the
+ * name sits at y = 228 when the column starts at y = 120. The icon is
+ * an A8 master recoloured with the card's own colour
+ * (MUSE_LEARN_ART_COLOR), the word-cards idiom -- not white like the
+ * main grid. The image is not clickable: the card takes the click. */
+static void learn_card(lv_obj_t *parent, int x, int slot, const char *name,
+                       lv_event_cb_t cb)
+{
+    lv_obj_t *item = lv_obj_create(parent);
+    lv_obj_remove_style_all(item);
+    lv_obj_set_size(item, IC_FEED_CARD, 128);
+    lv_obj_set_pos(item, x, 120);
+    lv_obj_set_flex_flow(item, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(item, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
+                          LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_row(item, 8, 0);
+    lv_obj_remove_flag(item, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_t *card = muse_card(item, IC_FEED_CARD, IC_FEED_CARD, IC_RADIUS);
+    lv_obj_t *img = lv_image_create(card);
+    lv_image_set_src(img, MUSE_LEARN_ART[slot]);
+    lv_obj_set_size(img, IC_FEED_ICON, IC_FEED_ICON);
+    lv_obj_center(img);
+    lv_obj_set_style_image_recolor(img,
+                                   lv_color_hex(MUSE_LEARN_ART_COLOR[slot]), 0);
+    lv_obj_set_style_image_recolor_opa(img, LV_OPA_COVER, 0);
+    lv_obj_remove_flag(img, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(card, cb, LV_EVENT_CLICKED, NULL);
+    label(item, muse_font_cjk(), MUSE_THEME_DIM, name);
+}
+
+static void build_learn(void)
+{
+    page_header(s_learn_page, "学习", on_back);
+    /* Same layout as the feed page (user decision 2026-11-12, mockup
+     * v6): the motto takes the feed rule line's slot (y = 84, DIM),
+     * three cards sit in a row at y = 120, and the coin line ends the
+     * page at y = 302 (TEXT, live via refresh_status, same as the feed
+     * and fortune pages). The three rows the A flow built (58 px rows,
+     * scrolling column, 110 px bottom pad) are gone with the list: three
+     * cards fit, so nothing scrolls. The names are the renamed ones
+     * (user decision 2026-11-11): 数学练习 (was 加减练习), 英语单词
+     * (was 单词练习), 英语口语 (the B-flow quiz, moved here from the
+     * minigame list -- same page, only the entry moved). All three are
+     * free (user decision 2026-11-12, 学习全部免费). */
+    lv_obj_t *motto = label(s_learn_page, muse_font_cjk(), MUSE_THEME_DIM,
+                            "好好学习，天天向上");
+    lv_obj_align(motto, LV_ALIGN_TOP_MID, 0, 84);
+    learn_card(s_learn_page, 22, MUSE_LEARN_MATH, "数学练习",
+               on_open_mathpractice);
+    learn_card(s_learn_page, 130, MUSE_LEARN_WORDS, "英语单词",
+               on_open_wordcards);
+    learn_card(s_learn_page, 238, MUSE_LEARN_QUIZ, "英语口语", on_open_quiz);
+    /* Coin line: the page's last row, same slot as the other pages'
+     * (y = 302), so every interaction page ends the same way
+     * (2026-11-01, user request "统一页面内容"). A live status, not a
+     * static label: refresh_status() rewrites it from the snapshot. */
+    s_learn_coins = label(s_learn_page, muse_font_cjk(), MUSE_THEME_TEXT, "金币 --/100");
+    lv_obj_align(s_learn_coins, LV_ALIGN_TOP_MID, 0, 302);
 }
 
 static void build_minigame(void)
@@ -1379,10 +1476,10 @@ static void build_minigame(void)
     lv_obj_set_scroll_dir(list, LV_DIR_VER);
     lv_obj_set_scrollbar_mode(list, LV_SCROLLBAR_MODE_OFF);
 
-    /* List order (user 2026-11-08, amended 2026-11-10): 加减练习 first,
-     * then 单词练习 (moved up from last on 2026-11-10: the user put the
-     * learning game right under the maths game), then 石头剪刀布,
-     * 贪吃蛇, 打地鼠, 金币雨, 毛毛跳跃, OX棋 last.
+    /* List order (user 2026-11-08): 石头剪刀布, 贪吃蛇, 打地鼠,
+     * 金币雨, 毛毛跳跃, OX棋 last. The three learning games moved
+     * to the 学习 page in the 1.5.3a A flow (数学练习 / 英语单词 /
+     * 英语口语, renamed the same day from 加减练习 / 单词练习).
      * 凑十法练习 was fused into
      * 加减练习 the same day (one game, two kinds of question), so it is
      * gone from the list and from the tree. 数独 is ARCHIVED (same date):
@@ -1393,13 +1490,6 @@ static void build_minigame(void)
      * handler, the s_mg_sudoku_lbl dimming line in refresh_status()
      * (plus its sudoku_paid lookup), and re-add *s_mg_sudoku_lbl
      * to the label declaration near the top of this file. */
-    list_row(list, "加减练习", on_open_mathpractice, &s_mg_mathpractice_lbl);
-    /* Free learning game (user decision 2026-11-10): no entry fee, so
-     * no dimming label -- refresh_status() leaves this row bright even
-     * at 0 coins. NULL label: a static row (see list_row). The main
-     * page's "小游戏 ｜ 每种 -10金币" copy is now inexact for this row;
-     * whether to reword it is the user's call, not this change's. */
-    list_row(list, "单词练习", on_open_wordcards, NULL);
     list_row(list, "石头剪刀布", on_open_game, &s_mg_rps_lbl);
     /* ARCHIVED 2026-11-08: 数独 -- screen too small, grid unreadable
      * and hard to tap. See the restore note in the comment above. */
@@ -1703,11 +1793,14 @@ void muse_interact_ui_build(lv_obj_t *tile)
     s_tictactoe_page = page_group(tile);
     s_wordcards_page = page_group(tile);
     s_wordcards_sets_page = page_group(tile);
+    s_quiz_page = page_group(tile);
+    s_learn_page = page_group(tile);
     build_main();
     build_feed();
     build_game();
     build_fortune();
     build_minigame();
+    build_learn();
     muse_sudoku_ui_build(s_sudoku_page, on_back);
     muse_snake_ui_build(s_snake_page, on_back);
     muse_whackamole_ui_build(s_whackamole_page, on_back);
@@ -1718,6 +1811,7 @@ void muse_interact_ui_build(lv_obj_t *tile)
     muse_wordcards_ui_build(s_wordcards_page, on_back);
     muse_wordcards_ui_build_sets(s_wordcards_sets_page, on_back,
                                  on_open_wordcards_set);
+    muse_quiz_ui_build(s_quiz_page, on_back);
     show_page(IC_PAGE_MAIN);
     /* Main page is the only one shown at build; muse_ui.c's tileview
      * hides the whole tile when it is not the active tile, so no extra
@@ -1751,6 +1845,7 @@ void muse_interact_ui_on_hidden(void)
     muse_mathpractice_ui_hide();
     muse_tictactoe_ui_hide();
     muse_wordcards_ui_hide();
+    muse_quiz_ui_hide();
     show_page(IC_PAGE_MAIN);
 }
 

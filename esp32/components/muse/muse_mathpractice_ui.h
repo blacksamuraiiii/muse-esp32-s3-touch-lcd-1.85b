@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 /*
- * muse_mathpractice_ui.h -- 加减练习 subpage inside the interaction tile.
+ * muse_mathpractice_ui.h -- 数学练习 subpage inside the interaction tile.
  *
  * Owned by muse_interact_ui.c like the feed / game / fortune subpages:
  * the page group lives inside the interaction tile (NOT a top-level
@@ -14,35 +14,28 @@
  * Threading follows the interact contract: LVGL callbacks only touch
  * this module's own objects and the RAM game state
  * (muse_mathpractice.c); there is no worker and no NVS here -- coin
- * movement is two commands to the pet worker, PET_FEE at start and
- * PET_PLAY_REWARD once at OVER (see below).
+ * movement is one command to the pet worker, PET_PLAY_REWARD once at
+ * OVER (see below). Entry is free (user decision 2026-11-12, 学习全部
+ * 免费): no PET_FEE, no snapshot gate, no refusal path.
  *
- * Economy (same as snake / whack-a-mole / goldrain / doodle): each
- * game costs 5 coins. Tapping 开始 on the START overlay or 再来一局 on
- * the OVER overlay (which prints "- 5 金币" under the label) first
- * checks the pet snapshot: under 5 coins the start is refused with
- * "金币不够（需 5 枚）" and nothing is charged; otherwise PET_FEE is
- * queued and the game starts. Resume after pause never charges again,
- * and there is no restart button on the pause card (same decision as
- * snake: one tap in the bezel must not spend 5 coins). The worker is
- * the only writer of coins; if its re-check finds the snapshot was
- * stale (PET_FEE feedback PET_POOR), the interact tile calls
- * muse_mathpractice_ui_fee_refused(), which cancels a running game
- * back to START with the refusal note.
+ * Economy: entry is free, so tapping 开始 on the START overlay or
+ * 再来一局 on the OVER overlay starts a round outright. Resume after
+ * pause never re-starts (same decision as snake: one tap in the
+ * bezel must not start a new round). The worker is the only writer
+ * of coins; the UI only ever asks it to pay out, never to charge.
  *
  * Score and payout: a right pick is +1, a wrong one is +0, so the
  * score only ever goes up. The 2-minute round's score is converted exactly
  * once, at OVER, by muse_pet_round_coins_cap() -- 1 point per coin, at
  * most 20 coins per round (this game's own ceiling since the round grew
- * to 3 minutes on 2026-11-08; every other game stays at 10) -- then sent
- * as PET_PLAY_REWARD. The payout
- * is gross: the 5-coin entry fee was already charged at start, so no
- * round mints more than 5 coins. The HUD reads "本局 n 分 · 剩余 s 秒"
- * while PLAYING or PAUSED and turns GOLD with "本局 n 分，+m 金币" at
- * OVER. The net is deliberately NOT printed (kids cannot tell net
- * apart) and the OVER card carries no line of its own (the page title
- * becomes "游戏结束"). Leaving the page mid-round pauses and settles
- * nothing.
+ * to 3 minutes on 2026-11-08; unchanged by the free-entry decision
+ * 2026-11-12) -- then sent as PET_PLAY_REWARD. The payout is gross
+ * and IS the net now: entry is free, so a round pays at most its
+ * 20-coin ceiling and never goes negative. The HUD reads
+ * "本局 n 分 · 剩余 s 秒" while PLAYING or PAUSED and turns GOLD with
+ * "本局 n 分，+m 金币" at OVER. The OVER card carries no line of its
+ * own (the page title becomes "游戏结束"). Leaving the page mid-round
+ * pauses and settles nothing.
  *
  * Controls (user decision 2026-11-08): one question at a time -- an
  * addition with a carry ("8 + 5 ? 13") or a teen-minus-single-digit
@@ -69,10 +62,10 @@
 
 #include "lvgl.h"
 
-/* Build the 加减练习 page inside `page` (a 360x360 group created by
+/* Build the 数学练习 page inside `page` (a 360x360 group created by
  * muse_interact_ui.c). `back_cb` is the back-arrow handler (the
- * interaction tile's on_back: 加减练习 back always lands on the
- * mini-game menu). Safe to call once, in the LVGL task. */
+ * interaction tile's on_back: 数学练习 back always lands on the
+ * 学习 page). Safe to call once, in the LVGL task. */
 void muse_mathpractice_ui_build(lv_obj_t *page, lv_event_cb_t back_cb);
 
 /* Entering the page: refreshes the board from the kept game state.
@@ -84,9 +77,3 @@ void muse_mathpractice_ui_show(void);
  * overlay shown), so it never plays on invisibly. Any other state is
  * left as-is, so a return visit resumes exactly where it left off. */
 void muse_mathpractice_ui_hide(void);
-
-/* PET_FEE feedback came back PET_POOR (the snapshot gate was stale and
- * the fee never settled): cancel a running game back to START with the
- * refusal note. Called from the interact tile's feedback drain, on the
- * LVGL task. */
-void muse_mathpractice_ui_fee_refused(void);

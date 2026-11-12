@@ -74,7 +74,7 @@
  */
 #define MUSE_PET_SCORE_PER_COIN 1u     /* points per coin (1:1) */
 #define MUSE_PET_ROUND_COIN_MAX 20u    /* per-round payout ceiling */
-/* 加减练习 has its own 20-coin ceiling: raised from the shared 10 on
+/* 数学练习 has its own 20-coin ceiling: raised from the shared 10 on
  * 2026-11-08 when the round went to 3 minutes, and KEPT at 20 when the
  * round came back to 2 minutes on 2026-11-09 (user decision: only the
  * clock changed). Every other game also uses 20

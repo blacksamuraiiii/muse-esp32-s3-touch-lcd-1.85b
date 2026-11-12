@@ -1613,55 +1613,91 @@ static void check_codecs_after_recovery(void)
  * component owns the register map, the CEDV model and the byte order; the only
  * thing this file still decides is what a reading means for the UI. Its model is
  * written from this pack's capacity at init (s_cedv), so the percentage is the
- * gauge's computation, not a voltage estimate: a gauge that answers out of range
- * is reported as unknown (-1) rather than papered over with millivolts. */
+ * gauge's computation, not a voltage estimate.
+ *
+ * The rule follows upstream's Waveshare 1.85B reader: any failed or partial
+ * read clears the previous sample and reports unknown (-1), never 0% and never
+ * the last good value - a stale percentage is worse than none. The sample is
+ * always published (this returns ESP_OK), so the caller can clear it; USB is
+ * read off the hardware and stays independent of the gauge. The two getters
+ * that return an error are the canaries: battery status (0x0a) first, then
+ * operation status (0x3a) - a battery has to be present (BATTPRES), the gauge
+ * initialized (INITCOMP) and out of config-update mode (CFGUPDATE) before the
+ * value getters are trusted. The value getters swallow transfer errors and
+ * return 0, so the ranges catch them: a real cell reads 2000-5000 mV and
+ * 0-100%. Current is the signed average current, positive while charging. */
 static esp_err_t read_power(muse_power_t *out)
 {
     check_codecs_after_recovery();
+    /* A failed/partial read must clear the previous sample, never become 0%.
+     * Keep USB detection independent of the gauge so unplugging still works. */
+    *out = (muse_power_t){ .battery_pct = -1, .usb = usb_serial_jtag_is_connected() };
+    esp_err_t err = ESP_OK;
+    int sda = -1, scl = -1;
     if (i2c_master_probe(s_i2c, BQ27220_ADDR, 20) != ESP_OK) {
         /* The pad levels go in the line: a bus that is held low by a slave and
          * one whose pads lost their pull-ups look the same from here. */
-        int sda, scl;
         muse_i2c_levels(&sda, &scl);
-        ESP_LOGW(TAG, "BQ27220 not answering at 0x%02x (sda=%d scl=%d)", BQ27220_ADDR, sda, scl);
         muse_i2c_report(false);
-        return ESP_ERR_NOT_FOUND;
+        err = ESP_ERR_NOT_FOUND;
+    } else {
+        muse_i2c_report(true);
+        if (s_gauge == NULL) {
+            /* bq27220_create() failed at init, so there is no model and no honest
+             * percentage. Report unknown rather than a voltage guess - the same rule
+             * the range check below follows. */
+            err = ESP_ERR_INVALID_STATE;
+        } else {
+            battery_status_t bs;
+            err = bq27220_get_battery_status(s_gauge, &bs);
+            if (err == ESP_OK && !bs.BATTPRES) {
+                /* No battery: unknown, not 0%. */
+            } else if (err == ESP_OK) {
+                operation_status_t os;
+                err = bq27220_get_operation_status(s_gauge, &os);
+                if (err == ESP_OK && (!os.INITCOMP || os.CFGUPDATE)) {
+                    err = ESP_ERR_INVALID_STATE;
+                } else if (err == ESP_OK) {
+                    const uint16_t soc = bq27220_get_state_of_charge(s_gauge);
+                    const uint16_t mv = bq27220_get_voltage(s_gauge);
+                    const int ma = (int)bq27220_get_avgcurrent(s_gauge);
+                    if (soc > 100 || mv < 2000 || mv > 5000) {
+                        err = ESP_ERR_INVALID_RESPONSE;
+                    } else {
+                        out->battery_pct = (int)soc;
+                        out->battery_mv = (int)mv;
+                        /* DSG clear alone also means relaxation; it does not
+                         * prove charging. */
+                        out->charging = ma > 0 && !bs.DSG;
+                        /* The gauge's coulomb counter and thermistor, for the night
+                         * recorder: mA (negative while discharging), and 0.1 K which
+                         * becomes 0.1 C. Neither is shown on screen, so a gauge that
+                         * returns nonsense costs nothing here - the sampler records it
+                         * as-is and the bench reads the trend. */
+                        out->battery_ma = ma;
+                        out->battery_temp_c10 = (int)bq27220_get_temperature(s_gauge) - 2732;
+                    }
+                }
+            }
+        }
     }
-    muse_i2c_report(true);
-    if (s_gauge == NULL) {
-        /* bq27220_create() failed at init, so there is no model and no honest
-         * percentage. Report nothing rather than a voltage guess - the same rule
-         * the 0 mV case below follows. */
-        ESP_LOGW(TAG, "gauge handle missing: battery unknown");
-        return ESP_ERR_INVALID_STATE;
+    /* Log once per outcome, not on every poll: a dead gauge must not spam. */
+    static esp_err_t last_err = ESP_OK;
+    static bool logged;
+    if (!logged || err != last_err) {
+        if (err == ESP_OK) {
+            ESP_LOGI(TAG, "BQ27220: battery %d%%, %d mV, charging=%d", out->battery_pct,
+                     out->battery_mv, out->charging);
+        } else if (err == ESP_ERR_NOT_FOUND) {
+            ESP_LOGW(TAG, "BQ27220 not answering at 0x%02x (sda=%d scl=%d)", BQ27220_ADDR, sda, scl);
+        } else {
+            ESP_LOGW(TAG, "BQ27220 reading unavailable: %s", esp_err_to_name(err));
+        }
+        last_err = err;
+        logged = true;
     }
-    const uint16_t soc = bq27220_get_state_of_charge(s_gauge);
-    const uint16_t mv = bq27220_get_voltage(s_gauge);
-    /* The component's getters swallow the transfer error and return 0, and no
-     * real cell reads 0 mV: both zero means the bus, not the battery. Report it
-     * so the caller keeps the last valid reading instead of showing 0%. */
-    if (soc == 0 && mv == 0) {
-        muse_i2c_report(false);
-        ESP_LOGW(TAG, "gauge read 0 mV / 0%%: bus glitch, keeping the last value");
-        return ESP_ERR_INVALID_RESPONSE;
-    }
-    battery_status_t bs;
-    if (bq27220_get_battery_status(s_gauge, &bs) != ESP_OK) {
-        bs.full = 0;   /* unknown: read as "not charging" below, which is the
-                        * safe direction - a charger that is there will be seen
-                        * on the next poll. */
-    }
-    out->battery_pct = soc <= 100 ? (int)soc : -1;
-    out->battery_mv = (int)mv;
-    /* BatteryStatus bit0 is DSG: clear while the charger is pushing current in. */
-    out->charging = !bs.DSG;
-    out->usb = usb_serial_jtag_is_connected();
-    /* The gauge's coulomb counter and thermistor, for the night recorder: mA
-     * (negative while discharging), and 0.1 K which becomes 0.1 C. Neither is
-     * shown on screen, so a gauge that returns nonsense costs nothing here -
-     * the sampler records it as-is and the bench reads the trend. */
-    out->battery_ma = (int)bq27220_get_avgcurrent(s_gauge);
-    out->battery_temp_c10 = (int)bq27220_get_temperature(s_gauge) - 2732;
+    /* Publish unknown on failure instead of leaving a stale percentage/USB
+     * flag in shared state. */
     return ESP_OK;
 }
 

@@ -58,7 +58,7 @@ static void check_sound(muse_sfx_t sfx, const char *name, size_t want_n)
 int main(void)
 {
     /* Lengths at 16 kHz: GOOD/BAD/DRAW 120 ms, PLACE 45 ms, WIN 330 ms,
-     * EAT 140 ms, PET 80 ms, FORTUNE 180 ms. */
+     * EAT 140 ms, PET 80 ms, FORTUNE 180 ms, LOW_BATT 320 ms. */
     check_sound(MUSE_SFX_GOOD, "good", 1920);
     check_sound(MUSE_SFX_BAD, "bad", 1920);
     check_sound(MUSE_SFX_DRAW, "draw", 1920);
@@ -67,6 +67,7 @@ int main(void)
     check_sound(MUSE_SFX_EAT, "eat", 2240);
     check_sound(MUSE_SFX_PET, "pet", 1280);
     check_sound(MUSE_SFX_FORTUNE, "fortune", 2880);
+    check_sound(MUSE_SFX_LOW_BATT, "low_batt", 5120);
     /* EAT is two 50 ms peeps with a 40 ms silent gap in between:
      * samples 800..1439 are exactly 0, both peeps sound. */
     size_t n_eat = muse_audio_sfx_render(MUSE_SFX_EAT, s_buf, MUSE_SFX_MAX_SAMPLES);
@@ -88,6 +89,27 @@ int main(void)
         }
     }
     assert(peep1 > 1000 && peep2 > 1000);
+    /* LOW_BATT is two 120 ms beeps at 262 Hz with an 80 ms silent gap in
+     * between: samples 1920..3199 are exactly 0, both beeps sound. */
+    size_t n_low = muse_audio_sfx_render(MUSE_SFX_LOW_BATT, s_buf, MUSE_SFX_MAX_SAMPLES);
+    assert(n_low == 5120);
+    int32_t beep1 = 0, beep2 = 0;
+    for (size_t i = 0; i < 1920; i++) {
+        int32_t v = s_buf[i] < 0 ? -s_buf[i] : s_buf[i];
+        if (v > beep1) {
+            beep1 = v;
+        }
+    }
+    for (size_t i = 1920; i < 3200; i++) {
+        assert(s_buf[i] == 0);
+    }
+    for (size_t i = 3200; i < 5120; i++) {
+        int32_t v = s_buf[i] < 0 ? -s_buf[i] : s_buf[i];
+        if (v > beep2) {
+            beep2 = v;
+        }
+    }
+    assert(beep1 > 1000 && beep2 > 1000);
     /* START is not a table sound: it renders nothing (played via chirp). */
     assert(muse_audio_sfx_render(MUSE_SFX_START, s_buf, MUSE_SFX_MAX_SAMPLES) == 0);
     /* A short buffer renders exactly the prefix of the full sound. */

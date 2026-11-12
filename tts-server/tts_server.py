@@ -146,6 +146,13 @@ WORD_CACHE_MAX_FILES = int(os.environ.get("TTS_WORD_MAX_FILES", "2000"))
 # Streaming sends audio as it is synthesised, so playback starts ~1 s in instead
 # of after the whole reply. stream=0 asks for the old buffered behaviour.
 STREAM_DEFAULT = os.environ.get("TTS_STREAM", "1") != "0"
+# C3: bridge-side pacing. The upstream sends a sentence's audio in bursts (and
+# a backlog all at once after an LLM pause); the board's 16 KB ring then fills
+# faster than playback drains it, and a ring_send that blocks for 3 s aborts
+# the fetch and drops the rest of the sentence. Metering MP3 frames out at
+# their real-time rate keeps the ring near empty. TTS_PACING=0 restores the
+# old burst behaviour (the rollback switch for C1-C3).
+PACING_DEFAULT = os.environ.get("TTS_PACING", "1") != "0"
 # Bytes to hold before answering 200: enough to prove it really is MP3. Keep it
 # small: the board only needs the first frame, and every byte held here is
 # playback delay.
@@ -177,6 +184,24 @@ def clean(text: str) -> str:
     text = re.sub(r"[*_`#>|~]+", "", text)
     text = re.sub(r"^\s*[-+]\s+", "", text, flags=re.M)  # list bullets
     return re.sub(r"\s+", " ", text).strip()[:MAX_TEXT_LEN]
+
+
+def split_first_sentence(text: str):
+    """(head, tail) at the first comma, or None when there is no cut to make.
+
+    C1: the first sentence of a reply is often a long clause, and Azure's time
+    to first audio grows with it, so synthesising only up to the first comma
+    gets the first sound out sooner and the rest follows in the same response
+    (xiaozhi's first_sentence_punctuations). Only the reply's first request is
+    split (?first=1, set by the firmware): later sentences keep the comma
+    pause the cut would drop, and a head shorter than two characters is not
+    worth a second request."""
+    for i, ch in enumerate(text):
+        if ch in "，,":
+            head, tail = text[: i + 1], text[i + 1 :]
+            if len(head) >= 2 and tail.strip():
+                return head, tail
+    return None
 
 
 def is_mp3(data: bytes) -> bool:
@@ -409,20 +434,6 @@ def _synth_azure(text, voice, rate, pitch) -> bytes:
         return r.read()
 
 
-def _stream_azure(text, voice, rate, pitch, out: "queue.Queue"):
-    try:
-        with _azure_request(text, voice, rate, pitch) as r:
-            while True:
-                chunk = r.read(4096)
-                if not chunk:
-                    break
-                out.put(chunk)
-    except Exception as e:  # noqa: BLE001 - handed to the view, reported as 502
-        out.put(e)
-    finally:
-        out.put(None)
-
-
 # ------------------------------------------------------------------- edge-tts
 
 async def _edge_chunks(text, voice, rate, pitch):
@@ -443,41 +454,188 @@ def _synth_edge(text, voice, rate, pitch) -> bytes:
     return asyncio.run(run())
 
 
-def _stream_edge(text, voice, rate, pitch, out: "queue.Queue"):
-    async def run():
-        try:
-            async for data in _edge_chunks(text, voice, rate, pitch):
-                out.put(data)
-        except Exception as e:  # noqa: BLE001 - handed to the view, reported as 502
-            out.put(e)
-        finally:
-            out.put(None)
-
-    threading.Thread(target=lambda: asyncio.run(run()), daemon=True).start()
-
-
 # ------------------------------------------------------------------- plumbing
 
 SYNTH = {"azure": _synth_azure, "edge": _synth_edge}
-STREAM = {"azure": _stream_azure, "edge": _stream_edge}
 
 
-def _start_stream_thread(backend, text, voice, rate, pitch, out: "queue.Queue"):
+def _stream_one(text, backend, voice, rate, pitch, out: "queue.Queue") -> bool:
+    """One segment into the shared queue; False on error (the exception is
+    already queued). No terminal marker: the caller sends one when every
+    segment is done, so a split first sentence streams as one response."""
     if backend == "edge":
-        _stream_edge(text, voice, rate, pitch, out)   # starts its own thread
-    else:
-        threading.Thread(
-            target=STREAM[backend], args=(text, voice, rate, pitch, out), daemon=True
-        ).start()
+        async def run():
+            async for data in _edge_chunks(text, voice, rate, pitch):
+                out.put(data)
+        try:
+            asyncio.run(run())
+        except Exception as e:  # noqa: BLE001 - handed to the view, reported as 502
+            out.put(e)
+            return False
+        return True
+    try:
+        with _azure_request(text, voice, rate, pitch) as r:
+            while True:
+                chunk = r.read(4096)
+                if not chunk:
+                    break
+                out.put(chunk)
+    except Exception as e:  # noqa: BLE001 - handed to the view, reported as 502
+        out.put(e)
+        return False
+    return True
 
 
-def _stream_reply(key, text, voice, rate, pitch, started, backend):
+def _stream_segments(segments, backend, voice, rate, pitch, out: "queue.Queue"):
+    """The segments of one reply in order, one terminal marker at the end."""
+    for text in segments:
+        if not _stream_one(text, backend, voice, rate, pitch, out):
+            break
+    out.put(None)
+
+
+# C3: MP3 frame pacing. Frame length and duration come from each frame's own
+# header (MPEG-1 Layer III: 144*bitrate/samplerate, 1152 samples; MPEG-2/2.5:
+# 72*..., 576 samples), so VBR and the 24 kHz / 48 kbps Azure format pace
+# correctly -- measured on a real reply, 24 ms a frame, not the 72 ms the
+# 16 kHz figure would give.
+_MP3_BR_MPEG1_L3 = (None, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, None)
+_MP3_BR_MPEG2_L3 = (None, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160, None)
+_MP3_SR = {3: (44100, 48000, 32000), 2: (22050, 24000, 16000), 0: (11025, 12000, 8000)}
+
+
+class _Mp3Frames:
+    """Splits a byte stream into MP3 frames, ID3 tag first when present.
+
+    A lost sync is recovered by scanning forward; a trailing partial frame is
+    flushed only at the end of the stream, so no byte is ever dropped or
+    duplicated on the wire (the cache keeps the raw bytes separately)."""
+
+    def __init__(self):
+        self.buf = bytearray()
+
+    def feed(self, data: bytes):
+        self.buf += data
+
+    def take(self, final=False):
+        """Complete (bytes, duration_s) pairs now in the buffer. An ID3 tag
+        comes first with duration 0: it is not audio and is never paced. A
+        tag also opens every later segment of a split reply, so one is valid
+        wherever a frame is expected -- dropping it would make the paced
+        stream shorter than the cached bytes."""
+        out = []
+        buf = self.buf
+        while True:
+            if len(buf) < 3 and b"ID3".startswith(bytes(buf)) and not final:
+                break  # a tag may still be arriving
+            if buf[:3] == b"ID3":
+                if len(buf) < 10:
+                    break  # need the size first
+                size = ((buf[6] & 0x7F) << 21) | ((buf[7] & 0x7F) << 14) | \
+                       ((buf[8] & 0x7F) << 7) | (buf[9] & 0x7F)
+                total = 10 + size + (10 if buf[5] & 0x10 else 0)
+                if len(buf) < total:
+                    break
+                out.append((bytes(buf[:total]), 0.0))
+                del buf[:total]
+                continue
+            if len(buf) < 4:
+                break
+            hdr = self._frame_at(buf)
+            if hdr is None:
+                # No sync here: scan forward for the next one, keeping a
+                # possible partial header at the end.
+                nxt = self._find_sync(buf, 1)
+                if nxt is None:
+                    keep = buf[-3:] if len(buf) > 3 and not final else b""
+                    del buf[: len(buf) - len(keep)]
+                    break
+                del buf[:nxt]
+                continue
+            flen, dur = hdr
+            if len(buf) < flen:
+                if final:
+                    out.append((bytes(buf), dur))
+                    del buf[:]
+                break
+            out.append((bytes(buf[:flen]), dur))
+            del buf[:flen]
+        if final and buf:
+            # A remnant too short to be a frame or a tag: pass it through so
+            # the paced stream holds exactly the bytes the cache holds.
+            out.append((bytes(buf), 0.0))
+            del buf[:]
+        return out
+
+    @staticmethod
+    def _frame_at(buf):
+        """(frame_length, duration_s) for the frame at buf[0], or None."""
+        if buf[0] != 0xFF or (buf[1] & 0xE0) != 0xE0:
+            return None
+        ver = (buf[1] >> 3) & 0x3
+        layer = (buf[1] >> 1) & 0x3
+        if ver == 1 or layer != 1:   # reserved version, or not Layer III
+            return None
+        bri = (buf[2] >> 4) & 0xF
+        sri = (buf[2] >> 2) & 0x3
+        table = _MP3_BR_MPEG1_L3 if ver == 3 else _MP3_BR_MPEG2_L3
+        br = table[bri]
+        sr = _MP3_SR[ver][sri]
+        if br is None:
+            return None
+        coeff = 144 if ver == 3 else 72
+        spf = 1152 if ver == 3 else 576
+        flen = coeff * br * 1000 // sr + ((buf[2] >> 1) & 0x1)
+        if flen < 4:
+            return None
+        return flen, spf / sr
+
+    @staticmethod
+    def _find_sync(buf, start):
+        for i in range(start, len(buf) - 1):
+            if buf[i] == 0xFF and (buf[i + 1] & 0xE0) == 0xE0:
+                return i
+        return None
+
+
+class _FramePacer:
+    """Meters MP3 frames out at their real-time rate: the first two frames go
+    at once so playback starts fast, then one frame per frame duration. When
+    the upstream stalls and a backlog arrives all at once, the clock is
+    re-anchored instead of sending the backlog as a burst."""
+
+    def __init__(self):
+        self._next_t = None
+        self._sent = 0
+
+    def wait(self, dur: float):
+        now = time.monotonic()
+        if self._sent < 2 or self._next_t is None:
+            self._next_t = now + dur
+        elif now < self._next_t:
+            time.sleep(self._next_t - now)
+            self._next_t += dur
+        elif now - self._next_t > dur:
+            self._next_t = now + dur   # stalled: re-anchor, don't burst
+        else:
+            self._next_t += dur
+        self._sent += 1
+
+
+def _stream_reply(key, text, voice, rate, pitch, started, backend, segments=None):
     """Generator: yield audio as it arrives, cache the whole thing at the end.
 
+    `segments` is the list of texts to synthesise in order into this one
+    response (the first sentence split at its first comma); [text] when None.
     Raises before the first yield when the backend delivers nothing usable, so
     the caller can still answer 502 (or retry on the fallback backend)."""
+    if segments is None:
+        segments = [text]
     out: queue.Queue = queue.Queue()
-    _start_stream_thread(backend, text, voice, rate, pitch, out)
+    threading.Thread(
+        target=_stream_segments, args=(segments, backend, voice, rate, pitch, out),
+        daemon=True,
+    ).start()
 
     head = bytearray()
     deadline = time.monotonic() + STREAM_FIRST_TIMEOUT
@@ -498,6 +656,40 @@ def _stream_reply(key, text, voice, rate, pitch, started, backend):
     log.info("first bytes after %.2fs (%d bytes)", time.monotonic() - started, len(head))
 
     def gen():
+        # C3: meter MP3 frames out at their real-time rate instead of passing
+        # the upstream's bursts through. The first two frames go at once, so
+        # the first sound is not delayed by pacing; the cache still gets the
+        # raw bytes, so a paced stream and a cached one hold the same audio.
+        buf = bytearray(head)
+        frames = _Mp3Frames()
+        pacer = _FramePacer()
+        frames.feed(bytes(head))
+
+        def emit(final=False):
+            for chunk, dur in frames.take(final=final):
+                if dur:
+                    pacer.wait(dur)
+                yield chunk
+
+        yield from emit()
+        while True:
+            item = out.get()
+            if item is None:
+                break
+            if isinstance(item, Exception):
+                log.warning("stream ended with %r", item)
+                break
+            buf += item
+            frames.feed(item)
+            yield from emit()
+        yield from emit(final=True)
+        if is_mp3(bytes(buf)):
+            cache_put(key, bytes(buf))
+        log.info("streamed %d bytes in %.2fs (%s %s rate=%s pitch=%s)",
+                 len(buf), time.monotonic() - started, backend, voice, rate, pitch)
+
+    def gen_raw():
+        # TTS_PACING=0: the old behaviour, bursts and all.
         buf = bytearray(head)
         yield bytes(head)
         while True:
@@ -514,7 +706,7 @@ def _stream_reply(key, text, voice, rate, pitch, started, backend):
         log.info("streamed %d bytes in %.2fs (%s %s rate=%s pitch=%s)",
                  len(buf), time.monotonic() - started, backend, voice, rate, pitch)
 
-    return gen()
+    return gen() if PACING_DEFAULT else gen_raw()
 
 
 def cache_get(key):
@@ -573,19 +765,36 @@ def tts():
                         mimetype="text/html")
 
     key = (BACKEND, voice, rate, pitch, text)
+    # C2: the firmware marks the last chunk of a reply (?last=1, only on the
+    # final unit's final request); the marker is echoed on the response so the
+    # board knows the tail's audio really arrived. A cache hit is the whole
+    # audio for that text, so it carries the marker too.
+    last = request.args.get("last") == "1"
     hit = cache_get(key)
     if hit is not None:
         log.info("cache hit %d chars -> %d bytes (%s)", len(text), len(hit), voice)
         resp = Response(hit, mimetype="audio/mpeg")
         resp.headers["X-TTS-Cache"] = "hit"
         resp.headers["X-TTS-Backend"] = BACKEND
+        if last:
+            resp.headers["X-TTS-Last"] = "1"
         return resp
 
     started = time.monotonic()
     streaming = (request.args.get("stream") or ("1" if STREAM_DEFAULT else "0")) != "0"
+    # C1: the reply's first request (?first=1, set by the firmware) is split at
+    # its first comma, so the head's audio starts sooner; the tail follows in
+    # the same response. A cache hit needs no split: its audio is already here.
+    segments = None
+    if streaming and request.args.get("first") == "1":
+        cut = split_first_sentence(text)
+        if cut:
+            segments = list(cut)
+            log.info("first sentence cut at comma: %r + %r", cut[0], cut[1])
     try:
         if streaming:
-            gen = _stream_reply(key, text, voice, rate, pitch, started, BACKEND)
+            gen = _stream_reply(key, text, voice, rate, pitch, started, BACKEND,
+                                segments=segments)
         else:
             audio = _synth(BACKEND, text, voice, rate, pitch)
             if not is_mp3(audio):
@@ -602,7 +811,8 @@ def tts():
         log.warning("retrying on %s (rate=%s pitch=%s)", FALLBACK, fb_rate, fb_pitch)
         try:
             if streaming:
-                gen = _stream_reply(fb_key, text, voice, fb_rate, fb_pitch, started, FALLBACK)
+                gen = _stream_reply(fb_key, text, voice, fb_rate, fb_pitch, started, FALLBACK,
+                                    segments=segments)
             else:
                 audio = _synth(FALLBACK, text, voice, fb_rate, fb_pitch)
                 if not is_mp3(audio):
@@ -616,11 +826,17 @@ def tts():
             resp = Response(audio, mimetype="audio/mpeg")
             resp.headers["X-TTS-Backend"] = FALLBACK
             resp.headers["X-TTS-Cache"] = "miss"
+            if last:
+                resp.headers["X-TTS-Last"] = "1"
             return resp
         resp = Response(gen, mimetype="audio/mpeg")
         resp.headers["X-TTS-Cache"] = "miss"
         resp.headers["X-TTS-Stream"] = "1"
         resp.headers["X-TTS-Backend"] = FALLBACK
+        if segments:
+            resp.headers["X-TTS-First-Cut"] = "1"
+        if last:
+            resp.headers["X-TTS-Last"] = "1"
         return resp
 
     if streaming:
@@ -628,6 +844,10 @@ def tts():
         resp.headers["X-TTS-Cache"] = "miss"
         resp.headers["X-TTS-Stream"] = "1"
         resp.headers["X-TTS-Backend"] = BACKEND
+        if segments:
+            resp.headers["X-TTS-First-Cut"] = "1"
+        if last:
+            resp.headers["X-TTS-Last"] = "1"
         return resp
 
     cache_put(key, audio)
@@ -636,6 +856,8 @@ def tts():
     resp = Response(audio, mimetype="audio/mpeg")
     resp.headers["X-TTS-Cache"] = "miss"
     resp.headers["X-TTS-Backend"] = BACKEND
+    if last:
+        resp.headers["X-TTS-Last"] = "1"
     return resp
 
 
@@ -701,6 +923,7 @@ def health():
                 "word_max_bytes": WORD_MAX_BYTES,
                 "stream_head": STREAM_HEAD_BYTES,
                 "send_bytes": SEND_BYTES,
+                "pacing": PACING_DEFAULT,
                 "test_hooks": TEST_HOOKS,
                 "azure_pool_idle": _pool.qsize(),
                 "azure_pool_open": _pool_open,

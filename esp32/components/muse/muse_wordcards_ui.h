@@ -5,14 +5,14 @@
  * Two pages, three levels (user decision 2026-11-10, phase 1: fruit
  * + animal, 8 cards; phase 2 2026-11-11 adds things; the same day the two
  * animal sets merged into one 8-word group over two swiped pages): the
- * minigame list's "单词练习" row opens the category page
+ * 学习 page's "英语单词" row opens the category page
  * (muse_wordcards_ui_build_sets: one row per offered set -- "水果 ·
- * Fruit", "动物1 · Animal 1", "动物2 · Animal 2", "物品 · Things" --
+ * Fruit", "动物 · Animal", "食物 · Food", "物品 · Things" --
  * icon + title centred as one group, no count text, hint "限时免费"
  * as the list's last item), and a
  * category row opens that set's 2x2 card page (muse_wordcards_ui_build).
  * Back goes one level up at a time: card page -> category page ->
- * minigame list. Entering a set always starts it fresh (START, all
+ * 学习 page. Entering a set always starts it fresh (START, all
  * cards front-up, prefetch of that set's 4 MP3s); leaving a set
  * resets its flipped cards. There is no time limit (user decision
  * 2026-11-11): no countdown, no summary, no pause screen.
@@ -58,7 +58,7 @@ typedef void (*muse_wordcards_open_set_cb_t)(int set);
 
 /* Build the category page inside `page` (a 360x360 group created by
  * muse_interact_ui.c). `back_cb` is the back-arrow handler (back to
- * the minigame list); `open_cb` runs when a set row is tapped.
+ * the 学习 page); `open_cb` runs when a set row is tapped.
  * One row per offered set, in table order. Safe to call once, in
  * the LVGL task. */
 void muse_wordcards_ui_build_sets(lv_obj_t *page, lv_event_cb_t back_cb,
