@@ -95,11 +95,16 @@ void muse_app_run(const muse_board_t *board)
 {
     muse_board = board;
     ESP_LOGI(TAG, "board: %s", board->name);
+    log_heap("app-start");
     ESP_ERROR_CHECK(board->init());
+    log_heap("board");
     ESP_ERROR_CHECK(muse_settings_init());
+    log_heap("settings");
     muse_settings_set_listener(on_setting);
     muse_state_init();
+    log_heap("state");
     muse_battery_init();
+    log_heap("battery");
     /* Before the UI: adopts the RTC's time when the system clock is unset, so
      * the first frame already shows a real clock rather than a placeholder. The
      * SNTP half waits for Wi-Fi on its own. */
@@ -111,6 +116,7 @@ void muse_app_run(const muse_board_t *board)
                   "in; this image is not for the release channel");
 #endif
     muse_time_start();
+    log_heap("time");
     /* 1.5a pet worker: after the clock is adopted, before UI/voice start.
      * muse_pet_start() never blocks and never aborts the app: on failure it
      * only logs, and muse_pet_request() then returns false. */

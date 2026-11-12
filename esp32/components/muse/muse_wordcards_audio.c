@@ -67,8 +67,16 @@ static const char *TAG = "muse.wordcards_audio";
  * `Guru Meditation (StoreProhibited)` inside lv_draw_sw_mask: internal heap
  * was down to 10 KB free / 4 KB largest, so the mask buffer came back NULL.
  * Below this much largest-free internal RAM the prefetch is skipped and the
- * cards stay silent -- a quiet card beats a crash. */
-#define WC_MIN_INTERNAL_FOR_TLS (16u * 1024u)
+ * cards stay silent -- a quiet card beats a crash.
+ *
+ * 16 KB was a guess (the crash case measured 4 KB largest). 2026-11-12, with
+ * IDF 6.0.3, this board sits at 7.68 KB largest after boot (1.5.2d on 6.0.1 had
+ * 12.3 KB), so 16 KB refused every prefetch and every word and quiz card went
+ * silent -- the chat replies were unaffected, which made it look like a server
+ * problem. Measured with the guard off: a TLS client opens and a whole set
+ * plays fine at 7.68 KB largest, no crash over a full test session. 6 KB keeps
+ * the floor the crash case needed (4 KB largest) and lets the cards work. */
+#define WC_MIN_INTERNAL_FOR_TLS (6u * 1024u)
 
 /* PSRAM slots: one per word of the current set. Allocated on the
  * first prefetch and kept: a round reuses them, a restart refills
