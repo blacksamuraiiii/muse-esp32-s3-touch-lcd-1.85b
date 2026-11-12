@@ -56,10 +56,33 @@
 - `esp32/components/muse/muse_wordcards_ui.{c,h}`：单词练习 → 英语单词（分类页标题 + 注释）。
 - `esp32/components/muse/CMakeLists.txt`：6 个新 art 文件。
 
+## 三张卡片改版（用户 2026-11-12 拍板 v6 单色上色版，效果图 v6）
+
+> v4 底行标语（本地提交 `4adeab9`，未推）已被本改版取代：那笔先撤掉，
+> 在 E 流头 `8cd2ec3` 之上以一笔干净提交实现 v6。
+
+- 三行纵列（58px 行、可滚）整段删掉，改成喂饭页同款三张卡片：
+  卡片 y=120、100×100、x=22/130/238、圆角 18、CARD 底；图标 80px 居中；
+  名字 y=228（DIM）；标语「好好学习，天天向上」上移 y=84（DIM，
+  喂饭规则行同位同色）；底行改为金币数 y=302（TEXT，与喂饭页同行
+  同色，由 `refresh_status()` 实时刷新，新增 `s_learn_coins`）。
+  三张卡放得下，不用滚动。点击进对应页不变
+  （`on_open_mathpractice` / `on_open_wordcards` / `on_open_quiz`）。
+- 图标（game-icons，CC BY 3.0；A8 128×128 master，运行时按卡重着色，
+  单词卡片同款做法——主网格是全白，这里每张卡一个色）：
+  数学练习 `delapouite/calculator.svg` 金 #f6cb4b（= `MUSE_THEME_GOLD`）、
+  英语单词 `lorc/open-book.svg` 浅蓝 #8ec9ff、英语口语
+  `delapouite/microphone.svg` 粉 #ff8fb3。生成器
+  `~/workspace/learn-cards-art-gen.py`（同一管线，IoU 验收 ≥0.99，
+  实测 0.9924–0.9998）。Art 表 `muse_learn_art.{c,h}` + 3 个 master
+  `muse_learn_art_{calculator,open_book,microphone}.c`。
+  v7 手画像素画版（计算器/书/话筒 16×16）用户看过后否决，改回 v6。
+
 ## 验收
 
-- 主页 4 卡顺序、图标、标题正确；学习页 3 行全可见；改名无遗漏
+- 主页 4 卡顺序、图标、标题正确；学习页 3 张卡片 + 标语 y=84 + 金币行
+  y=302 位置与颜色正确，点卡进对应页、返回回学习页；改名无遗漏
   （列表、页标题、分类页标题）；学习三项全部免费（数学不扣入场费、
   0 金币不变灰，兑付不变、最多 +20）。
-- 主机测试与 B 流后基线一致：591 个，失败 27 + 错误 10 + 跳过 10，
+- 主机测试与 E 流后基线一致：635 个，失败 27 + 错误 8 + 跳过 10，
   失败清单逐行相同、零新增。

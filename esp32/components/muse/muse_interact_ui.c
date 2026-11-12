@@ -125,6 +125,7 @@
 #include "muse_wordcards_ui.h"
 #include "muse_quiz_ui.h"
 #include "muse_main_grid_art.h"
+#include "muse_learn_art.h"     /* 学习子页 three-card icons (mockup v6) */
 
 /* --- colours: muse_theme.h (see file header for the DANGER note) --- */
 
@@ -256,8 +257,9 @@ static lv_obj_t *s_fortune_card, *s_fortune_grade, *s_fortune_rule,
 /* Bottom gold row (y = 302) on the feed and fortune subpages, added
  * 2026-11-01 so every interaction page ends with the same coin line.
  * Written by refresh_status() from the snapshot, same as s_status1 and
- * s_minigame_coins above. */
-static lv_obj_t *s_feed_coins, *s_fortune_coins;
+ * s_minigame_coins above. The learn page joined them in the v6 card
+ * redesign (2026-11-12): its bottom row is the coin line too. */
+static lv_obj_t *s_feed_coins, *s_fortune_coins, *s_learn_coins;
 
 static const char *TAG = "muse_ic";
 
@@ -491,6 +493,7 @@ static void refresh_status(void)
         set_label(s_minigame_coins, "金币 --/100");
         set_label(s_feed_coins, "金币 --/100");
         set_label(s_fortune_coins, "金币 --/100");
+        set_label(s_learn_coins, "金币 --/100");
         return;
     }
     char buf[64];
@@ -499,6 +502,7 @@ static void refresh_status(void)
     set_label(s_minigame_coins, buf);
     set_label(s_feed_coins, buf);
     set_label(s_fortune_coins, buf);
+    set_label(s_learn_coins, buf);
 
     /* Mini-game rows: snake, whack-a-mole, goldrain, doodle and
      * OX棋 cost 10 coins per start, so they dim together when
@@ -1389,32 +1393,66 @@ static void build_main(void)
     lv_obj_align(s_status1, LV_ALIGN_TOP_MID, 0, 302);
 }
 
+/* One card of the learn page's three-card row (mockup v6, 2026-11-12):
+ * the feed page's item-column pattern -- a 100x128 column holding a
+ * 100x100 card (icon 80 px, centred) and the name 8 px below it, so the
+ * name sits at y = 228 when the column starts at y = 120. The icon is
+ * an A8 master recoloured with the card's own colour
+ * (MUSE_LEARN_ART_COLOR), the word-cards idiom -- not white like the
+ * main grid. The image is not clickable: the card takes the click. */
+static void learn_card(lv_obj_t *parent, int x, int slot, const char *name,
+                       lv_event_cb_t cb)
+{
+    lv_obj_t *item = lv_obj_create(parent);
+    lv_obj_remove_style_all(item);
+    lv_obj_set_size(item, IC_FEED_CARD, 128);
+    lv_obj_set_pos(item, x, 120);
+    lv_obj_set_flex_flow(item, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(item, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
+                          LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_row(item, 8, 0);
+    lv_obj_remove_flag(item, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_t *card = muse_card(item, IC_FEED_CARD, IC_FEED_CARD, IC_RADIUS);
+    lv_obj_t *img = lv_image_create(card);
+    lv_image_set_src(img, MUSE_LEARN_ART[slot]);
+    lv_obj_set_size(img, IC_FEED_ICON, IC_FEED_ICON);
+    lv_obj_center(img);
+    lv_obj_set_style_image_recolor(img,
+                                   lv_color_hex(MUSE_LEARN_ART_COLOR[slot]), 0);
+    lv_obj_set_style_image_recolor_opa(img, LV_OPA_COVER, 0);
+    lv_obj_remove_flag(img, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(card, cb, LV_EVENT_CLICKED, NULL);
+    label(item, muse_font_cjk(), MUSE_THEME_DIM, name);
+}
+
 static void build_learn(void)
 {
     page_header(s_learn_page, "学习", on_back);
-    /* Scrolling column, the minigame list's pattern: flex column,
-     * vertical scroll only, scrollbar off, 10px gaps, 110px bottom
-     * pad so the last row can be scrolled clear of the bottom curve.
-     * Three rows, all visible at once (84 / 152 / 220, ending 278).
-     * The names are the renamed ones (user decision 2026-11-11):
-     * 数学练习 (was 加减练习), 英语单词 (was 单词练习), 英语口语
-     * (the B-flow quiz, moved here from the minigame list -- same
-     * page, only the entry moved). All three are free (user decision
-     * 2026-11-12, 学习全部免费), NULL labels. */
-    lv_obj_t *list = lv_obj_create(s_learn_page);
-    lv_obj_remove_style_all(list);
-    lv_obj_set_size(list, IC_LIST_W, 360 - IC_LIST_TOP);
-    lv_obj_align(list, LV_ALIGN_TOP_MID, 0, IC_LIST_TOP);
-    lv_obj_set_flex_flow(list, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_flex_align(list, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
-                          LV_FLEX_ALIGN_CENTER);
-    lv_obj_set_style_pad_row(list, IC_MG_ROW_SPACE, 0);
-    lv_obj_set_style_pad_bottom(list, IC_MG_LIST_PAD_BOTTOM, 0);
-    lv_obj_set_scroll_dir(list, LV_DIR_VER);
-    lv_obj_set_scrollbar_mode(list, LV_SCROLLBAR_MODE_OFF);
-    list_row(list, "数学练习", on_open_mathpractice, NULL);
-    list_row(list, "英语单词", on_open_wordcards, NULL);
-    list_row(list, "英语口语", on_open_quiz, NULL);
+    /* Same layout as the feed page (user decision 2026-11-12, mockup
+     * v6): the motto takes the feed rule line's slot (y = 84, DIM),
+     * three cards sit in a row at y = 120, and the coin line ends the
+     * page at y = 302 (TEXT, live via refresh_status, same as the feed
+     * and fortune pages). The three rows the A flow built (58 px rows,
+     * scrolling column, 110 px bottom pad) are gone with the list: three
+     * cards fit, so nothing scrolls. The names are the renamed ones
+     * (user decision 2026-11-11): 数学练习 (was 加减练习), 英语单词
+     * (was 单词练习), 英语口语 (the B-flow quiz, moved here from the
+     * minigame list -- same page, only the entry moved). All three are
+     * free (user decision 2026-11-12, 学习全部免费). */
+    lv_obj_t *motto = label(s_learn_page, muse_font_cjk(), MUSE_THEME_DIM,
+                            "好好学习，天天向上");
+    lv_obj_align(motto, LV_ALIGN_TOP_MID, 0, 84);
+    learn_card(s_learn_page, 22, MUSE_LEARN_MATH, "数学练习",
+               on_open_mathpractice);
+    learn_card(s_learn_page, 130, MUSE_LEARN_WORDS, "英语单词",
+               on_open_wordcards);
+    learn_card(s_learn_page, 238, MUSE_LEARN_QUIZ, "英语口语", on_open_quiz);
+    /* Coin line: the page's last row, same slot as the other pages'
+     * (y = 302), so every interaction page ends the same way
+     * (2026-11-01, user request "统一页面内容"). A live status, not a
+     * static label: refresh_status() rewrites it from the snapshot. */
+    s_learn_coins = label(s_learn_page, muse_font_cjk(), MUSE_THEME_TEXT, "金币 --/100");
+    lv_obj_align(s_learn_coins, LV_ALIGN_TOP_MID, 0, 302);
 }
 
 static void build_minigame(void)
