@@ -21,9 +21,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "esp_crt_bundle.h"
 #include "esp_heap_caps.h"
-#include "esp_http_client.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -35,11 +33,9 @@
 
 static const char *TAG = "muse.wordcards_audio";
 
-/* One attempt per word (user decision: no retry beyond the one the
- * reply path already does -- and this fetch has none at all, the file
- * either exists on the server or it does not). */
+/* The reply path owns the connection (muse_tts_fetch_raw); only the timeout
+ * for one word request lives here. */
 #define WC_HTTP_TIMEOUT_MS 8000
-#define WC_HTTP_BUF 1024
 #define WC_TASK_STACK 12288
 /* The playback task needs more than the fetch task: measured on the 185B it
  * overflowed 12288 (panic: "A stack overflow in task muse_wc_play") while
@@ -218,75 +214,38 @@ static bool ensure_decode_buffers(void)
 
 /* --- prefetch ----------------------------------------------------- */
 
-/* One fetch's write target, set by the task before each GET. The
- * event handler runs on the HTTP client's task, but only this fetch
- * task starts a GET, so there is no concurrent writer. `s_fetch_slots`
- * is the current list's pool (word cards or quiz). */
+/* One fetch's write target, set by the task before each GET. The sink runs on
+ * the HTTP client's task, but only this fetch task starts a fetch, so there is
+ * no concurrent writer. `s_fetch_slots` is the current list's pool (word cards
+ * or quiz). */
 static int s_fetch_idx;
 static uint8_t **s_fetch_slots;
 static size_t s_fetch_len;
 static bool s_fetch_overflow;
 
-static esp_err_t on_fetch_data(esp_http_client_event_t *ev)
+static void raw_sink(const uint8_t *data, size_t len, void *ctx)
 {
-    if (ev->event_id != HTTP_EVENT_ON_DATA || ev->data_len <= 0) {
-        return ESP_OK;
-    }
+    (void)ctx;
     if (s_fetch_abort) {
-        return ESP_OK; /* drained, not stored */
+        return; /* drained, not stored */
     }
     size_t room = MUSE_WORDCARDS_MAX_MP3_BYTES - s_fetch_len;
-    size_t take = (size_t)ev->data_len < room ? (size_t)ev->data_len
-                                              : room;
+    size_t take = len < room ? len : room;
     if (take) {
-        memcpy(s_fetch_slots[s_fetch_idx] + s_fetch_len,
-               (const uint8_t *)ev->data, take);
+        memcpy(s_fetch_slots[s_fetch_idx] + s_fetch_len, data, take);
         s_fetch_len += take;
     }
-    if ((size_t)ev->data_len > take) {
+    if (len > take) {
         s_fetch_overflow = true; /* file bigger than the cap: reject it */
     }
-    return ESP_OK;
 }
 
-/* The one connection all four words of a set travel on. A fresh TLS
- * handshake is the whole cost of a word (measured 2026-11-10: 3.5-4.3 s
- * per word on the board, while the server answers in 18 ms once the
- * socket is up), so the client is created once with keep-alive and
- * reused; only the URL changes per word. */
-static esp_http_client_handle_t s_client;
-
-static bool ensure_client(const char *url)
-{
-    if (s_client) {
-        return true;
-    }
-    const esp_http_client_config_t cfg = {
-        .url = url,
-        .method = HTTP_METHOD_GET,
-        .timeout_ms = WC_HTTP_TIMEOUT_MS,
-        .buffer_size = WC_HTTP_BUF,
-        .crt_bundle_attach = esp_crt_bundle_attach,
-        .event_handler = on_fetch_data,
-        .keep_alive_enable = true,
-    };
-    s_client = esp_http_client_init(&cfg);
-    return s_client != NULL;
-}
-
-static void drop_client(void)
-{
-    if (s_client) {
-        esp_http_client_cleanup(s_client);
-        s_client = NULL;
-    }
-}
-
-/* One GET on the shared connection. Returns 1 = cached READY, 0 = failed
- * (mark FAILED), -1 = transport failure (mark FAILED and abandon the
- * rest of the list). One retry on a fresh connection: a kept-alive socket
- * the server closed while it was idle fails exactly like a real outage,
- * and that retry is the difference between a silent word and a word. */
+/* One GET on the connection the reply path owns. Returns 1 = cached READY,
+ * 0 = failed (mark FAILED), -1 = transport failure (mark FAILED and abandon the
+ * rest of the list). One retry: a kept-alive socket the server closed while it
+ * was idle fails exactly like a real outage, and that retry is the difference
+ * between a silent word and a word -- muse_tts_fetch_raw drops the socket on
+ * failure, so the retry starts from a new one. */
 static int fetch_one(const muse_wc_fetch_list_t *list, int idx,
                      uint32_t gen)
 {
@@ -294,36 +253,26 @@ static int fetch_one(const muse_wc_fetch_list_t *list, int idx,
     if (!muse_tts_url_for_text(list->en[idx], url, sizeof(url))) {
         return 0; /* no speech service configured */
     }
-    esp_err_t err = ESP_FAIL;
-    int status = 0;
+    int r = -1;
     for (int attempt = 0; attempt < 2; attempt++) {
-        if (!ensure_client(url)) {
-            return -1;
-        }
-        esp_http_client_set_url(s_client, url);
         s_fetch_idx = idx;
         s_fetch_slots = list->slots;
         s_fetch_len = 0;
         s_fetch_overflow = false;
-        err = esp_http_client_perform(s_client);
-        status = esp_http_client_get_status_code(s_client);
+        r = muse_tts_fetch_raw(url, WC_HTTP_TIMEOUT_MS, raw_sink, NULL);
         if (s_fetch_abort || gen != list->cur_gen(list->ctx)) {
             return 0; /* superseded: the bookkeeping ignores the mark */
         }
-        if (err == ESP_OK) {
+        if (r != -1) {
             break;
         }
-        /* The socket is suspect: start the retry from a new one. */
-        drop_client();
     }
-    if (err != ESP_OK) {
-        ESP_LOGW(TAG, "word %s: fetch failed: %s", list->en[idx],
-                 esp_err_to_name(err));
+    if (r == -1) {
+        ESP_LOGW(TAG, "word %s: fetch failed (see muse.tts)", list->en[idx]);
         return -1;
     }
-    if (status != 200) {
-        ESP_LOGW(TAG, "word %s: endpoint answered %d", list->en[idx],
-                 status);
+    if (r == 0) {
+        ESP_LOGW(TAG, "word %s: endpoint did not answer 200", list->en[idx]);
         return 0;
     }
     if (s_fetch_overflow ||
@@ -416,10 +365,13 @@ static void fetch_task(void *arg)
             break;
         }
     }
-    /* The list is in PSRAM now: close the connection instead of holding a
-     * TLS client (tens of KB of internal RAM) for the rest of the round.
-     * Playback never needs it again -- it plays from the slots. */
-    drop_client();
+    /* Only a fetch that stopped mid-body leaves unread bytes on the socket --
+     * the reply path must not inherit those. A clean batch leaves the
+     * connection warm for the next reply, which is the point of sharing it;
+     * muse_tts retires it itself after TTS_IDLE_DROP_US. */
+    if (s_fetch_abort || gen != list.cur_gen(list.ctx)) {
+        muse_tts_release_client();
+    }
     fetch_task_exit();
 }
 

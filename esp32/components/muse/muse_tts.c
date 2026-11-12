@@ -217,10 +217,26 @@ static void gate_feed(const uint8_t *d, size_t len)
     }
 }
 
+/* Set while a word/quiz card fetch owns the reply connection (see
+ * muse_tts_fetch_raw): the body goes to this sink, not to the decoder. */
+static struct {
+    muse_tts_raw_sink_t fn;
+    void *ctx;
+} s_raw;
+
 static esp_err_t on_http_data(esp_http_client_event_t *ev)
 {
     if (s_prewarm) {
         return ESP_OK;   /* the probe only wants the connection, not the body */
+    }
+    if (s_raw.fn) {
+        /* A card fetch owns the socket for the length of its body: hand the
+         * bytes over untouched and keep the reply gate, ring and generation
+         * guards out of it (the reply path is idle whenever this runs). */
+        if (ev->event_id == HTTP_EVENT_ON_DATA && ev->data_len > 0) {
+            s_raw.fn((const uint8_t *)ev->data, (size_t)ev->data_len, s_raw.ctx);
+        }
+        return ESP_OK;
     }
     if (ev->event_id == HTTP_EVENT_ON_HEADER || ev->event_id == HTTP_EVENT_ON_DATA) {
         if (s_short_wait && ev->client) {
@@ -315,6 +331,52 @@ static void drop_client(void)
         esp_http_client_cleanup(s_client);
         s_client = NULL;
     }
+}
+
+/* --- raw fetches on the same keep-alive connection ------------------ */
+
+/* The word and quiz cards pull their audio from the same bridge (same host,
+ * same token, `&word=1`) and want the bytes untouched instead of decoded, so
+ * they ride this client rather than opening a second one: a fresh handshake is
+ * 3.5-4.3 s on this board, and the cards are opened right after a chat turn
+ * often enough to matter. Sharing is safe without a lock because the cards and
+ * the chat are never used at the same time (user, 2026-11-12: "there is only
+ * one TTS connection at a time"), so whenever this runs the reply path is idle.
+ * s_raw (declared above on_http_data) routes the body to the caller's sink and
+ * keeps the decoder out of it. */
+
+int muse_tts_fetch_raw(const char *url, int timeout_ms,
+                       muse_tts_raw_sink_t sink, void *ctx)
+{
+    if (!sink || !ensure_client(url, timeout_ms)) {
+        return -1;
+    }
+    s_raw.fn = sink;
+    s_raw.ctx = ctx;
+    esp_err_t err = esp_http_client_perform(s_client);
+    int status = esp_http_client_get_status_code(s_client);
+    s_raw.fn = NULL;
+    s_raw.ctx = NULL;
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "raw fetch failed: %s", esp_err_to_name(err));
+        drop_client();
+        return -1;
+    }
+    if (status != 200) {
+        /* An error page may still sit in the socket: start over next time. */
+        ESP_LOGW(TAG, "raw fetch answered %d", status);
+        drop_client();
+        return 0;
+    }
+    /* The socket is warm and usable, so the idle clock starts now: a card batch
+     * followed by a reply must not look like an hour-old connection. */
+    s_client_last_us = esp_timer_get_time();
+    return 1;
+}
+
+void muse_tts_release_client(void)
+{
+    drop_client();
 }
 
 /* THE ROOT URL (scheme://host[:port]/) of the configured endpoint: enough for
