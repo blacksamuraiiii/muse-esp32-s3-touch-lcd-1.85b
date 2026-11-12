@@ -127,6 +127,11 @@ PORT = int(os.environ.get("TTS_PORT", "5050"))
 # poking only). See the file header for why the dev server is not the default.
 SERVER = os.environ.get("TTS_SERVER", "waitress").strip().lower()
 CACHE_MAX_ITEMS = int(os.environ.get("TTS_CACHE_ITEMS", "64"))
+# A reply piece this short is a fragment (a lone "%*", an "嗯"): Azure pads it to
+# one fixed ~1.87 s frame whatever it says, so caching it keeps near-silent
+# audio around and makes every later hit look like a real reply. Short requests
+# are still served, they just are not remembered.
+CACHE_MIN_CHARS = int(os.environ.get("TTS_CACHE_MIN_CHARS", "3"))
 CACHE_MAX_BYTES = int(os.environ.get("TTS_CACHE_BYTES", str(8 * 1024 * 1024)))
 # Word cards (firmware ?word=1): one pre-generated MP3 per English word, on
 # disk, in the word voice -- a Chinese reply voice must never read an English
@@ -202,6 +207,52 @@ def split_first_sentence(text: str):
             if len(head) >= 2 and tail.strip():
                 return head, tail
     return None
+
+
+def _preview(text: str, limit: int = 24) -> str:
+    """The opening of a reply, for a log line: enough to recognise it."""
+    flat = text.replace("\n", " ").replace("\r", " ")
+    return flat if len(flat) <= limit else flat[:limit] + "…"
+
+
+_SYMBOL_WORDS = {
+    "℃": "摄氏度", "°C": "摄氏度", "°c": "摄氏度", "℉": "华氏度",
+    "‰": "千分之", "±": "正负", "×": "乘", "÷": "除以",
+    "≠": "不等于", "≤": "小于等于", "≥": "大于等于", "≈": "约等于",
+    "→": "到", "㎡": "平方米", "㎥": "立方米", "㎏": "千克",
+    "㎝": "厘米", "㎜": "毫米", "…": "，",
+}
+# Pictographs, emoticons, flags, dingbats, variation selectors, joiners: there is
+# nothing to say, and Azure reads some of them as noise or as their code point.
+_EMOJI_RE = re.compile(
+    "[" "\U0001F000-\U0001FAFF" "\U00002600-\U000027BF"
+    "\U0001F1E6-\U0001F1FF" "\U0000FE00-\U0000FE0F" "\U0000200D"
+    "\U00002B00-\U00002BFF" "\U00003030" "\U0000303D" "]+")
+# Kaomoji: a bracketed run that holds no word character -- (╯°□°)╯, (｡･ω･｡).
+_KAOMOJI_RE = re.compile(r"[\(（\[【〔]\s*[^\u4e00-\u9fffA-Za-z0-9\s]{2,}\s*[\)）\]】〕]")
+_WORD_RE = re.compile(
+    r"[0-9A-Za-z\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af"
+    r"\uff10-\uff19\uff21-\uff3a\uff41-\uff5a]")   # fullwidth digits and letters count
+
+
+def speakable(text: str) -> str:
+    """What is actually worth synthesising.
+
+    Azure's own front end already reads numbers and ordinary units correctly
+    ("80%" -> 百分之八十), so only the symbols it mangles or skips are rewritten
+    here, and pictures and kaomoji are dropped. A piece with no word character
+    at all ("%*", "…", a lone emoji) comes back empty: synthesising it costs a
+    request and returns one padded ~1.87 s frame, which the listener hears as a
+    blip -- better to say nothing.
+    """
+    text = _EMOJI_RE.sub("", text)
+    text = _KAOMOJI_RE.sub("", text)
+    for sym, word in _SYMBOL_WORDS.items():
+        text = text.replace(sym, word)
+    if not _WORD_RE.search(text):
+        return ""
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
 
 
 def is_mp3(data: bytes) -> bool:
@@ -718,6 +769,8 @@ def cache_get(key):
 
 def cache_put(key, data: bytes):
     global _cache_bytes
+    if len(key[-1]) < CACHE_MIN_CHARS:
+        return   # a padded fragment: see CACHE_MIN_CHARS
     _cache[key] = data
     _cache_bytes += len(data)
     while _cache and (len(_cache) > CACHE_MAX_ITEMS or _cache_bytes > CACHE_MAX_BYTES):
@@ -753,8 +806,10 @@ def tts():
     if not text:
         return "missing text", 400
     text = clean(text)
+    text = speakable(text)
     if not text:
-        return "empty after cleaning", 400
+        log.info("nothing speakable in request %r", _preview(request.args.get("text") or "", 40))
+        return "nothing speakable", 400
     if TEST_HOOKS and (text.upper() in ("BADPACKET", "BADSTATUS") or FORCE_BAD):
         # 200 with an HTML body is what a misbehaving proxy in front of the
         # service looks like, and the only way to exercise the firmware's
@@ -772,7 +827,8 @@ def tts():
     last = request.args.get("last") == "1"
     hit = cache_get(key)
     if hit is not None:
-        log.info("cache hit %d chars -> %d bytes (%s)", len(text), len(hit), voice)
+        log.info("cache hit %d chars -> %d bytes (%s) %r",
+                 len(text), len(hit), voice, _preview(text))
         resp = Response(hit, mimetype="audio/mpeg")
         resp.headers["X-TTS-Cache"] = "hit"
         resp.headers["X-TTS-Backend"] = BACKEND
