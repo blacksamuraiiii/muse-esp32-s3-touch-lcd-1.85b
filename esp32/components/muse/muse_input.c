@@ -121,7 +121,7 @@ static int s_stat_touch_armed;      /* ...and when the wait armed it (-1 unknown
 
 static void post(muse_ptt_t type, bool wake)
 {
-    muse_input_event_t ev = { .type = type, .wake = wake };
+    muse_input_event_t ev = { .type = type, .wake = wake, .at_us = esp_timer_get_time() };
     ESP_LOGI(TAG, "PTT %s%s", type == MUSE_PTT_DOWN ? "down" : "up", wake ? " (waking)" : "");
     xQueueSend(s_queue, &ev, 0);
 }

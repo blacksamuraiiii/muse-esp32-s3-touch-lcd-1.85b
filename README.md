@@ -22,7 +22,7 @@
 3. [准备清单](#3-准备清单)
 4. [分步操作](#4-分步操作)
    - [第 1 步：获取 SDK Token](#第-1-步获取-sdk-token)
-   - [第 2 步：安装 ESP-IDF v6.0.1](#第-2-步安装-esp-idf-v601)
+   - [第 2 步：安装 ESP-IDF v6.0.3](#第-2-步安装-esp-idf-v603)
    - [第 3 步：填写 SDK Token 并构建](#第-3-步填写-sdk-token-并构建)
    - [第 4 步：备份原厂固件](#第-4-步备份原厂固件)
    - [第 5 步：擦除并刷入](#第-5-步擦除并刷入)
@@ -180,15 +180,15 @@ Muse 用文字（字幕）回答、还能显示图片的语音小助手。
 
 ---
 
-### 第 2 步：安装 ESP-IDF v6.0.1
+### 第 2 步：安装 ESP-IDF v6.0.3
 
-本固件**只支持 ESP-IDF v6.0.1**，其他版本不受支持。
+本固件**只支持 ESP-IDF v6.0.3**，其他版本不受支持。
 
 #### 方式 A（推荐）：官方 Windows 安装器
 
-1. 打开 <https://dl.espressif.com/dl/esp-idf/>，选择 **v6.0.1** 对应的 Windows 安装器。
+1. 打开 <https://dl.espressif.com/dl/esp-idf/>，选择 **v6.0.3** 对应的 Windows 安装器。
 2. 安装时勾选目标芯片 **esp32s3**。
-3. 安装完成后，开始菜单里会出现 **「ESP-IDF v6.0.1 PowerShell」**（或 CMD），
+3. 安装完成后，开始菜单里会出现 **「ESP-IDF v6.0.3 PowerShell」**（或 CMD），
    **以后每次构建都从这个快捷方式启动终端**。
 
 #### 方式 B：Git 手动安装
@@ -196,7 +196,7 @@ Muse 用文字（字幕）回答、还能显示图片的语音小助手。
 前提：已安装 [Git for Windows](https://git-scm.com/download/win) 与 Python 3。
 
 ```sh
-git clone -b v6.0.1 --recursive https://github.com/espressif/esp-idf.git ~/esp/esp-idf-v6
+git clone -b v6.0.3 --recursive https://github.com/espressif/esp-idf.git ~/esp/esp-idf-v6
 cd ~/esp/esp-idf-v6
 ./install.bat esp32s3
 ./export.bat          # 每个新终端都要执行一次
@@ -204,13 +204,13 @@ cd ~/esp/esp-idf-v6
 
 > 在 Git Bash 中对应使用 `./install.sh esp32s3` 与 `. ./export.sh`。
 > 本仓库的便利脚本 `esp32/tools/muse/board.sh` 会自动按以下路径寻找 ESP-IDF：
-> `~/.espressif/esp-idf-v6.0.1` → 环境变量 `IDF_PATH` → `~/esp/esp-idf-v6.0.1` →
+> `~/.espressif/esp-idf-v6.0.3` → 环境变量 `IDF_PATH` → `~/esp/esp-idf-v6.0.3` →
 > `~/esp/esp-idf-v6` → `~/esp/esp-idf`。装在别处就设 `IDF_EXPORT=<export 脚本路径>`。
 
 验证安装：
 
 ```sh
-idf.py --version     # 应输出 ESP-IDF v6.0.1
+idf.py --version     # 应输出 ESP-IDF v6.0.3
 ```
 
 ---
