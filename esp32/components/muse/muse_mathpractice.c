@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 /*
- * muse_mathpractice.c -- 加减练习 logic, see muse_mathpractice.h.
+ * muse_mathpractice.c -- 数学练习 logic, see muse_mathpractice.h.
  *
  * deal() flips a coin for the kind and deals one legal question:
  *

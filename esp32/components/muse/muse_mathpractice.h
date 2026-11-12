@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 /*
- * muse_mathpractice.h -- 加减练习 logic (no LVGL, no ESP-IDF).
+ * muse_mathpractice.h -- 数学练习 logic (no LVGL, no ESP-IDF).
  *
  * One 2-minute round of two question kinds (user decision 2026-11-08,
  * the round that fused 凑十法练习 into this game):

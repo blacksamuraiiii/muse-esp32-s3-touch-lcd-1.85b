@@ -7,7 +7,7 @@
  * with an 8 px gap, and nothing under the cards (the old HUD line is
  * gone with the clock, user 2026-11-11).
  * The category page (mockup v2, user decision 2026-11-10) is the
- * level above: title "单词练习", rows at the minigame list's
+ * level above: title "英语单词", rows at the minigame list's
  * geometry (330 wide, top 84, 58 high, 10 gap, radius 18, CARD
  * fill) with the set icon (36 px) + 12 px gap + set title (Noto 16)
  * centred as one group, no count text, and the hint "限时免费" as the
@@ -524,7 +524,7 @@ void muse_wordcards_ui_build_sets(lv_obj_t *page, lv_event_cb_t back_cb,
     s_sets_page = page;
     s_open_set_cb = open_cb;
     muse_back_button(page, back_cb);
-    muse_page_title(page, "单词练习", 44);
+    muse_page_title(page, "英语单词", 44);
     /* Scrolling column, the minigame list's pattern (build_minigame
      * in muse_interact_ui.c): flex column, vertical scroll only,
      * scrollbar off, 10 px gaps, 110 px bottom pad so the last row
