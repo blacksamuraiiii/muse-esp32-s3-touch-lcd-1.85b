@@ -20,6 +20,8 @@
  *   p <usb> <pct> <mv> [<charging> <ma>]   a battery reading
  *   low <usb> <pct> <mv> [<charging> <ma>]  the low-battery beep gate:
  *                          prints {"low_beep_due":0|1} for that reading
+ *   played                 the beep went out: disarm the gate (the gate
+ *                          itself only reports, it never disarms)
  *   l                                  the learning-cycle instruction
  *   s <off> <resting>      the screen and CPU state
  *   w <us>                 a wake from light sleep, after <us> asleep
@@ -261,6 +263,10 @@ int main(void)
             p.charging = charging;
             p.battery_ma = ma;
             printf("{\"low_beep_due\":%d}\n", muse_battery_low_beep_due(&p));
+        } else if (!strcmp(line, "played")) {
+            /* The beep went out: disarm the gate (F7 -- low_beep_due() only
+             * reports the trigger, it no longer disarms itself). */
+            muse_battery_low_beep_played();
         } else if (!strcmp(line, "l")) {
             char text[64];
             muse_battery_learn_text(text, sizeof(text));

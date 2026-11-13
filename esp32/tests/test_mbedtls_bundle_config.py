@@ -56,7 +56,7 @@ class CertificateBundleConfigTest(unittest.TestCase):
                 with self.subTest(enabled=enabled, version=version):
                     self.assertEqual(self.accepts(cmake, directory, enabled, version), expected)
 
-    def test_stale_full_bundle_warns(self):
+    def test_stale_full_bundle_fails(self):
         cmake = shutil.which("cmake")
         if not cmake:
             self.skipTest("cmake is required")
@@ -74,7 +74,13 @@ class CertificateBundleConfigTest(unittest.TestCase):
                         f"set(CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_FULL {'y' if full else ''})\n"
                         "set(GADGET_CONFIG_REGEN_HINT regenerate)\n" + block + "\n")
                     result = subprocess.run([cmake, "-P", str(script)], capture_output=True, text=True)
-                    self.assertEqual(result.returncode, 0, result.stderr)
+                    # A stale full bundle is a hard error (review F13): a
+                    # build directory configured before the common bundle
+                    # must be deleted and reconfigured, not merely warned.
+                    if full:
+                        self.assertNotEqual(result.returncode, 0, result.stderr)
+                    else:
+                        self.assertEqual(result.returncode, 0, result.stderr)
                     self.assertEqual("full root CA bundle" in " ".join(result.stderr.split()), full)
 
 

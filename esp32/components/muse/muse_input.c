@@ -966,10 +966,16 @@ static void input_task(void *arg)
                 muse_battery_note_power(&p, muse_state_on_battery());
                 /* Low battery, once per discharge below 20%: the gate in
                  * muse_battery.c re-arms at 20% or on USB/charging, so a
-                 * 2 s poll can never repeat it. muse_audio_write is
-                 * mutex-guarded, so this is safe beside a reply playing. */
+                 * 2 s poll can never repeat it. The gate only disarms once
+                 * the beep really went out (muse_audio_write is serialised
+                 * on the audio write lock, so this is safe beside a reply
+                 * playing): with the codecs powered down while resting the
+                 * write fails and the trigger stays armed for the next
+                 * poll / after waking, instead of being swallowed unheard. */
                 if (muse_battery_low_beep_due(&p)) {
-                    muse_audio_sfx(MUSE_SFX_LOW_BATT);
+                    if (muse_audio_sfx(MUSE_SFX_LOW_BATT) == ESP_OK) {
+                        muse_battery_low_beep_played();
+                    }
                 }
             }
         }

@@ -110,18 +110,25 @@ void muse_tts_cancel(void);
 /* Raw fetches over the reply connection. The word and quiz cards pull their
  * audio from the same bridge with `&word=1` and want the bytes untouched, so
  * they reuse the keep-alive client instead of opening a second one (a fresh
- * handshake costs 3.5-4.3 s on this board). No lock: the cards and the chat are
- * never used at the same time, so the reply path is idle whenever a card fetch
- * runs. Returns 1 = HTTP 200 with the body delivered to `sink`, 0 = another
- * status code, -1 = transport failure (the socket has been dropped; the caller
- * may retry once and will pay one handshake). */
+ * handshake costs 3.5-4.3 s on this board). One perform at a time, enforced
+ * with the client lock (B1): this refuses with -1 while a reply fetch is
+ * running, a probe is running, or another fetch holds the socket, instead
+ * of performing alongside it; the caller marks the word failed and retries
+ * on re-entry. The reply worker waits on the same lock, so a card fetch
+ * that started first only delays the reply by one request. Returns 1 =
+ * HTTP 200 with the body delivered to `sink`, 0 = another status code,
+ * -1 = refused (busy) or transport failure (the socket has been dropped;
+ * the caller may retry once and will pay one handshake). */
 typedef void (*muse_tts_raw_sink_t)(const uint8_t *data, size_t len, void *ctx);
 int muse_tts_fetch_raw(const char *url, int timeout_ms,
                        muse_tts_raw_sink_t sink, void *ctx);
 
 /* Drop the kept-alive socket. A fetch that stopped mid-body leaves unread bytes
  * on it, so whoever knows that happened calls this; the next request
- * re-handshakes. */
+ * re-handshakes. If a fetch is in flight, the drop is deferred until it
+ * finishes (cleanup under a live perform corrupts the heap), and every fetch
+ * honours the deferred drop before performing, so a stale socket is never
+ * reused. */
 void muse_tts_release_client(void);
 
 /* Reachability probe, so the settings rows can tell the truth instead of

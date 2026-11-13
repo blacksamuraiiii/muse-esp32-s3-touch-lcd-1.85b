@@ -32,6 +32,7 @@
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/idf_additions.h"
+#include "freertos/semphr.h"
 #include "freertos/stream_buffer.h"
 #include "freertos/task.h"
 
@@ -109,6 +110,22 @@ static esp_http_client_handle_t s_client;
 static volatile bool s_prewarm;          /* the connection probe is running: ignore its body */
 static TaskHandle_t s_prewarm_task;
 static int64_t s_client_last_us;         /* when the last reply request finished */
+/* Serialises every esp_http_client_perform() on the one shared s_client, and
+ * every cleanup of it. The handle is not thread-safe, and its three users --
+ * the reply worker, the prewarm probe and the word/quiz card fetches -- run
+ * on three different tasks, so "never used at the same time" has to be
+ * enforced here, not assumed (B1): a card prefetch runs for seconds while
+ * the user can press BOOT at any moment, and a reply can be speaking when a
+ * card page opens. A fetch that finds the socket busy refuses (fetch_raw)
+ * or waits (reply worker, probe) instead of performing alongside.
+ * s_drop_pending is set by muse_tts_release_client() when a fetch holds the
+ * socket: the holder drops it when its perform finishes, and every fetch
+ * honours the flag before performing, so a stale socket is never reused.
+ * s_raw_active is set only while a raw fetch holds the lock and performs,
+ * so on_http_data can only route a body to the card sink during that fetch. */
+static SemaphoreHandle_t s_client_lock;
+static volatile bool s_drop_pending;
+static bool s_raw_active;
 /* An idle keep-alive socket older than this is dropped by prewarm: servers and
  * NAT boxes reap idle connections, and reconnecting while the model is still
  * writing is free. */
@@ -229,10 +246,12 @@ static esp_err_t on_http_data(esp_http_client_event_t *ev)
     if (s_prewarm) {
         return ESP_OK;   /* the probe only wants the connection, not the body */
     }
-    if (s_raw.fn) {
-        /* A card fetch owns the socket for the length of its body: hand the
-         * bytes over untouched and keep the reply gate, ring and generation
-         * guards out of it (the reply path is idle whenever this runs). */
+    if (s_raw_active && s_raw.fn) {
+        /* A card fetch holds the client lock and is performing right now, so
+         * this body is its: hand the bytes over untouched and keep the reply
+         * gate, ring and generation guards out of it. The flag is only set
+         * while that fetch holds the lock, so a reply body can never be
+         * routed here (B1). */
         if (ev->event_id == HTTP_EVENT_ON_DATA && ev->data_len > 0) {
             s_raw.fn((const uint8_t *)ev->data, (size_t)ev->data_len, s_raw.ctx);
         }
@@ -324,7 +343,8 @@ static bool ensure_client(const char *url, int timeout_ms)
 
 /* A socket that failed mid-body, was aborted, or answered with something that
  * is not our audio is suspect: the next request gets a new connection rather
- * than the remains of this one. */
+ * than the remains of this one. Callers hold s_client_lock (a cleanup under
+ * a live perform corrupts the heap). */
 static void drop_client(void)
 {
     if (s_client) {
@@ -333,50 +353,138 @@ static void drop_client(void)
     }
 }
 
+/* Lazily create the client lock: this file has no init entry point, and the
+ * first user may be a reply, a probe or a card fetch on any task. The handle
+ * is created outside the critical section and only published inside it. */
+static bool client_lock_get(void)
+{
+    if (s_client_lock) {
+        return true;
+    }
+    SemaphoreHandle_t m = xSemaphoreCreateMutex();
+    if (!m) {
+        return false;
+    }
+    taskENTER_CRITICAL(&s_lock);
+    if (!s_client_lock) {
+        s_client_lock = m;
+    } else {
+        vSemaphoreDelete(m);
+    }
+    taskEXIT_CRITICAL(&s_lock);
+    return s_client_lock != NULL;
+}
+
+static bool client_lock_take(TickType_t wait)
+{
+    return client_lock_get() && xSemaphoreTake(s_client_lock, wait) == pdTRUE;
+}
+
+static void client_lock_give(void)
+{
+    xSemaphoreGive(s_client_lock);
+}
+
 /* --- raw fetches on the same keep-alive connection ------------------ */
 
 /* The word and quiz cards pull their audio from the same bridge (same host,
  * same token, `&word=1`) and want the bytes untouched instead of decoded, so
  * they ride this client rather than opening a second one: a fresh handshake is
  * 3.5-4.3 s on this board, and the cards are opened right after a chat turn
- * often enough to matter. Sharing is safe without a lock because the cards and
- * the chat are never used at the same time (user, 2026-11-12: "there is only
- * one TTS connection at a time"), so whenever this runs the reply path is idle.
- * s_raw (declared above on_http_data) routes the body to the caller's sink and
- * keeps the decoder out of it. */
+ * often enough to matter. s_raw (declared above on_http_data) routes the body
+ * to the caller's sink and keeps the decoder out of it.
+ *
+ * Sharing is NOT safe without enforcement (B1): a prefetch runs for seconds
+ * while the user can press BOOT at any moment, and a reply can be speaking
+ * when a card page opens, so the three rules below are what keep one
+ * perform -- and one cleanup -- on the socket at a time:
+ *  - this entry refuses (-1) while a reply fetch is running (s_busy), a
+ *    probe is running, or another fetch holds the client lock; the caller
+ *    marks the word failed and retries on re-entry, so a refusal is silent;
+ *  - the perform itself runs under the client lock, which also serialises
+ *    the reply worker and the probe (the worker waits for it, the probe
+ *    skips);
+ *  - s_raw_active is set only while this fetch holds the lock, so
+ *    on_http_data can only route a body to the sink during that fetch.
+ * One hole stays, by design: a reply that starts after this check but
+ * before the perform only delays the reply by one card request (the worker
+ * waits on the lock), it can never perform alongside it. */
 
 int muse_tts_fetch_raw(const char *url, int timeout_ms,
                        muse_tts_raw_sink_t sink, void *ctx)
 {
-    if (!sink || !ensure_client(url, timeout_ms)) {
+    if (!sink) {
+        return -1;
+    }
+    /* Refuse rather than queue behind a fetch in flight: a reply fetch can
+     * run for the whole reply, and the cards must never stall it, nor be
+     * stalled by it. */
+    if (!client_lock_take(0)) {
+        return -1;
+    }
+    if (s_busy || s_prewarm || s_prewarm_task || s_raw_active) {
+        client_lock_give();
+        return -1;
+    }
+    if (s_drop_pending) {
+        /* A release asked for a fresh socket while one was held: honour it
+         * before performing, so a stale socket is never reused. */
+        drop_client();
+        s_drop_pending = false;
+    }
+    if (!ensure_client(url, timeout_ms)) {
+        client_lock_give();
         return -1;
     }
     s_raw.fn = sink;
     s_raw.ctx = ctx;
+    s_raw_active = true;
     esp_err_t err = esp_http_client_perform(s_client);
     int status = esp_http_client_get_status_code(s_client);
+    s_raw_active = false;
     s_raw.fn = NULL;
     s_raw.ctx = NULL;
+    int result;
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "raw fetch failed: %s", esp_err_to_name(err));
-        drop_client();
-        return -1;
-    }
-    if (status != 200) {
+        result = -1;
+    } else if (status != 200) {
         /* An error page may still sit in the socket: start over next time. */
         ESP_LOGW(TAG, "raw fetch answered %d", status);
-        drop_client();
-        return 0;
+        result = 0;
+    } else {
+        /* The socket is warm and usable, so the idle clock starts now: a card batch
+         * followed by a reply must not look like an hour-old connection. */
+        s_client_last_us = esp_timer_get_time();
+        result = 1;
     }
-    /* The socket is warm and usable, so the idle clock starts now: a card batch
-     * followed by a reply must not look like an hour-old connection. */
-    s_client_last_us = esp_timer_get_time();
-    return 1;
+    /* Drop the socket when the fetch failed, the endpoint answered an error,
+     * or a release asked for a fresh one while this fetch performed: in all
+     * three cases the next request starts from a new connection. A
+     * successful fetch that a release caught still counts (its bytes were
+     * already delivered to the sink). */
+    if (result != 1 || s_drop_pending) {
+        drop_client();
+        s_drop_pending = false;
+    }
+    client_lock_give();
+    return result;
 }
 
 void muse_tts_release_client(void)
 {
-    drop_client();
+    /* Only drop the socket when no fetch holds it: esp_http_client_cleanup()
+     * under a live perform corrupts the heap (B1). If a fetch is in flight,
+     * ask it to drop the socket when it finishes instead -- the next fetch
+     * then re-handshakes, and a stale socket is never reused (every fetch
+     * honours the flag before performing). */
+    if (client_lock_take(0)) {
+        s_drop_pending = false;
+        drop_client();
+        client_lock_give();
+        return;
+    }
+    s_drop_pending = true;
 }
 
 /* THE ROOT URL (scheme://host[:port]/) of the configured endpoint: enough for
@@ -405,7 +513,20 @@ static bool tts_root_url(char *out, size_t cap)
 
 static bool fetch_once(const char *url, int timeout_ms)
 {
+    /* The reply worker waits for the socket: a card fetch or a probe holds
+     * it for at most one request, and performing alongside either would
+     * corrupt the shared handle (B1). */
+    if (!client_lock_take(portMAX_DELAY)) {
+        return false;
+    }
+    if (s_drop_pending) {
+        /* A release asked for a fresh socket while one was held: honour it
+         * before performing, so a stale socket is never reused. */
+        drop_client();
+        s_drop_pending = false;
+    }
     if (!ensure_client(url, timeout_ms)) {
+        client_lock_give();
         return false;
     }
     esp_http_client_handle_t c = s_client;
@@ -419,44 +540,52 @@ static bool fetch_once(const char *url, int timeout_ms)
     esp_err_t err = esp_http_client_perform(c);
     int status = esp_http_client_get_status_code(c);
     int64_t body = esp_http_client_get_content_length(c);
+    bool ok = false;
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "TTS request failed: %s (url %u bytes, budget %u)",
                  esp_err_to_name(err), (unsigned)strlen(url),
                  (unsigned)TTS_HTTP_TX_BUF);
         drop_client();   /* the retry starts from a new connection */
-        return false;
-    }
-    if (status != 200) {
+    } else if (status != 200) {
         ESP_LOGW(TAG, "TTS endpoint answered %d", status);
         drop_client();
-        return false;
+    } else {
+        /* C2: the bridge marks the last chunk of the reply (X-TTS-Last: 1) when
+         * the request carried &last=1; an old bridge sends no such header. Only a
+         * fetch of the current generation counts: a stale fetch that finished
+         * after a new turn started must not mark the new turn's audio. */
+        char *last_val = NULL;
+        if (s_fetch_gen == s_gen && !s_abort
+            && esp_http_client_get_header(c, "X-TTS-Last", &last_val) == ESP_OK
+            && last_val && last_val[0] == '1') {
+            s_last_chunk = true;
+        }
+        gate_finish();
+        if (s_payload_bad || s_abort) {
+            /* Nothing went to the decoder, or the read was abandoned midway: the
+             * socket may hold an unread body, so it must not be reused. */
+            drop_client();
+            /* Nothing went to the decoder: the reply stays on screen as text. */
+        } else {
+            /* A streamed reply has no Content-Length (-1), so report what we read and
+             * how long the first byte took: that is the number the stream change moves. */
+            s_client_last_us = esp_timer_get_time();
+            ESP_LOGI(TAG, "TTS got %u bytes (content-length %lld, first byte %d ms, total %d ms)",
+                     (unsigned)s_bytes, (long long)body,
+                     s_first_byte_us ? (int)((s_first_byte_us - t0) / 1000) : -1,
+                     (int)((esp_timer_get_time() - t0) / 1000));
+            ok = true;
+        }
     }
-    /* C2: the bridge marks the last chunk of the reply (X-TTS-Last: 1) when
-     * the request carried &last=1; an old bridge sends no such header. Only a
-     * fetch of the current generation counts: a stale fetch that finished
-     * after a new turn started must not mark the new turn's audio. */
-    char *last_val = NULL;
-    if (s_fetch_gen == s_gen && !s_abort
-        && esp_http_client_get_header(c, "X-TTS-Last", &last_val) == ESP_OK
-        && last_val && last_val[0] == '1') {
-        s_last_chunk = true;
-    }
-    gate_finish();
-    if (s_payload_bad || s_abort) {
-        /* Nothing went to the decoder, or the read was abandoned midway: the
-         * socket may hold an unread body, so it must not be reused. */
+    if (s_drop_pending) {
+        /* A release landed while this fetch performed: retire the socket now
+         * that nothing is using it, instead of leaving it for the next fetch.
+         * A successful fetch still counts -- its bytes reached the ring. */
         drop_client();
-        /* Nothing went to the decoder: the reply stays on screen as text. */
-        return false;
+        s_drop_pending = false;
     }
-    /* A streamed reply has no Content-Length (-1), so report what we read and
-     * how long the first byte took: that is the number the stream change moves. */
-    s_client_last_us = esp_timer_get_time();
-    ESP_LOGI(TAG, "TTS got %u bytes (content-length %lld, first byte %d ms, total %d ms)",
-             (unsigned)s_bytes, (long long)body,
-             s_first_byte_us ? (int)((s_first_byte_us - t0) / 1000) : -1,
-             (int)((esp_timer_get_time() - t0) / 1000));
-    return true;
+    client_lock_give();
+    return ok;
 }
 
 /* One retry, but only when nothing reached the decoder. A 502 carries an error
@@ -687,16 +816,29 @@ static void prewarm_task(void *arg)
     char *url = (char *)arg;
     int64_t t0 = esp_timer_get_time();
     s_prewarm = true;
-    bool ok = ensure_client(url, TTS_PREWARM_TIMEOUT_MS);
-    if (ok) {
-        esp_err_t err = esp_http_client_perform(s_client);
-        if (err != ESP_OK) {
-            ESP_LOGW(TAG, "prewarm failed: %s", esp_err_to_name(err));
+    /* Warm an idle socket only: if a reply or a card fetch owns it, the
+     * socket is warm already and the probe would only delay that fetch,
+     * so skip it instead of waiting on the lock (B1/F6). */
+    if (client_lock_take(0)) {
+        if (s_drop_pending) {
             drop_client();
-        } else {
-            ESP_LOGI(TAG, "prewarm: connection ready in %d ms",
-                     (int)((esp_timer_get_time() - t0) / 1000));
+            s_drop_pending = false;
         }
+        if (ensure_client(url, TTS_PREWARM_TIMEOUT_MS)) {
+            esp_err_t err = esp_http_client_perform(s_client);
+            if (err != ESP_OK) {
+                ESP_LOGW(TAG, "prewarm failed: %s", esp_err_to_name(err));
+                drop_client();
+            } else {
+                ESP_LOGI(TAG, "prewarm: connection ready in %d ms",
+                         (int)((esp_timer_get_time() - t0) / 1000));
+            }
+        }
+        if (s_drop_pending) {
+            drop_client();
+            s_drop_pending = false;
+        }
+        client_lock_give();
     }
     s_prewarm = false;
     free(url);
@@ -706,16 +848,32 @@ static void prewarm_task(void *arg)
 
 void muse_tts_prewarm(void)
 {
-    if (s_task || s_prewarm_task) {
-        return;   /* a reply is already fetching, or a probe is running */
+    /* A reply fetch owns the socket while s_busy is set; a probe already
+     * running owns the task handle. Either way there is nothing to warm.
+     * (F6: this used to test s_task, but the worker is created once on the
+     * first speak and never cleared, so after the first reply every prewarm
+     * returned here and the 45 s idle drop below never ran.) */
+    if (muse_tts_active() || s_prewarm_task) {
+        return;
     }
-    if (s_client && s_client_last_us &&
+    /* A card fetch sets no s_busy, so only touch the socket while holding
+     * the client lock -- and do not wait for it: a fetch in flight means
+     * the socket is warm anyway. */
+    if (!client_lock_take(0)) {
+        return;
+    }
+    if (s_drop_pending) {
+        drop_client();
+        s_drop_pending = false;
+    } else if (s_client && s_client_last_us &&
         esp_timer_get_time() - s_client_last_us < TTS_IDLE_DROP_US) {
+        client_lock_give();
         return;   /* the socket from the last turn is still fresh */
     }
     if (s_client) {
         drop_client();   /* stale: reconnect now rather than on the first word */
     }
+    client_lock_give();
     char root[192];
     if (!tts_root_url(root, sizeof(root))) {
         return;

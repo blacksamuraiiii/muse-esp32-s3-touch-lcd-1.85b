@@ -176,8 +176,11 @@ if(CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_CROSS_SIGNED_VERIFY AND
 endif()
 
 # Stale bundle choice: a build directory configured before sdkconfig.defaults
-# picked the common bundle still trusts the full one.
+# picked the common bundle still trusts the full one. This is a hard error,
+# not a warning: a stale build directory would otherwise keep trusting the
+# full bundle while only leaving one line in the build log. Delete the build
+# directory and reconfigure if this fires.
 if(CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_FULL)
-    message(WARNING
-        "This build trusts ESP-IDF's full root CA bundle, but sdkconfig.defaults picks the common one. If you didn't choose it in menuconfig: ${GADGET_CONFIG_REGEN_HINT}")
+    message(FATAL_ERROR
+        "This build trusts ESP-IDF's full root CA bundle, but sdkconfig.defaults picks the common one. If you didn't choose it in menuconfig: ${GADGET_CONFIG_REGEN_HINT} Delete the build directory and reconfigure.")
 endif()

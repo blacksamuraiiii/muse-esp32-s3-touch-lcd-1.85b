@@ -2360,10 +2360,12 @@ esp_err_t muse_ptest_board_power(muse_ptest_readback_t *out)
     out->usb = usb_serial_jtag_is_connected();
     out->input = out->output = out->direction = 0; /* no expander on this board */
     /* Charging: the gauge's DSG bit is clear while a charger pushes current
-     * in - the same reading read_power() uses. Gauge absent: not charging. */
+     * in - the same rule read_power() uses (average current > 0 AND !DSG:
+     * DSG clear alone also means relaxation, it does not prove charging).
+     * Gauge absent: not charging. */
     out->charging = false;
     battery_status_t bs = { 0 };
-    if (s_gauge != NULL && bq27220_get_battery_status(s_gauge, &bs) == ESP_OK) { out->charging = !bs.DSG; }
+    if (s_gauge != NULL && bq27220_get_battery_status(s_gauge, &bs) == ESP_OK) { out->charging = (int)bq27220_get_avgcurrent(s_gauge) > 0 && !bs.DSG; }
     return ESP_OK;
 }
 

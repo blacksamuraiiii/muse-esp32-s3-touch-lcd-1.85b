@@ -19,6 +19,7 @@ The password is read from the environment, not argv, so it does not show up in
 `ps` or the shell history.
 """
 
+import json
 import os
 import sys
 import time
@@ -39,15 +40,38 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 UPLOADS = ["tts_server.py", "requirements.txt", "Dockerfile"]
 
 
+def _local_env():
+    """The local .env as a dict (what is about to be deployed)."""
+    env = {}
+    with open(os.path.join(HERE, ".env")) as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, v = line.split("=", 1)
+            env[k.strip()] = v.strip()
+    return env
+
+
 def env_file_text():
-    """The .env to place on the host: only what the service needs."""
+    """The .env to place on the host: only what the service needs.
+
+    The whitelist is the whole list on purpose: anything the server reads
+    that is not here would silently fall back to its default on the next
+    deploy. TTS_TOKEN especially must survive deploys -- without it the
+    service runs with the old open behaviour (empty token = no auth) and
+    anyone on the LAN can spend the Azure quota."""
     wanted = ("AZURE_SPEECH_KEY", "AZURE_SPEECH_REGION", "TTS_VOICE",
               "TTS_FORCE_VOICE", "AZURE_SPEECH_STYLE", "AZURE_SPEECH_FORMAT",
               # prosody: the board sends no rate, so this is the voice speed
               "TTS_RATE", "TTS_PITCH",
               # latency knobs and the BADPACKET regression hook
               "TTS_STREAM_HEAD", "TTS_SEND_BYTES", "TTS_AZURE_POOL",
-              "TTS_PACING", "TTS_TEST_HOOKS", "TTS_FORCE_BAD")
+              "TTS_PACING", "TTS_TEST_HOOKS", "TTS_FORCE_BAD",
+              # auth + backend selection: losing these on deploy used to leave
+              # the relay open (empty TTS_TOKEN) and the backend/fallback at
+              # their defaults with no warning
+              "TTS_TOKEN", "TTS_BACKEND", "TTS_FALLBACK", "TTS_STREAM")
 
     lines = []
     with open(os.path.join(HERE, ".env")) as f:
@@ -126,14 +150,37 @@ def main():
 
     print("=== verify")
     time.sleep(3)
+    local_env = _local_env()
+    expected_pacing = local_env.get("TTS_PACING", "1") != "0"
+    expected_backend = local_env.get("TTS_BACKEND", "azure").strip().lower()
     rc, out = run(ssh, "curl -sS -m 10 http://127.0.0.1:5050/health", quiet=True)
     print("health: %s" % out.strip())
     if rc != 0 or '"backend"' not in out:
         sys.exit("health check failed")
-    rc, out = run(ssh, "curl -sS -m 30 -o /tmp/t.mp3 -w 'http=%{http_code} first_byte=%{time_starttransfer}s "
-                       "bytes=%{size_download} backend=%header{X-TTS-Backend}' "
-                       "'http://127.0.0.1:5050/tts?text=%E4%BD%A0%E5%A5%BD%EF%BC%8C%E6%88%91%E6%98%AF%E6%85%95"
-                       "%E6%80%9D%E6%9D%BF%E5%AD%90%E3%80%82'", quiet=True)
+    try:
+        health = json.loads(out)
+    except ValueError:
+        sys.exit("health check failed: not JSON")
+    if health.get("backend") != expected_backend:
+        sys.exit("health backend mismatch: got %r, local .env says %r"
+                 % (health.get("backend"), expected_backend))
+    if health.get("pacing") != expected_pacing:
+        sys.exit("health pacing mismatch: got %r, local .env TTS_PACING says %r"
+                 % (health.get("pacing"), local_env.get("TTS_PACING", "1")))
+    if not expected_pacing:
+        print("WARNING: TTS_PACING=0 in local .env: the deployed service runs "
+              "unpaced (burst) -- the C1-C3 rollback switch is ON, not a bug, "
+              "but check this was intentional before leaving it")
+    # The synthesis probe must carry the token when one is deployed, or it
+    # 403s and the deploy looks broken. The token is read out of the .env
+    # on the host itself, so it never travels in the ssh command line.
+    rc, out = run(ssh, "K=$(grep '^TTS_TOKEN=' %s/.env | cut -d= -f2- | tr -d '\r'); "
+                       "U='http://127.0.0.1:5050/tts?text=%%E4%%BD%%A0%%E5%%A5%%BD%%EF%%BC%%8C"
+                       "%%E6%%88%%91%%E6%%98%%AF%%E6%%85%%95%%E6%%80%%9D%%E6%%9D%%BF%%E5%%AD%%90"
+                       "%%E3%%80%%82'; if [ -n \"$K\" ]; then U=\"$U&k=$K\"; fi; "
+                       "curl -sS -m 30 -o /tmp/t.mp3 -w 'http=%%{http_code} "
+                       "first_byte=%%{time_starttransfer}s bytes=%%{size_download} "
+                       "backend=%%header{X-TTS-Backend}' \"$U\"" % REMOTE_DIR, quiet=True)
     tts_ok = "http=200" in out
     print("tts   : %s" % out.strip())
     # The host is a bare Alpine image: no ffprobe there, so the MP3 magic in the

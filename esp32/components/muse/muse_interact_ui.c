@@ -20,13 +20,16 @@
  *     the 学习 page, the 小游戏 card the mini-game list. Coin line
  *     at y = 302. The main page has NO back arrow (its header back
  *     callback is NULL); the face is one swipe away.
- *   - 学习 page (1.5.3a A flow): title "学习" with a back arrow,
- *     and a VERTICALLY SCROLLING column like the mini-game list's
- *     (same 58px rows, 10px gaps, 110px bottom pad): three rows,
- *     数学练习 / 英语单词 / 英语口语, all visible at once. All
- *     three are free (user decision 2026-11-12, 学习全部免费): no
- *     entry fee, no dimming. Back lands on the main page; the three
- *     games' own back arrows land here, not on the mini-game list.
+ *   - 学习 page (1.5.3a A flow, reworked to three cards 2026-11-12,
+ *     user decision v6, see notes/learn-section.md "三张卡片改版"):
+ *     title "学习" with a back arrow; motto "好好学习，天天向上"
+ *     at y = 84 (DIM, same slot/colour as the feed page's rule line);
+ *     three 100x100 cards at y = 120 (x = 22/130/238), 80px icons +
+ *     names at y = 228 (DIM); coin line at y = 302 (TEXT, refreshed
+ *     by refresh_status()). All three are free (user decision
+ *     2026-11-12, 学习全部免费): no entry fee, no dimming. Back
+ *     lands on the main page; the three games' own back arrows land
+ *     here, not on the mini-game list.
  *   - Mini-game list page: title "小游戏" with a back arrow, and a
  *     VERTICALLY SCROLLING column like the settings page's list
  *     (2026-11-01, user request): six 330x58 cards in a flex column,
@@ -403,7 +406,8 @@ static void on_back(lv_event_t *e)
      * main-page cards, so they still land on the main page. Leaving a
      * game page pauses a running game through its hide hook (snake
      * keeps its board, whack-a-mole, goldrain, doodle, mathpractice,
-     * tictactoe, wordcards and quiz resume from their pause overlays),
+     * tictactoe and wordcards resume from their pause overlays; quiz
+     * has no pause overlay, it replays the current question on show),
      * so none plays on off-screen; the other subpages keep their own
      * return-visit rules. */
     if (s_page == IC_PAGE_SNAKE) {
