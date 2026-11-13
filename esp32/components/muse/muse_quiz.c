@@ -3,8 +3,8 @@
  * muse_quiz.c -- 英语口语（听力练习）logic, see muse_quiz.h.
  *
  * The round deals 5 questions up front (a partial Fisher-Yates over
- * the 16-word pool, so no answer repeats inside a round) and each
- * question's two distractors are drawn from the other 15 pool words,
+ * the 20-word pool, so no answer repeats inside a round) and each
+ * question's two distractors are drawn from the other 19 pool words,
  * so the answer never appears twice on one screen. The three options
  * are shuffled per question, so the right slot moves.
  *
@@ -16,16 +16,19 @@
 
 #include <stdlib.h>
 
-/* The pool: fruit (set 0, 4 words), animal (set 1, 8 words), things
- * (set 8, 4 words) -- the word-cards sets that are live. A question's
- * answer and its options are pointers into this table, so there is no
- * second copy of the words to keep in step. */
+/* The pool: fruit (set 0, 4 words), animal (set 1, 8 words), food
+ * (set 6, 4 words), things (set 8, 4 words) -- the word-cards sets
+ * that are live. Food joined the pool 2026-11-13 (user decision,
+ * review F5). A question's answer and its options are pointers into
+ * this table, so there is no second copy of the words to keep in
+ * step. */
 static const struct {
     int set;
     int idx;
 } k_pool[MUSE_QUIZ_POOL_WORDS] = {
     {0, 0}, {0, 1}, {0, 2}, {0, 3},
     {1, 0}, {1, 1}, {1, 2}, {1, 3}, {1, 4}, {1, 5}, {1, 6}, {1, 7},
+    {6, 0}, {6, 1}, {6, 2}, {6, 3},
     {8, 0}, {8, 1}, {8, 2}, {8, 3},
 };
 
@@ -67,7 +70,7 @@ void muse_quiz_init(muse_quiz_t *g)
 
 /* Deal 5 questions: a partial Fisher-Yates over the pool picks 5
  * distinct answers; per question two distinct distractors are drawn
- * from the other 15 pool words and the three options are shuffled. */
+ * from the other 19 pool words and the three options are shuffled. */
 static void deal(muse_quiz_t *g)
 {
     int order[MUSE_QUIZ_POOL_WORDS];
@@ -85,7 +88,7 @@ static void deal(muse_quiz_t *g)
         const muse_wordcards_word_t *ans = muse_quiz_pool_word(order[qi]);
         q->answer = ans;
         /* Two distractors: distinct pool words, neither the answer.
-         * Draw from the 15 non-answer words by index into a compacted
+         * Draw from the 19 non-answer words by index into a compacted
          * list (the answer's own pool slot is skipped). */
         int others[MUSE_QUIZ_POOL_WORDS - 1];
         int n = 0;
