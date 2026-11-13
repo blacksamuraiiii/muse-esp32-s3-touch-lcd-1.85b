@@ -109,7 +109,7 @@ static bool s_payload_bad;    /* the prefix failed: drop the rest, do not retry 
 static esp_http_client_handle_t s_client;
 static volatile bool s_prewarm;          /* the connection probe is running: ignore its body */
 static TaskHandle_t s_prewarm_task;
-static int64_t s_client_last_us;         /* when the last reply request finished */
+static int64_t s_client_last_us;         /* when this connection was last confirmed usable */
 /* Serialises every esp_http_client_perform() on the one shared s_client, and
  * every cleanup of it. The handle is not thread-safe, and its three users --
  * the reply worker, the prewarm probe and the word/quiz card fetches -- run
@@ -126,9 +126,12 @@ static int64_t s_client_last_us;         /* when the last reply request finished
 static SemaphoreHandle_t s_client_lock;
 static volatile bool s_drop_pending;
 static bool s_raw_active;
-/* An idle keep-alive socket older than this is dropped by prewarm: servers and
- * NAT boxes reap idle connections, and reconnecting while the model is still
- * writing is free. */
+/* An idle keep-alive socket older than this is not reused: servers and NAT
+ * boxes reap idle connections (the bridge's nginx closes one after 300 s) and
+ * the peer's close is invisible to us until a request fails on it. Checked at
+ * reuse (ensure_client), not only by prewarm: the cards never call prewarm,
+ * so a slot opened the next morning would otherwise ride last night's socket
+ * and pay a full timeout before the retry re-handshakes. */
 #define TTS_IDLE_DROP_US (45 * 1000 * 1000)
 #define TTS_PREWARM_TIMEOUT_MS 6000
 #define TTS_PREWARM_STACK 8192
@@ -311,12 +314,28 @@ static void gate_finish(void)
  * pays one handshake per turn -- and muse_tts_prewarm() pays that one while the
  * model is still writing, before any text has arrived. */
 
+static void drop_client(void);
+
 static bool ensure_client(const char *url, int timeout_ms)
 {
     if (s_client) {
-        esp_http_client_set_timeout_ms(s_client, timeout_ms);
-        esp_http_client_set_url(s_client, url);
-        return true;
+        /* Never ride an idle socket the peer has probably already reaped:
+         * the bridge's nginx closes a keep-alive connection after 300 s and
+         * lwIP still reports ours as connected, so the first request on it
+         * would burn the whole timeout before the caller dropped it and
+         * re-handshaked. That is what a card page opened the next morning
+         * hit. Rebuild here instead: every path (reply, probe, card fetch)
+         * goes through this one function. */
+        if (s_client_last_us &&
+            esp_timer_get_time() - s_client_last_us >= TTS_IDLE_DROP_US) {
+            ESP_LOGI(TAG, "idle socket %d s: reconnecting",
+                     (int)((esp_timer_get_time() - s_client_last_us) / 1000000));
+            drop_client();
+        } else {
+            esp_http_client_set_timeout_ms(s_client, timeout_ms);
+            esp_http_client_set_url(s_client, url);
+            return true;
+        }
     }
     /* Some TTS endpoints refuse a request with no browser User-Agent. */
     const esp_app_desc_t *app = esp_app_get_description();
@@ -830,6 +849,11 @@ static void prewarm_task(void *arg)
                 ESP_LOGW(TAG, "prewarm failed: %s", esp_err_to_name(err));
                 drop_client();
             } else {
+                /* The probe's own status is ignored (403 without the token),
+                 * but the socket it just used is usable: start the idle clock
+                 * here too, so ensure_client's age check means what it says
+                 * on every path. */
+                s_client_last_us = esp_timer_get_time();
                 ESP_LOGI(TAG, "prewarm: connection ready in %d ms",
                          (int)((esp_timer_get_time() - t0) / 1000));
             }

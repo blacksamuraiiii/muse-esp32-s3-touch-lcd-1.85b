@@ -73,9 +73,15 @@ CONFIG_ESP_WIFI_IRAM_OPT=n
 CONFIG_ESP_WIFI_RX_IRAM_OPT=n
 CONFIG_LWIP_IRAM_OPTIMIZATION=n
 CONFIG_LWIP_EXTRA_IRAM_OPTIMIZATION=n
-CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=8
+# 4 resident RX buffers (was 8) and a matching 8-deep block-ack window: the
+# static pool lives in internal DMA-capable RAM, and 8 of them left the largest
+# free internal block at 3968 B -- below the word-audio prefetch floor of 4608 B,
+# so card audio was skipped depending on the moment the page opened (2026-11-13,
+# 1.5.3b: 5 of 6 opens). Halving the pool gives ~6 KB back; the bridge streams
+# 48 kbps word audio and small chat frames, so a 4-deep ack window is ample.
+CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=4
 CONFIG_ESP_WIFI_DYNAMIC_RX_BUFFER_NUM=32
-CONFIG_ESP_WIFI_RX_BA_WIN=16
+CONFIG_ESP_WIFI_RX_BA_WIN=8
 CONFIG_ESP_WIFI_TX_BA_WIN=16
 
 # These boards carry no board-specific PHY calibration blob; use the embedded
