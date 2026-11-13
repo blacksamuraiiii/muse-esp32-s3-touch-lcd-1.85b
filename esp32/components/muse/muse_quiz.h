@@ -4,9 +4,9 @@
  *
  * One 60-second round of 5 questions (user decision 2026-11-11: was
  * 120 seconds): hear the English word, pick its picture from three
- * options. The question pool is the 16 words of the word-cards sets
- * that are already live -- fruit 4 + animal 8 + things 4. Each round
- * deals 5 different answers (no repeat inside a round) and each
+ * options. The question pool is the 20 words of the word-cards sets
+ * that are already live -- fruit 4 + animal 8 + food 4 + things 4.
+ * Each round deals 5 different answers (no repeat inside a round) and each
  * question's two distractors are two other pool words, never the
  * answer. The three options are shuffled, so the answer is not in a
  * fixed slot.
@@ -57,7 +57,7 @@
 /* One round is 5 questions in 60 seconds (user 2026-11-11, was 120). */
 #define MUSE_QUIZ_QUESTIONS 5
 #define MUSE_QUIZ_OPTIONS 3
-#define MUSE_QUIZ_POOL_WORDS 16
+#define MUSE_QUIZ_POOL_WORDS 20
 #define MUSE_QUIZ_GAME_MS 60000u
 #define MUSE_QUIZ_TICK_MS 50u
 /* How long the verdict stays up before the next question is dealt
@@ -97,7 +97,7 @@ typedef struct {
 } muse_quiz_t;
 
 /* The question pool: the live word-cards sets (fruit 4 + animal 8 +
- * things 4), in table order. */
+ * food 4 + things 4), in table order. */
 int muse_quiz_pool_words(void);
 const muse_wordcards_word_t *muse_quiz_pool_word(int i);
 

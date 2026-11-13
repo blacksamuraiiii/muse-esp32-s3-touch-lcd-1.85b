@@ -7,7 +7,8 @@
  *      -o /tmp/quiz
  * Covers the pure logic only (muse_quiz.c has no LVGL and no
  * ESP-IDF -- the UI owns the 50 ms timer and the audio tasks):
- *  1. Pool: fruit 4 + animal 8 + things 4 = 16 words, in table order.
+ *  1. Pool: fruit 4 + animal 8 + food 4 + things 4 = 20 words, in
+ *     table order.
  *  2. Deal: 5 distinct answers per round, two distractors per
  *     question that are never the answer and never each other, the
  *     three options hold the answer exactly once, the correct slot
@@ -33,18 +34,20 @@
 
 static void test_pool(void)
 {
-    assert(muse_quiz_pool_words() == 16);
-    static const char *en[16] = {
+    assert(muse_quiz_pool_words() == 20);
+    static const char *en[20] = {
         "apple", "banana", "cherry", "peach",
         "cat", "dog", "bird", "fish", "bear", "duck", "frog", "fox",
+        "cake", "milk", "bread", "egg",
         "balloon", "box", "bag", "robot",
     };
-    static const char *zh[16] = {
+    static const char *zh[20] = {
         "苹果", "香蕉", "樱桃", "桃子",
         "猫", "狗", "鸟", "鱼", "熊", "鸭子", "青蛙", "狐狸",
+        "蛋糕", "牛奶", "面包", "鸡蛋",
         "气球", "盒子", "包", "机器人",
     };
-    for (int i = 0; i < 16; i++) {
+    for (int i = 0; i < 20; i++) {
         const muse_wordcards_word_t *w = muse_quiz_pool_word(i);
         assert(w != NULL);
         assert(strcmp(w->en, en[i]) == 0);
@@ -52,7 +55,7 @@ static void test_pool(void)
         assert(w->art >= 0); /* every pool word has art */
     }
     assert(muse_quiz_pool_word(-1) == NULL);
-    assert(muse_quiz_pool_word(16) == NULL);
+    assert(muse_quiz_pool_word(20) == NULL);
 }
 
 static void check_deal(const muse_quiz_t *g)
