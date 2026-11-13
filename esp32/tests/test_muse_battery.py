@@ -172,18 +172,31 @@ class BatteryTest(HarnessCase):
         # One beep per discharge below 20%: fires once, stays quiet while
         # low, re-arms at 20% (or on USB/charging/unknown). 20% itself
         # is not below the line. Each run_harness is a fresh process, so
-        # the gate starts armed.
-        due = self.run_harness("low 0 25 4000", "low 0 19 3800", "low 0 15 3700",
-                               "low 0 19 3800", "low 0 20 3900", "low 0 19 3800")
+        # the gate starts armed. The gate only reports the trigger: the
+        # caller disarms it with "played" once the sound really went out
+        # (F7), so a failed playback -- codecs powered down while resting
+        # -- leaves the trigger armed for the next poll instead of
+        # swallowing the one beep for the whole discharge.
+        due = self.run_harness("low 0 25 4000", "low 0 19 3800", "played",
+                               "low 0 15 3700", "low 0 19 3800", "low 0 20 3900",
+                               "low 0 19 3800")
         self.assertEqual([d["low_beep_due"] for d in due], [0, 1, 0, 0, 0, 1])
-        due = self.run_harness("low 0 19 3800", "low 0 25 4000", "low 0 19 3800")
+        due = self.run_harness("low 0 19 3800", "played", "low 0 25 4000",
+                               "low 0 19 3800")
         self.assertEqual([d["low_beep_due"] for d in due], [1, 0, 1])
-        due = self.run_harness("low 0 19 3800", "low 1 10 4000", "low 0 10 3800")
+        due = self.run_harness("low 0 19 3800", "played", "low 1 10 4000",
+                               "low 0 10 3800")
         self.assertEqual([d["low_beep_due"] for d in due], [1, 0, 1])
-        due = self.run_harness("low 0 19 3800", "low 0 10 3800 1", "low 0 10 3800")
+        due = self.run_harness("low 0 19 3800", "played", "low 0 10 3800 1",
+                               "low 0 10 3800")
         self.assertEqual([d["low_beep_due"] for d in due], [1, 0, 1])
         due = self.run_harness("low 0 -1 0", "low 0 19 3800")
         self.assertEqual([d["low_beep_due"] for d in due], [0, 1])
+        # A beep that never went out stays due: without "played" the same
+        # low reading reports due again on the next poll.
+        due = self.run_harness("low 0 19 3800", "low 0 15 3700", "played",
+                               "low 0 15 3700")
+        self.assertEqual([d["low_beep_due"] for d in due], [1, 1, 0])
 
     def test_measurement(self) -> None:
         read, j = self.measure("r", "j")

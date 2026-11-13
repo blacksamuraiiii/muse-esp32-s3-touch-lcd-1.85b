@@ -507,8 +507,8 @@ the design, the Wi-Fi protocol and the numbers.
   later edits to `sdkconfig.defaults` or the overlays. After changing those,
   delete the generated `sdkconfig` (or the whole build directory) and rebuild.
   `cmake/validate_config.cmake` stops the build if a stale config has the old
-  TCP buffer sizes or cJSON nesting limit, and warns if it still has the full
-  root CA bundle.
+  TCP buffer sizes or cJSON nesting limit, or still has the full root CA bundle
+  (delete the build directory and reconfigure in that case).
 - HTTPS trusts ESP-IDF's common root CAs only (`sdkconfig.defaults`), with
   cross-signed verification so chains that reach one of them through a
   cross-sign still verify. A server whose chain ends at another root (some

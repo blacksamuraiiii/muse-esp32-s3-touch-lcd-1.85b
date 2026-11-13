@@ -77,6 +77,13 @@ static const char *TAG = "muse.wordcards_audio";
  * and lets the prefetch through at the ~5 KB this board actually runs at. */
 #define WC_MIN_INTERNAL_FOR_TLS 4608u
 
+/* Worst-case word playback: the 32 KB slot cap at the ~48 kbps the
+ * word MP3s are encoded at is ~5.5 s (a typical 11 KB word is
+ * ~1.9 s). The prefetch waits this long for a playback in flight
+ * before giving up the round instead of overwriting the slot being
+ * decoded (see fetch_task). */
+#define WC_PLAY_MAX_WAIT_MS 6000u
+
 /* PSRAM slots: one per word of the current set. Allocated on the
  * first prefetch and kept: a round reuses them, a restart refills
  * them. 32 KB each is the MUSE_WORDCARDS_MAX_MP3_BYTES cap. */
@@ -102,6 +109,13 @@ static bool s_fetch_wanted;
 
 static TaskHandle_t s_play_task;
 static volatile bool s_play_abort;
+/* Set only by muse_wordcards_audio_stop(): the running playback and
+ * any word queued behind it are both cancelled. Kept separate from
+ * s_play_abort because play_request() also sets s_play_abort when it
+ * queues a word behind a running one (supersede) -- gating the
+ * queued start on s_play_abort would break fast-flip queueing. A
+ * fresh play_request() clears it again. */
+static volatile bool s_play_stopped;
 /* A word asked for while another is still playing: the running task is
  * told to stop, and this one starts as it exits. Queued here instead of
  * waited for, because the caller is the LVGL thread (see
@@ -317,12 +331,18 @@ static void fetch_task(void *arg)
     const int words = list.count;
     if (words == 0) {
         fetch_task_exit();
+        return;
     }
     if (!ensure_slots(list.slots, words)) {
+        /* READY slots keep their bytes (the cache_begin invariant):
+         * only slots that are not READY yet are failed. */
         for (int i = 0; i < words; i++) {
-            list.mark_failed(list.ctx, i, gen);
+            if (!list.is_ready(list.ctx, i)) {
+                list.mark_failed(list.ctx, i, gen);
+            }
         }
         fetch_task_exit();
+        return;
     }
     /* Refuse to open a TLS client when the internal pool cannot spare the
      * buffers: this is the same pool the renderer allocates its masks and
@@ -334,14 +354,29 @@ static void fetch_task(void *arg)
                  (unsigned)free_int, (unsigned)largest_int,
                  (unsigned)WC_MIN_INTERNAL_FOR_TLS);
         for (int i = 0; i < words; i++) {
-            list.mark_failed(list.ctx, i, gen);
+            if (!list.is_ready(list.ctx, i)) {
+                list.mark_failed(list.ctx, i, gen);
+            }
         }
         fetch_task_exit();
+        return;
     }
     /* A playback in flight owns a slot's bytes: wait for it to finish
-     * (a word is ~1 s) rather than overwrite audio being decoded. */
-    for (int i = 0; i < 20 && s_play_task && !s_fetch_abort; i++) {
+     * rather than overwrite audio being decoded. A word is not "~1 s":
+     * the 32 KB slot cap is ~5.5 s at ~48 kbps, so wait out a whole
+     * word (WC_PLAY_MAX_WAIT_MS). If it is still running after that,
+     * give up this round instead of writing over the slot -- the
+     * marks below are left untouched, so READY words keep their
+     * bytes and the rest are retried on the next entry. */
+    for (int i = 0; i < (int)(WC_PLAY_MAX_WAIT_MS / 100) &&
+                    s_play_task && !s_fetch_abort;
+         i++) {
         vTaskDelay(pdMS_TO_TICKS(100));
+    }
+    if (s_play_task && !s_fetch_abort) {
+        ESP_LOGW(TAG, "prefetch abandoned: playback still running");
+        fetch_task_exit();
+        return;
     }
     list.mark_begin(list.ctx);
     for (int i = 0; i < words; i++) {
@@ -357,10 +392,15 @@ static void fetch_task(void *arg)
         } else if (r < 0) {
             /* Transport failure: the host is unreachable, so the rest
              * of the list would fail the same way -- mark them FAILED
-             * now instead of paying more timeouts. */
+             * now instead of paying more timeouts. Words past i were
+             * never visited and may already be READY for this
+             * generation (cache_begin keeps them); only fail the ones
+             * that are not READY. */
             list.mark_failed(list.ctx, i, gen);
             for (int j = i + 1; j < words; j++) {
-                list.mark_failed(list.ctx, j, gen);
+                if (!list.is_ready(list.ctx, j)) {
+                    list.mark_failed(list.ctx, j, gen);
+                }
             }
             break;
         }
@@ -373,6 +413,7 @@ static void fetch_task(void *arg)
         muse_tts_release_client();
     }
     fetch_task_exit();
+    return;
 }
 
 static void start_fetch(const muse_wc_fetch_list_t *list)
@@ -518,6 +559,12 @@ void muse_wordcards_audio_prefetch_quiz(muse_quiz_t *g)
 void muse_wordcards_audio_prefetch_abort(void)
 {
     s_fetch_abort = true;
+    /* Drop a prefetch queued behind the running one as well: it was
+     * asked for by the page being left (or the set being changed),
+     * and fetch_task_exit() would otherwise start it after this task
+     * exits. A fetch asked for after this call re-queues itself
+     * through muse_wordcards_audio_prefetch_list(). */
+    s_fetch_wanted = false;
 }
 
 /* --- playback ----------------------------------------------------- */
@@ -531,6 +578,11 @@ typedef struct {
 bool muse_wordcards_audio_play(muse_wordcards_t *g, int i);
 bool muse_wordcards_audio_play_quiz(muse_quiz_t *g, int i);
 
+/* Forward: play_task_exit() starts a queued word through this, not
+ * through the public play entry points (see there). */
+static bool start_play_task(wc_play_kind_t kind, muse_wordcards_t *wc,
+                            muse_quiz_t *quiz, int idx);
+
 /* The task's only exit: clear the handle, then start a word that was asked
  * for while this one was playing (a fast second flip), then delete. The
  * queued start must happen AFTER the handle is cleared, or the new call
@@ -538,6 +590,17 @@ bool muse_wordcards_audio_play_quiz(muse_quiz_t *g, int i);
 static void play_task_exit(void)
 {
     s_play_task = NULL;
+    /* Start a word queued behind this one -- unless stop() cancelled
+     * it (leaving the page). The stop flag, not s_play_abort, is the
+     * test: queueing a word also sets s_play_abort, so that flag
+     * cannot tell "superseded" from "stopped". The queued entries are
+     * taken and cleared first, so a dropped word can never start on
+     * a later exit. The start goes through start_play_task()
+     * directly, not the public play entry points, so a stop() landing
+     * between this check and the start is still caught by
+     * start_play_task()'s own check instead of being cleared again
+     * by play_request(). The READY re-check is kept: a restart
+     * meanwhile may have failed or replaced the slot. */
     if (s_play_wanted_idx >= 0) {
         wc_play_kind_t kind = s_play_wanted_kind;
         muse_wordcards_t *wc = s_play_wanted_wc;
@@ -546,11 +609,15 @@ static void play_task_exit(void)
         s_play_wanted_wc = NULL;
         s_play_wanted_quiz = NULL;
         s_play_wanted_idx = -1;
-        if (idx >= 0) {
+        if (!s_play_stopped) {
             if (kind == WC_PLAY_QUIZ) {
-                (void)muse_wordcards_audio_play_quiz(quiz, idx);
+                if (quiz && muse_quiz_cache_is_ready(quiz, idx)) {
+                    (void)start_play_task(kind, wc, quiz, idx);
+                }
             } else {
-                (void)muse_wordcards_audio_play(wc, idx);
+                if (wc && muse_wordcards_cache_is_ready(wc, idx)) {
+                    (void)start_play_task(kind, wc, quiz, idx);
+                }
             }
         }
     }
@@ -570,10 +637,13 @@ static void play_task(void *arg)
     muse_audio_power(true); /* left open: the voice task owns closing */
     if (!ensure_decode_buffers()) {
         play_task_exit();
+        return;
     }
     /* The slot belongs to the current round; copy the length, not the
      * pointer, into this task -- the bytes stay put until the next
-     * prefetch, which waits for this task to finish. */
+     * prefetch, which waits up to WC_PLAY_MAX_WAIT_MS for this task
+     * and abandons its round rather than overwrite a slot still
+     * being decoded. */
     mp3dec_init(s_dec);
     uint8_t *p = (uint8_t *)slot;
     size_t n = len;
@@ -642,11 +712,14 @@ static void play_task(void *arg)
     ESP_LOGI(TAG, "play %s done: stack %u left", en,
              (unsigned)uxTaskGetStackHighWaterMark(NULL));
     play_task_exit();
+    return;
 }
 
 /* Build the play request for one word and start its task. The slot
  * pointer is copied at request time: the bytes stay put until the next
- * prefetch, which waits for this task to finish. */
+ * prefetch, which waits up to WC_PLAY_MAX_WAIT_MS for this task and
+ * abandons its round rather than overwrite a slot still being
+ * decoded. */
 static bool start_play_task(wc_play_kind_t kind, muse_wordcards_t *wc,
                             muse_quiz_t *quiz, int idx)
 {
@@ -666,6 +739,16 @@ static bool start_play_task(wc_play_kind_t kind, muse_wordcards_t *wc,
         r->en = MUSE_WORDCARDS_SETS_TABLE[wc->set].words[idx].en;
     }
     s_play_abort = false;
+    /* Refuse a start after stop(): a stop() that landed between
+     * play_task_exit()'s check and this call must still win. The
+     * abort is cleared before the check on purpose -- if stop() lands
+     * after the check, s_play_abort stays set and the new task exits
+     * before writing any audio. A fresh play_request() clears
+     * s_play_stopped first, so a later tap is unaffected. */
+    if (s_play_stopped) {
+        free(r);
+        return false;
+    }
     if (xTaskCreateWithCaps(play_task, "muse_wc_play", WC_PLAY_STACK,
                             r, WC_TASK_PRIO, &s_play_task,
                             MALLOC_CAP_SPIRAM) != pdPASS) {
@@ -685,6 +768,10 @@ static bool start_play_task(wc_play_kind_t kind, muse_wordcards_t *wc,
 static bool play_request(wc_play_kind_t kind, muse_wordcards_t *wc,
                          muse_quiz_t *quiz, int idx)
 {
+    /* A fresh play request supersedes any earlier stop(): the user
+     * tapped again after leaving (or the page re-showed and replays).
+     * Without this, stop()'s flag would refuse every later play. */
+    s_play_stopped = false;
     if (s_play_task) {
         /* Supersede, never wait: this is called from the LVGL tick
          * (drain_pending_audio), and waiting here for the running word
@@ -735,6 +822,16 @@ bool muse_wordcards_audio_play_quiz(muse_quiz_t *g, int i)
 void muse_wordcards_audio_stop(void)
 {
     s_play_abort = true;
+    /* A stop is a cancellation, not a supersede: drop any word queued
+     * behind the running one, or it would start on the next page
+     * after this one was left (fast flip, then `<`). The running task
+     * sees s_play_abort and exits; play_task_exit() and
+     * start_play_task() re-check s_play_stopped, so a word queued
+     * between this clear and the exit is dropped too. */
+    s_play_stopped = true;
+    s_play_wanted_idx = -1;
+    s_play_wanted_wc = NULL;
+    s_play_wanted_quiz = NULL;
 }
 
 bool muse_wordcards_audio_busy(void)

@@ -486,7 +486,14 @@ static void learn_note(const muse_power_t *p)
  * armed until a reading comes in under it, then quiet until the pack is
  * back at or above it (or USB/charging, or an unknown reading, re-arms
  * it). The poll is every 2 s awake / 10 s paused, so an edge gate -- not
- * a timer -- is the whole of the throttling. */
+ * a timer -- is the whole of the throttling.
+ *
+ * The gate only says the beep is due; it does not disarm itself. The
+ * caller disarms it with muse_battery_low_beep_played() once the sound
+ * really went out (F7): with the codecs powered down the write fails, and
+ * disarming on the attempt would swallow the one beep for the whole
+ * discharge -- the trigger has to survive a failed playback and fire on
+ * the next poll / after waking instead. */
 static bool s_low_beep_armed = true;
 
 bool muse_battery_low_beep_due(const muse_power_t *p)
@@ -499,11 +506,12 @@ bool muse_battery_low_beep_due(const muse_power_t *p)
         s_low_beep_armed = true;
         return false;
     }
-    if (!s_low_beep_armed) {
-        return false;
-    }
+    return s_low_beep_armed;
+}
+
+void muse_battery_low_beep_played(void)
+{
     s_low_beep_armed = false;
-    return true;
 }
 
 void muse_battery_note_power(const muse_power_t *p, bool on_battery)

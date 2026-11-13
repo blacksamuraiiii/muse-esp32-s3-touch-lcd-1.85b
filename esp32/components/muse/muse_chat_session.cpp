@@ -257,7 +257,8 @@ struct turn_t {
     uint8_t *mp3;            /* MP3_BUF */
     size_t mp3_len;
     bool mp3_ended;
-    int64_t drain_us;        /* C2: when the playback queue first ran dry */
+    int64_t drain_us;        /* C2/F15: when the drain wait armed (stream ended, MP3 decoded) */
+    bool drain_long;         /* F15: output was still queued when it armed: keep the long grace */
     mp3dec_t dec;
     resampler_t down;
     int kbps;
@@ -1678,7 +1679,8 @@ static void hand_sentence(int i, const char *text, size_t unit, size_t buffered,
         s_turn.silent = false;
         s_turn.mp3_len = 0;
         s_turn.mp3_ended = false;
-        s_turn.drain_us = 0;   /* C2: the drain margin starts when it drains */
+        s_turn.drain_us = 0;   /* C2/F15: the drain wait arms when the stream ends, see decode() */
+        s_turn.drain_long = false;
         s_turn.kbps = 0;
         s_turn.down_rate = 0;
         mp3dec_init(&s_turn.dec);
@@ -1858,12 +1860,20 @@ static void pace_silently(void)
     }
 }
 
-/* C2: after the playback queue runs dry, how long to wait before ending the
+/* C2/F15: after the stream has ended, how long to wait before ending the
  * message -- a margin for the decoder's trailing frame and the output buffer.
- * Short once the last chunk's marker arrived; the grace is for an old bridge
- * (or a lost marker), so the message still finishes instead of hanging. */
+ * Short (120 ms) once the last chunk's marker arrived. Without a marker (an
+ * old bridge, or a lost marker) the wait used to be a flat 2 s grace after
+ * the playback queue ran dry, so every message tail of a multi-message
+ * reply on an old bridge cost 2 s of silence. The grace now runs from when
+ * the stream ended, overlapping the drain instead of following it, and it
+ * is long (2 s) only when output was still queued at that moment; a stream
+ * that ended with the queue already dry only waits 500 ms. Either way the
+ * margin is finite, so a missing marker still finishes the message -- it
+ * must never hang a turn. */
 #define TTS_DRAIN_MARGIN_US (120 * 1000LL)
 #define TTS_DRAIN_GRACE_US (2 * 1000 * 1000LL)
+#define TTS_DRAIN_SHORT_US (500 * 1000LL)
 
 /* Decodes buffered MP3 while the reply buffer has room. */
 static void decode(void)
@@ -1936,22 +1946,28 @@ static void decode(void)
             m.pcm_frames = (uint32_t)(m.len * MIC_RATE / TEXT_CHARS_PER_S);
             return;
         }
-        /* C2: wait for the playback queue to drain plus a margin for the
+        /* C2/F15: wait for the playback queue to drain plus a margin for the
          * decoder's trailing frame and the output buffer before ending the
          * message, so a long tail is never cut by the turn ending under it.
-         * The margin is short once the last chunk's marker arrived; without
-         * it (an old bridge, or a lost marker) the same wait gets a grace
-         * period and the message still finishes -- a missing marker must
+         * The wait arms the first time the stream has ended and the MP3
+         * buffer is decoded -- even while the queue is still draining -- so
+         * the margin runs from there and overlaps the drain, instead of
+         * adding a flat 2 s after it. The margin is short (120 ms) once the
+         * last chunk's marker arrived; without it the wait keeps the 2 s
+         * grace only when output was still queued when the wait armed, and
+         * drops to 500 ms when the stream ended with the queue already dry.
+         * Either way the message still finishes -- a missing marker must
          * never hang a turn. */
-        if (!xStreamBufferIsEmpty(s_out)) {
-            s_turn.drain_us = 0;   /* still draining: the margin starts later */
-            return;
-        }
         if (!s_turn.drain_us) {
             s_turn.drain_us = now_us();
+            s_turn.drain_long = !xStreamBufferIsEmpty(s_out);
             return;
         }
-        int64_t margin = muse_tts_last_chunk() ? TTS_DRAIN_MARGIN_US : TTS_DRAIN_GRACE_US;
+        if (!xStreamBufferIsEmpty(s_out)) {
+            return;   /* still draining: finish only once it runs dry */
+        }
+        int64_t margin = muse_tts_last_chunk() ? TTS_DRAIN_MARGIN_US
+                       : s_turn.drain_long ? TTS_DRAIN_GRACE_US : TTS_DRAIN_SHORT_US;
         if (now_us() - s_turn.drain_us < margin) {
             return;
         }
@@ -1962,8 +1978,10 @@ static void decode(void)
     }
     /* The fetch queue ran dry while the message still has text to say: take the
      * end back, so the next sentence's stream is decoded with its trailing
-     * frame intact. */
+     * frame intact. A drain wait armed for the ended stream is stale with it. */
     s_turn.mp3_ended = false;
+    s_turn.drain_us = 0;
+    s_turn.drain_long = false;
     return;
 #endif
     if (s_turn.mp3_ended && s_turn.kbps > 0) {

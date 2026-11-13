@@ -248,13 +248,15 @@ void muse_audio_power(bool v)
 void muse_audio_selftest(void)
 {
 }
-void muse_audio_chirp(int v)
+esp_err_t muse_audio_chirp(int v)
 {
     (void)v;
+    return ESP_OK;
 }
-void muse_audio_sfx(muse_sfx_t sfx)
+esp_err_t muse_audio_sfx(muse_sfx_t sfx)
 {
     (void)sfx;
+    return ESP_OK;
 }
 void muse_audio_loopback_test(int v)
 {

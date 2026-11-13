@@ -228,11 +228,43 @@ _EMOJI_RE = re.compile(
     "[" "\U0001F000-\U0001FAFF" "\U00002600-\U000027BF"
     "\U0001F1E6-\U0001F1FF" "\U0000FE00-\U0000FE0F" "\U0000200D"
     "\U00002B00-\U00002BFF" "\U00003030" "\U0000303D" "]+")
-# Kaomoji: a bracketed run that holds no word character -- (╯°□°)╯, (｡･ω･｡).
-_KAOMOJI_RE = re.compile(r"[\(（\[【〔]\s*[^\u4e00-\u9fffA-Za-z0-9\s]{2,}\s*[\)）\]】〕]")
-_WORD_RE = re.compile(
-    r"[0-9A-Za-z\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af"
-    r"\uff10-\uff19\uff21-\uff3a\uff41-\uff5a]")   # fullwidth digits and letters count
+# Word characters, shared by _WORD_RE and the kaomoji check: CJK, kana, hangul
+# and fullwidth forms, plus Cyrillic, Greek and accented Latin (a reply in
+# Russian or Greek is speakable, not an empty string).
+_WORD_CHARS = (
+    r"0-9A-Za-z\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af"
+    r"\uff10-\uff19\uff21-\uff3a\uff41-\uff5a"
+    r"\u0400-\u04ff\u0370-\u03ff"
+    r"\u00c0-\u00d6\u00d8-\u00f6\u00f8-\u00ff\u0100-\u024f\u1e00-\u1eff")
+_WORD_RE = re.compile(r"[" + _WORD_CHARS + r"]")
+_WORD_PAIR_RE = re.compile(r"[" + _WORD_CHARS + r"]{2}")
+_CJK_RE = re.compile(r"[\u4e00-\u9fff]")
+# Kaomoji: a bracketed run whose inside holds no CJK, no two word characters
+# in a row (a real word or parenthetical keeps its runs), and at least one
+# symbol -- so "(o･ω･o)" and "(╯°□°)╯" are dropped while "(hello)",
+# "(你好)", "(a)" and "(1)" survive. The old regex needed 2+ consecutive
+# non-word characters, which a single ASCII letter inside the face broke.
+_KAOMOJI_RE = re.compile(r"[\(（\[【〔]([^\)）\]】〕]{1,64})[\)）\]】〕]")
+_SYMBOL_INNER_RE = re.compile(r"[^" + _WORD_CHARS + r"\s]")
+# Zero-width characters: invisible, unpronounceable, and they used to pass
+# straight through ("你好\u200b" came back with the joiner still in it).
+_ZERO_WIDTH_RE = re.compile(r"[\u200b\u200c\u200d\ufeff]")
+
+
+def _strip_kaomoji(text: str) -> str:
+    """Drop bracketed kaomoji, keep bracketed words (see _KAOMOJI_RE)."""
+
+    def repl(m):
+        inner = m.group(1)
+        if _CJK_RE.search(inner):
+            return m.group(0)
+        if _WORD_PAIR_RE.search(inner):
+            return m.group(0)
+        if not _SYMBOL_INNER_RE.search(inner):
+            return m.group(0)
+        return ""
+
+    return _KAOMOJI_RE.sub(repl, text)
 
 
 def speakable(text: str) -> str:
@@ -243,16 +275,18 @@ def speakable(text: str) -> str:
     here, and pictures and kaomoji are dropped. A piece with no word character
     at all ("%*", "…", a lone emoji) comes back empty: synthesising it costs a
     request and returns one padded ~1.87 s frame, which the listener hears as a
-    blip -- better to say nothing.
+    blip -- better to say nothing. The result is cut back to MAX_TEXT_LEN
+    after the symbol expansion, so the expansion cannot push a request past
+    the length the firmware chunks by ("℃" x 180 expands to 540 characters).
     """
+    text = _ZERO_WIDTH_RE.sub("", text)
     text = _EMOJI_RE.sub("", text)
-    text = _KAOMOJI_RE.sub("", text)
+    text = _strip_kaomoji(text)
     for sym, word in _SYMBOL_WORDS.items():
         text = text.replace(sym, word)
     if not _WORD_RE.search(text):
         return ""
-    text = re.sub(r"\s+", " ", text).strip()
-    return text
+    return re.sub(r"\s+", " ", text).strip()[:MAX_TEXT_LEN]
 
 
 def is_mp3(data: bytes) -> bool:
@@ -538,7 +572,12 @@ def _stream_one(text, backend, voice, rate, pitch, out: "queue.Queue") -> bool:
 
 
 def _stream_segments(segments, backend, voice, rate, pitch, out: "queue.Queue"):
-    """The segments of one reply in order, one terminal marker at the end."""
+    """The segments of one reply in order, one terminal marker at the end.
+
+    The marker is sent whether the stream finished or failed mid-way, so it
+    only means "no more will come", never "it completed": the consumer must
+    track completion itself (an Exception queued before the marker means the
+    audio was cut short and must not be cached)."""
     for text in segments:
         if not _stream_one(text, backend, voice, rate, pitch, out):
             break
@@ -631,6 +670,8 @@ class _Mp3Frames:
         sri = (buf[2] >> 2) & 0x3
         table = _MP3_BR_MPEG1_L3 if ver == 3 else _MP3_BR_MPEG2_L3
         br = table[bri]
+        if sri == 3:   # reserved sample-rate index: no valid frame here
+            return None
         sr = _MP3_SR[ver][sri]
         if br is None:
             return None
@@ -711,10 +752,14 @@ def _stream_reply(key, text, voice, rate, pitch, started, backend, segments=None
         # the upstream's bursts through. The first two frames go at once, so
         # the first sound is not delayed by pacing; the cache still gets the
         # raw bytes, so a paced stream and a cached one hold the same audio.
+        # Only a stream that ran to its terminal marker with no Exception in
+        # between is cached: a mid-stream failure leaves a truncated prefix
+        # that must never be served as the whole reply for this text again.
         buf = bytearray(head)
         frames = _Mp3Frames()
         pacer = _FramePacer()
         frames.feed(bytes(head))
+        completed = False
 
         def emit(final=False):
             for chunk, dur in frames.take(final=final):
@@ -726,6 +771,7 @@ def _stream_reply(key, text, voice, rate, pitch, started, backend, segments=None
         while True:
             item = out.get()
             if item is None:
+                completed = True
                 break
             if isinstance(item, Exception):
                 log.warning("stream ended with %r", item)
@@ -734,26 +780,37 @@ def _stream_reply(key, text, voice, rate, pitch, started, backend, segments=None
             frames.feed(item)
             yield from emit()
         yield from emit(final=True)
-        if is_mp3(bytes(buf)):
-            cache_put(key, bytes(buf))
+        if completed:
+            if is_mp3(bytes(buf)):
+                cache_put(key, bytes(buf))
+        else:
+            log.warning("not caching truncated stream for %r", _preview(text))
+            cache_delete(key)
         log.info("streamed %d bytes in %.2fs (%s %s rate=%s pitch=%s)",
                  len(buf), time.monotonic() - started, backend, voice, rate, pitch)
 
     def gen_raw():
-        # TTS_PACING=0: the old behaviour, bursts and all.
+        # TTS_PACING=0: the old behaviour, bursts and all. Same caching rule
+        # as gen(): only a completed stream is remembered.
         buf = bytearray(head)
+        completed = False
         yield bytes(head)
         while True:
             item = out.get()
             if item is None:
+                completed = True
                 break
             if isinstance(item, Exception):
                 log.warning("stream ended with %r", item)
                 break
             buf += item
             yield item
-        if is_mp3(bytes(buf)):
-            cache_put(key, bytes(buf))
+        if completed:
+            if is_mp3(bytes(buf)):
+                cache_put(key, bytes(buf))
+        else:
+            log.warning("not caching truncated stream for %r", _preview(text))
+            cache_delete(key)
         log.info("streamed %d bytes in %.2fs (%s %s rate=%s pitch=%s)",
                  len(buf), time.monotonic() - started, backend, voice, rate, pitch)
 
@@ -771,10 +828,23 @@ def cache_put(key, data: bytes):
     global _cache_bytes
     if len(key[-1]) < CACHE_MIN_CHARS:
         return   # a padded fragment: see CACHE_MIN_CHARS
+    if key in _cache:
+        # Re-putting a key replaces it: drop the old length first, or the
+        # byte counter drifts up on every overwrite and evicts early.
+        _cache_bytes -= len(_cache[key])
+        _cache.move_to_end(key)
     _cache[key] = data
     _cache_bytes += len(data)
     while _cache and (len(_cache) > CACHE_MAX_ITEMS or _cache_bytes > CACHE_MAX_BYTES):
         _, old = _cache.popitem(last=False)
+        _cache_bytes -= len(old)
+
+
+def cache_delete(key):
+    """Drop one entry (a failed stream must not leave a stale hit behind)."""
+    global _cache_bytes
+    old = _cache.pop(key, None)
+    if old is not None:
         _cache_bytes -= len(old)
 
 
@@ -919,10 +989,17 @@ def tts():
 
 def _word_reply(text):
     """The firmware's word-card request (?word=1): the pre-generated file when
-    it exists, else synthesise it in the word voice and keep it for next time."""
+    it exists, else synthesise it in the word voice and keep it for next time.
+    The same speakable() gate as replies: an emoji or punctuation-only "word"
+    answers 400 instead of burning one Azure synthesis and a disk file."""
+    raw = text
     text = clean(text)
     if not text:
         return "missing text", 400
+    text = speakable(text)
+    if not text:
+        log.info("nothing speakable in word request %r", _preview(raw, 40))
+        return "nothing speakable", 400
     data = word_audio_get(text)
     if data is None:
         started = time.monotonic()

@@ -57,9 +57,17 @@ void muse_battery_note_power(const muse_power_t *p, bool on_battery);
  * below MUSE_BATTERY_LOW_PCT, then quiet until the pack is back at or above
  * it (or USB/charging, or an unknown reading, re-arms it). The caller plays
  * MUSE_SFX_LOW_BATT. Pure state machine, no audio here, so the host test
- * drives it directly. */
+ * drives it directly. This only reports the trigger: it does NOT disarm
+ * itself. The caller disarms it with muse_battery_low_beep_played() once
+ * the sound really went out -- a playback that failed (codecs powered
+ * down while resting) must leave the trigger armed for the next poll. */
 #define MUSE_BATTERY_LOW_PCT 20
 bool muse_battery_low_beep_due(const muse_power_t *p);
+
+/* The beep went out: disarm the gate until the pack recovers (or USB /
+ * charging / an unknown reading re-arms it). Call only after the sound
+ * effect reported success. */
+void muse_battery_low_beep_played(void);
 void muse_battery_note_state(bool screen_off, bool resting);
 
 /* Whether the CPU powers down in light sleep, for the JSON; may come before init. */

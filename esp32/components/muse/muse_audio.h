@@ -50,7 +50,11 @@ void muse_audio_loopback_test(int volume);
 /* Blocking read of `frames` mono samples (mic pair mixed down). */
 esp_err_t muse_audio_read(int16_t *mono, size_t frames);
 
-/* Blocking write of `frames` mono samples to the speaker. */
+/* Blocking write of `frames` mono samples to the speaker. Serialised on
+ * the audio write lock, so the reply, the word audio and the sound effects
+ * cannot interleave slices of each other into the shared stereo buffer;
+ * a sound playing beside a reply delays the reply by its length at most.
+ * Returns ESP_FAIL when the codecs are closed (resting). */
 esp_err_t muse_audio_write(const int16_t *mono, size_t frames);
 
 /* RMS of a buffer in dBFS (-100 for silence). */
@@ -59,8 +63,11 @@ float muse_audio_dbfs(const int16_t *mono, size_t frames);
 /* RMS of a buffer mapped to a 0..1 perceptual level. */
 float muse_audio_level(const int16_t *mono, size_t frames);
 
-/* Short UI chirp: rising for "go", falling for "done". */
-void muse_audio_chirp(int rising);
+/* Short UI chirp: rising for "go", falling for "done". Returns the write's
+ * result: ESP_OK when the samples went to the (possibly muted) speaker,
+ * ESP_FAIL when the codecs are closed, ESP_ERR_NO_MEM when the render
+ * buffer could not be allocated. */
+esp_err_t muse_audio_chirp(int rising);
 
 /* Game + daily sound effects (sfx-plan-v4): nine short sounds, all
  * synthesized on the fly from a note table with the muse_audio_chirp
@@ -86,8 +93,15 @@ typedef enum {
 
 /* Play one sound effect, blocking (the chirp idiom: in-play sounds are
  * <=120 ms, the 330 ms WIN only fires at OVER when nothing needs
- * responding). */
-void muse_audio_sfx(muse_sfx_t sfx);
+ * responding). The write path is serialised on the audio write lock, so a
+ * sound from the input task, the voice task and the LVGL thread cannot
+ * interleave slices of each other's audio. Returns ESP_OK when the sound
+ * was written out (muted counts: the speaker-off setting silences it on
+ * purpose), ESP_FAIL when the codecs are closed -- the caller that must
+ * know the beep really sounded (the low-battery gate) checks this --
+ * ESP_ERR_NO_MEM when the render buffer could not be allocated, or
+ * ESP_ERR_INVALID_ARG for a sound with no rendering. */
+esp_err_t muse_audio_sfx(muse_sfx_t sfx);
 
 /* Pure synthesis: render `sfx` into `out` (capacity `cap` samples) and
  * return the samples written. No hardware, no state: the host test calls

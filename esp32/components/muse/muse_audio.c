@@ -60,6 +60,15 @@ static bool s_open;
 /* Opening, closing and the volume and gain setters, which other tasks call:
  * with a board-switched codec supply, none may reach a codec mid-switch. */
 static SemaphoreHandle_t s_lock;
+/* Serialises the speaker write path (F8): muse_audio_write() renders into
+ * the shared s_out_stereo, and muse_audio_sfx()/muse_audio_chirp() render
+ * into one shared static buffer, while the callers run on the input task
+ * (LOW_BATT), the voice task (BAD, reply audio, chirp) and the LVGL thread
+ * (every game sound). Two writers at once used to interleave slices of each
+ * other's audio into the same buffers. The lock is separate from s_lock so
+ * a long sound never blocks a codec power switch, and the two never nest:
+ * nothing takes s_lock while holding this one, or vice versa. */
+static SemaphoreHandle_t s_write_lock;
 static int16_t s_in_frame[MUSE_AUDIO_CHUNK * IN_SLOTS_MAX];
 static int16_t s_out_stereo[MUSE_AUDIO_CHUNK * OUT_CHANNELS];
 /* Slots per capture frame, from the board at init. 2 until then, so a board
@@ -82,6 +91,26 @@ static void unlock(void)
 {
     if (s_lock) {
         xSemaphoreGive(s_lock);
+    }
+}
+
+/* The write-path lock, same null-tolerant idiom as lock(): a write before
+ * init (or an init that could not create the lock) runs unguarded rather
+ * than crashing, exactly as the open/close lock already does. No caller
+ * runs in an interrupt: every write blocks on the codec (or delays, on the
+ * mic_init boards), so a blocking mutex is safe here -- and that is also
+ * the proof no ISR caller exists to break by taking it. */
+static void write_lock(void)
+{
+    if (s_write_lock) {
+        xSemaphoreTake(s_write_lock, portMAX_DELAY);
+    }
+}
+
+static void write_unlock(void)
+{
+    if (s_write_lock) {
+        xSemaphoreGive(s_write_lock);
     }
 }
 
@@ -150,10 +179,14 @@ static esp_err_t open_codecs(void)
 
 esp_err_t muse_audio_init(int volume, int mic_gain_db)
 {
-    /* muse_voice_start retries this while the boot heap settles. The lock is
-     * permanent, so a retry must not leak a second copy of it. */
+    /* muse_voice_start retries this while the boot heap settles. The locks
+     * are permanent, so a retry must not leak second copies of them. */
     if (!s_lock && !(s_lock = xSemaphoreCreateMutex())) {
         ESP_LOGE(TAG, "audio lock");
+        return ESP_ERR_NO_MEM;
+    }
+    if (!s_write_lock && !(s_write_lock = xSemaphoreCreateMutex())) {
+        ESP_LOGE(TAG, "audio write lock");
         return ESP_ERR_NO_MEM;
     }
     /* Before anything opens a codec: the capture frame width is the board's,
@@ -430,9 +463,14 @@ esp_err_t muse_audio_read(int16_t *mono, size_t frames)
     return ESP_OK;
 }
 
-esp_err_t muse_audio_write(const int16_t *mono, size_t frames)
+/* The codec half of muse_audio_write(): caller holds s_write_lock, so the
+ * shared s_out_stereo cannot be interleaved with another writer's slices. */
+static esp_err_t muse_audio_write_locked(const int16_t *mono, size_t frames)
 {
     if (muse_board->mic_init) {
+        /* No speaker and no shared buffer on these boards: the delay is the
+         * whole of the write. Reached only from the chirp/sfx helpers, which
+         * already hold the lock; the public write skips the lock here. */
         (void)mono;
         vTaskDelay(pdMS_TO_TICKS((frames * 1000 + MUSE_AUDIO_RATE - 1) / MUSE_AUDIO_RATE));
         return ESP_OK;
@@ -455,6 +493,21 @@ esp_err_t muse_audio_write(const int16_t *mono, size_t frames)
     return ESP_OK;
 }
 
+esp_err_t muse_audio_write(const int16_t *mono, size_t frames)
+{
+    if (muse_board->mic_init) {
+        /* No speaker and no shared buffer on these boards: the delay is the
+         * whole of the write, so there is nothing for the lock to guard. */
+        (void)mono;
+        vTaskDelay(pdMS_TO_TICKS((frames * 1000 + MUSE_AUDIO_RATE - 1) / MUSE_AUDIO_RATE));
+        return ESP_OK;
+    }
+    write_lock();
+    esp_err_t err = muse_audio_write_locked(mono, frames);
+    write_unlock();
+    return err;
+}
+
 float muse_audio_dbfs(const int16_t *mono, size_t frames)
 {
     if (!frames) {
@@ -475,7 +528,12 @@ float muse_audio_level(const int16_t *mono, size_t frames)
     return l < 0 ? 0 : (l > 1 ? 1 : l);
 }
 
-void muse_audio_chirp(int rising)
+/* The chirp, rendered and written while holding s_write_lock: the static
+ * buffer is shared between the voice task's chirp and MUSE_SFX_START, so
+ * rendering it outside the lock would let one call overwrite the other's
+ * samples mid-write. Returns the write's result, so a caller that must know
+ * the sound really went out (the low-battery beep) can tell. */
+static esp_err_t muse_audio_chirp_locked(int rising)
 {
     enum { MS = 90, N = MUSE_AUDIO_RATE * MS / 1000 };
     /* Regenerated on every call, so it does not need to be static DRAM: a
@@ -485,7 +543,7 @@ void muse_audio_chirp(int rising)
     static int16_t *buf;
     if (!buf) {
         buf = (int16_t *)heap_caps_malloc(N * sizeof(int16_t), MALLOC_CAP_SPIRAM);
-        if (!buf) return;
+        if (!buf) return ESP_ERR_NO_MEM;
     }
     float f0 = rising ? 620.0f : 980.0f;
     float f1 = rising ? 1180.0f : 560.0f;
@@ -499,28 +557,45 @@ void muse_audio_chirp(int rising)
         float s = sinf(phase) + 0.3f * sinf(3.0f * phase);
         buf[i] = (int16_t)(s * env * 7000.0f);
     }
-    muse_audio_write(buf, N);
+    return muse_audio_write_locked(buf, N);
 }
 
-void muse_audio_sfx(muse_sfx_t sfx)
+esp_err_t muse_audio_chirp(int rising)
 {
+    write_lock();
+    esp_err_t err = muse_audio_chirp_locked(rising);
+    write_unlock();
+    return err;
+}
+
+esp_err_t muse_audio_sfx(muse_sfx_t sfx)
+{
+    write_lock();
+    esp_err_t err;
     if (sfx == MUSE_SFX_START) {
         /* The start sound is the existing rising chirp, not a table entry. */
-        muse_audio_chirp(1);
-        return;
+        err = muse_audio_chirp_locked(1);
+        write_unlock();
+        return err;
     }
     /* Same PSRAM idiom as chirp: one buffer kept between calls, sized
-     * for the longest table sound (WIN, 330 ms). */
+     * for the longest table sound (WIN, 330 ms). Rendered under the lock,
+     * so a second sound cannot overwrite it while this one is written. */
     static int16_t *buf;
     if (!buf) {
         buf = (int16_t *)heap_caps_malloc(MUSE_SFX_MAX_SAMPLES * sizeof(int16_t),
                                           MALLOC_CAP_SPIRAM);
         if (!buf) {
-            return;
+            write_unlock();
+            return ESP_ERR_NO_MEM;
         }
     }
     size_t n = muse_audio_sfx_render(sfx, buf, MUSE_SFX_MAX_SAMPLES);
-    if (n != 0) {
-        muse_audio_write(buf, n);
+    if (n == 0) {
+        write_unlock();
+        return ESP_ERR_INVALID_ARG;
     }
+    err = muse_audio_write_locked(buf, n);
+    write_unlock();
+    return err;
 }

@@ -523,6 +523,11 @@ void muse_quiz_ui_show(void)
          * kept, so it costs no network. */
         muse_wordcards_audio_prefetch_quiz(&s_game);
         lv_timer_resume(s_timer);
+        /* hide() cleared the pending pronunciation, so re-queue the
+         * current question's word: without this the round comes back
+         * silent until the speaker is tapped. replay() is a no-op
+         * outside PLAYING; the tick drains the mark when READY. */
+        (void)muse_quiz_replay(&s_game);
     }
     /* OVER stays: the card waits for 再来一局. */
     refresh_display();
