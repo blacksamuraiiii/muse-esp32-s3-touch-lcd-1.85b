@@ -56,6 +56,21 @@ bool muse_pet_request(muse_pet_action_t action);
 bool muse_pet_request_game(int outcome);
 
 /*
+ * Settle one 掷圣杯 toss with its already-decided result: `result` is
+ * 1 = holy, 2 = laughing, 3 = yin (the MUSE_PET_JIAOBEI_* codes, same
+ * numbering as muse_jiaobei_result_t). The worker charges the 5 coins
+ * and counts the toss, and records the result into the day's streak +
+ * last result in the same action, so a refused toss (PET_POOR /
+ * PET_CAP) records nothing and the board re-enters the page showing
+ * today's last result and streak. The UI decides the result at tap /
+ * shake time and passes it here; anything outside 1..3 is a bare toss
+ * (charged and counted, no result recorded), like the console's
+ * muse_pet_request(PET_JIAOBEI_TOSS). Returns false when the worker is
+ * not ready or its queue is full.
+ */
+bool muse_pet_request_jiaobei_toss(int32_t result);
+
+/*
  * Settle a finished mini-game round (snake / whack-a-mole) at OVER:
  * `coins` is what the UI converted the round's score to with
  * muse_pet_round_coins() (0..5). Sent once per round, never per point.

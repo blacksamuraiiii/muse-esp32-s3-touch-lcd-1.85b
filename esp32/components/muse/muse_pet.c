@@ -86,6 +86,26 @@ typedef struct {
 
 _Static_assert(sizeof(pet_state_v3_t) == 40, "v3 blob layout changed");
 
+/* The 1.5.2..1.5.3b v4 layout: v3 plus the sudoku daily ledger, still
+ * no 掷圣杯 ledger. 52 bytes. */
+typedef struct {
+    uint32_t version;
+    uint32_t coins;
+    int32_t touch_day;
+    uint32_t daily_touch_coins;
+    int32_t feed_day;
+    uint32_t feed_mask;
+    int32_t fortune_day;
+    uint32_t fortune;
+    int32_t decay_day;
+    uint32_t decay_notice;
+    int32_t sudoku_day;
+    uint32_t sudoku_entry_paid;
+    uint32_t sudoku_reward_coins;
+} pet_state_v4_t;
+
+_Static_assert(sizeof(pet_state_v4_t) == 52, "v4 blob layout changed");
+
 static QueueHandle_t s_commands;
 static QueueHandle_t s_feedback;
 static portMUX_TYPE s_lock = portMUX_INITIALIZER_UNLOCKED;
@@ -170,6 +190,107 @@ static void migrate_v3(const pet_state_v3_t *old, muse_pet_model_t *out)
     out->sudoku_reward_coins = 0;
 }
 
+/* v4 -> v5 (user decision 2026-11-14, 掷圣杯): the only layout change
+ * is the 掷圣杯 daily ledger (day + tosses settled today). Everything
+ * else carries over untouched; the ledger starts empty, which is
+ * exactly right -- the day it is first written is the day the 掷筊
+ * page charges its first 5-coin toss. The streak and last result
+ * (v6) start empty too (memset), for the same reason. */
+static void migrate_v4(const pet_state_v4_t *old, muse_pet_model_t *out)
+{
+    memset(out, 0, sizeof(*out));
+    out->version = MUSE_PET_VERSION;
+    out->coins = old->coins > MUSE_PET_COINS_MAX ? MUSE_PET_COINS_MAX : old->coins;
+    out->touch_day = old->touch_day;
+    out->daily_touch_coins = old->daily_touch_coins > MUSE_PET_TOUCH_DAILY_MAX
+                                 ? MUSE_PET_TOUCH_DAILY_MAX
+                                 : old->daily_touch_coins;
+    out->feed_day = old->feed_day;
+    out->feed_mask = old->feed_mask < (1u << MUSE_PET_FEED_KINDS)
+                         ? old->feed_mask
+                         : 0;
+    out->fortune_day = old->fortune_day;
+    out->fortune = old->fortune < MUSE_PET_FORTUNES ? old->fortune : 0;
+    out->decay_day = old->decay_day;
+    out->decay_notice = old->decay_notice > MUSE_PET_COINS_MAX
+                            ? MUSE_PET_COINS_MAX
+                            : old->decay_notice;
+    out->sudoku_day = old->sudoku_day;
+    out->sudoku_entry_paid = old->sudoku_entry_paid > 1
+                                 ? 0
+                                 : old->sudoku_entry_paid;
+    out->sudoku_reward_coins =
+        old->sudoku_reward_coins > MUSE_PET_SUDOKU_DAILY_MAX
+            ? 0
+            : old->sudoku_reward_coins;
+    out->jiaobei_day = -1;
+    out->jiaobei_count = 0;
+}
+
+/* The v5 layout (this branch before the streak): v4 plus the 掷圣杯
+ * daily ledger (day + tosses settled today). 60 bytes. */
+typedef struct {
+    uint32_t version;
+    uint32_t coins;
+    int32_t touch_day;
+    uint32_t daily_touch_coins;
+    int32_t feed_day;
+    uint32_t feed_mask;
+    int32_t fortune_day;
+    uint32_t fortune;
+    int32_t decay_day;
+    uint32_t decay_notice;
+    int32_t sudoku_day;
+    uint32_t sudoku_entry_paid;
+    uint32_t sudoku_reward_coins;
+    int32_t jiaobei_day;
+    uint32_t jiaobei_count;
+} pet_state_v5_t;
+
+_Static_assert(sizeof(pet_state_v5_t) == 60, "v5 blob layout changed");
+
+/* v5 -> v6 (user decision 2026-11-14, 掷圣杯 streak survives leaving
+ * the page): the only layout change is the day's streak + last result.
+ * Everything else carries over untouched, including the toss count --
+ * a streak earned before the upgrade cannot be reconstructed (the
+ * result was never stored), so it starts at 0 with last = none, which
+ * is exactly right: the board re-enters showing the ready state until
+ * the next toss of the day. */
+static void migrate_v5(const pet_state_v5_t *old, muse_pet_model_t *out)
+{
+    memset(out, 0, sizeof(*out));
+    out->version = MUSE_PET_VERSION;
+    out->coins = old->coins > MUSE_PET_COINS_MAX ? MUSE_PET_COINS_MAX : old->coins;
+    out->touch_day = old->touch_day;
+    out->daily_touch_coins = old->daily_touch_coins > MUSE_PET_TOUCH_DAILY_MAX
+                                 ? MUSE_PET_TOUCH_DAILY_MAX
+                                 : old->daily_touch_coins;
+    out->feed_day = old->feed_day;
+    out->feed_mask = old->feed_mask < (1u << MUSE_PET_FEED_KINDS)
+                         ? old->feed_mask
+                         : 0;
+    out->fortune_day = old->fortune_day;
+    out->fortune = old->fortune < MUSE_PET_FORTUNES ? old->fortune : 0;
+    out->decay_day = old->decay_day;
+    out->decay_notice = old->decay_notice > MUSE_PET_COINS_MAX
+                            ? MUSE_PET_COINS_MAX
+                            : old->decay_notice;
+    out->sudoku_day = old->sudoku_day;
+    out->sudoku_entry_paid = old->sudoku_entry_paid > 1
+                                 ? 0
+                                 : old->sudoku_entry_paid;
+    out->sudoku_reward_coins =
+        old->sudoku_reward_coins > MUSE_PET_SUDOKU_DAILY_MAX
+            ? 0
+            : old->sudoku_reward_coins;
+    out->jiaobei_day = old->jiaobei_day;
+    out->jiaobei_count = old->jiaobei_count > MUSE_PET_JIAOBEI_DAILY_MAX
+                             ? 0
+                             : old->jiaobei_count;
+    out->jiaobei_streak = 0;
+    out->jiaobei_last = 0;
+}
+
 static void worker(void *arg)
 {
     (void)arg;
@@ -193,6 +314,36 @@ static void worker(void *arg)
             vTaskDelete(NULL);
             return;
         }
+    } else if (err == ESP_OK && bytes == sizeof(pet_state_v5_t) &&
+               blob_version(&state) == 5u) {
+        /* This branch's 掷圣杯 state: add the day's streak + last
+         * result instead of disabling rewards. Persist before
+         * publishing so a later read never sees v5. */
+        pet_state_v5_t legacy;
+        memcpy(&legacy, &state, sizeof(legacy));
+        migrate_v5(&legacy, &state);
+        if (!store(h, &state)) {
+            ESP_LOGE(TAG, "migration save failed");
+            nvs_close(h);
+            vTaskDelete(NULL);
+            return;
+        }
+        ESP_LOGW(TAG, "pet state migrated v5 -> v%d", (int)MUSE_PET_VERSION);
+    } else if (err == ESP_OK && bytes == sizeof(pet_state_v4_t) &&
+               blob_version(&state) == 4u) {
+        /* 1.5.2..1.5.3b state: add the empty 掷圣杯 ledger instead of
+         * disabling rewards. Persist before publishing so a later read
+         * never sees v4. */
+        pet_state_v4_t legacy;
+        memcpy(&legacy, &state, sizeof(legacy));
+        migrate_v4(&legacy, &state);
+        if (!store(h, &state)) {
+            ESP_LOGE(TAG, "migration save failed");
+            nvs_close(h);
+            vTaskDelete(NULL);
+            return;
+        }
+        ESP_LOGW(TAG, "pet state migrated v4 -> v%d", (int)MUSE_PET_VERSION);
     } else if (err == ESP_OK && bytes == sizeof(pet_state_v3_t) &&
                blob_version(&state) == 3u) {
         /* 1.5a..1.5f state: add the empty sudoku ledger instead of disabling
@@ -376,6 +527,14 @@ bool muse_pet_request_game(int outcome)
      * draw. */
     int32_t arg = outcome > 0 ? 1 : (outcome < 0 ? -1 : 0);
     return request_cmd(PET_GAME, arg);
+}
+
+bool muse_pet_request_jiaobei_toss(int32_t result)
+{
+    /* Only 1..3 record a result; anything else is a bare toss (charged
+     * and counted, streak untouched), like the console's request. */
+    int32_t arg = result >= 1 && result <= 3 ? result : 0;
+    return request_cmd(PET_JIAOBEI_TOSS, arg);
 }
 
 bool muse_pet_request_play_reward(uint32_t coins)

@@ -69,7 +69,7 @@ float muse_audio_level(const int16_t *mono, size_t frames);
  * buffer could not be allocated. */
 esp_err_t muse_audio_chirp(int rising);
 
-/* Game + daily sound effects (sfx-plan-v4): nine short sounds, all
+/* Game + daily sound effects (sfx-plan-v4): eleven short sounds, all
  * synthesized on the fly from a note table with the muse_audio_chirp
  * recipe (16 kHz, sine + 0.3x 3rd harmonic, 10% attack then (1-x)^2
  * decay). No audio files, so retuning is a data change.
@@ -85,15 +85,18 @@ typedef enum {
     MUSE_SFX_PET,    /* face tap: 523 Hz, 80 ms, half volume */
     MUSE_SFX_FORTUNE, /* fresh daily draw: 784 -> 988 -> 1174 Hz, 180 ms */
     MUSE_SFX_LOW_BATT, /* low battery: two 262 Hz beeps, 120 ms each, 80 ms gap, 320 ms */
+    MUSE_SFX_TOSS,   /* 掷圣杯: two wooden-cup knocks, 130 ms */
+    MUSE_SFX_LAUGH,  /* laughing cup: two light notes 660 -> 880 Hz, 160 ms */
     MUSE_SFX_START,  /* start / play again: reuses muse_audio_chirp(1) */
 } muse_sfx_t;
 
 /* Longest table sound (WIN, 330 ms) in samples: the playback buffer size. */
 #define MUSE_SFX_MAX_SAMPLES (MUSE_AUDIO_RATE * 330 / 1000)
 
-/* Play one sound effect, blocking (the chirp idiom: in-play sounds are
- * <=120 ms, the 330 ms WIN only fires at OVER when nothing needs
- * responding). The write path is serialised on the audio write lock, so a
+/* Play one sound effect, blocking (the chirp idiom: sounds fired from
+ * LVGL are short -- TOSS 130 ms, EAT 140 ms, FORTUNE 180 ms -- and the
+ * 330 ms WIN only fires at OVER when nothing needs responding). The
+ * write path is serialised on the audio write lock, so a
  * sound from the input task, the voice task and the LVGL thread cannot
  * interleave slices of each other's audio. Returns ESP_OK when the sound
  * was written out (muted counts: the speaker-off setting silences it on
@@ -115,6 +118,7 @@ static inline size_t muse_audio_sfx_render(muse_sfx_t sfx, int16_t *out, size_t 
         float f0, f1;   /* start / end frequency, Hz (f0 == f1: pure tone) */
         uint16_t ms;    /* note length */
         int16_t amp;    /* peak amplitude */
+        uint8_t noise;  /* 1: white-noise knock (f0/f1 unused), 0: tone */
     } muse_sfx_note_t;
     typedef struct {
         uint8_t first;  /* first note of this sound in the table */
@@ -130,21 +134,32 @@ static inline size_t muse_audio_sfx_render(muse_sfx_t sfx, int16_t *out, size_t 
      * answer / bomb sound was too quiet). Its old 200 -> 100 Hz sat in
      * the band where this small speaker gives almost no output, so the
      * glide was moved up to 300 -> 150 Hz and the peak raised 9000 ->
-     * 18000 (peak 1.3 x amp = 23400, 71% of full scale, no clipping). */
+     * 18000 (peak 1.3 x amp = 23400, 71% of full scale, no clipping).
+     * TOSS (掷圣杯, user 2026-11-14) is two wooden-cup knocks: each knock
+     * is a 5 ms noise burst (the cup hitting the table) plus a 55 ms
+     * 180 Hz thud, the two knocks 70 ms apart, 130 ms in all. The noise
+     * is a fixed-seed LCG, reseeded per note, so the render is a pure
+     * function of the table (same short-buffer prefix property as the
+     * tones). LAUGH is two light notes 660 -> 880 Hz with a 20 ms gap. */
     static const muse_sfx_note_t notes[] = {
-        /* GOOD  */ {880.0f, 880.0f, 60, 7000}, {1318.0f, 1318.0f, 60, 7000},
-        /* BAD   */ {300.0f, 150.0f, 120, 18000},
-        /* DRAW  */ {660.0f, 660.0f, 120, 7000},
-        /* PLACE */ {900.0f, 900.0f, 45, 5000},
-        /* WIN   */ {523.0f, 523.0f, 110, 7000}, {659.0f, 659.0f, 110, 7000},
-                    {784.0f, 784.0f, 110, 7000},
-        /* EAT   */ {740.0f, 740.0f, 50, 7000}, {740.0f, 740.0f, 40, 0},
-                    {740.0f, 740.0f, 50, 7000},
-        /* PET   */ {523.0f, 523.0f, 80, 4000},
-        /* FORTUNE */ {784.0f, 784.0f, 60, 7000}, {988.0f, 988.0f, 60, 7000},
-                    {1174.0f, 1174.0f, 60, 7000},
-        /* LOW_BATT */ {262.0f, 262.0f, 120, 7000}, {262.0f, 262.0f, 80, 0},
-                    {262.0f, 262.0f, 120, 7000},
+        /* GOOD  */ {880.0f, 880.0f, 60, 7000, 0}, {1318.0f, 1318.0f, 60, 7000, 0},
+        /* BAD   */ {300.0f, 150.0f, 120, 18000, 0},
+        /* DRAW  */ {660.0f, 660.0f, 120, 7000, 0},
+        /* PLACE */ {900.0f, 900.0f, 45, 5000, 0},
+        /* WIN   */ {523.0f, 523.0f, 110, 7000, 0}, {659.0f, 659.0f, 110, 7000, 0},
+                    {784.0f, 784.0f, 110, 7000, 0},
+        /* EAT   */ {740.0f, 740.0f, 50, 7000, 0}, {740.0f, 740.0f, 40, 0, 0},
+                    {740.0f, 740.0f, 50, 7000, 0},
+        /* PET   */ {523.0f, 523.0f, 80, 4000, 0},
+        /* FORTUNE */ {784.0f, 784.0f, 60, 7000, 0}, {988.0f, 988.0f, 60, 7000, 0},
+                    {1174.0f, 1174.0f, 60, 7000, 0},
+        /* LOW_BATT */ {262.0f, 262.0f, 120, 7000, 0}, {262.0f, 262.0f, 80, 0, 0},
+                    {262.0f, 262.0f, 120, 7000, 0},
+        /* TOSS  */ {0.0f, 0.0f, 5, 3000, 1}, {180.0f, 180.0f, 55, 9000, 0},
+                    {180.0f, 180.0f, 10, 0, 0},
+                    {0.0f, 0.0f, 5, 3000, 1}, {180.0f, 180.0f, 55, 9000, 0},
+        /* LAUGH */ {660.0f, 660.0f, 70, 7000, 0}, {660.0f, 660.0f, 20, 0, 0},
+                    {880.0f, 880.0f, 70, 7000, 0},
     };
     static const muse_sfx_def_t defs[] = {
         [MUSE_SFX_GOOD] = {0, 2},
@@ -156,6 +171,8 @@ static inline size_t muse_audio_sfx_render(muse_sfx_t sfx, int16_t *out, size_t 
         [MUSE_SFX_PET] = {11, 1},
         [MUSE_SFX_FORTUNE] = {12, 3},
         [MUSE_SFX_LOW_BATT] = {15, 3},
+        [MUSE_SFX_TOSS] = {18, 5},
+        [MUSE_SFX_LAUGH] = {23, 3},
     };
     if (sfx < 0 || sfx >= MUSE_SFX_START || out == NULL) {
         return 0;
@@ -170,6 +187,24 @@ static inline size_t muse_audio_sfx_render(muse_sfx_t sfx, int16_t *out, size_t 
         size_t n = full;
         if (written + n > cap) {
             n = cap - written;
+        }
+        if (note->noise) {
+            /* White-noise knock: a fixed-seed LCG, reseeded per note,
+             * so the render is a pure function of the table (the same
+             * short-buffer prefix property as the tones). */
+            uint32_t rng = 0x12345678u;
+            for (size_t i = 0; i < n; i++) {
+                rng = rng * 1103515245u + 12345u;
+                float u = (float)((rng >> 16) & 0x7fff) / 16384.0f - 1.0f;
+                float x = (float)i / (float)full;
+                float env = (x < 0.1f ? x / 0.1f : 1.0f) * (1.0f - x) * (1.0f - x);
+                out[written + i] = (int16_t)(u * env * (float)note->amp);
+            }
+            written += n;
+            if (written >= cap) {
+                break;
+            }
+            continue;
         }
         float phase = 0.0f;
         for (size_t i = 0; i < n; i++) {

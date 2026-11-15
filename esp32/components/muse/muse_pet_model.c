@@ -47,6 +47,7 @@ void muse_pet_model_init(muse_pet_model_t *s)
     s->fortune_day = -1;
     s->decay_day = -1;
     s->sudoku_day = -1;
+    s->jiaobei_day = -1;
 }
 
 bool muse_pet_model_valid(const muse_pet_model_t *s)
@@ -61,7 +62,11 @@ bool muse_pet_model_valid(const muse_pet_model_t *s)
            s->decay_notice <= MUSE_PET_COINS_MAX &&
            s->sudoku_day >= -1 &&
            s->sudoku_entry_paid <= 1 &&
-           s->sudoku_reward_coins <= MUSE_PET_SUDOKU_DAILY_MAX;
+           s->sudoku_reward_coins <= MUSE_PET_SUDOKU_DAILY_MAX &&
+           s->jiaobei_day >= -1 &&
+           s->jiaobei_count <= MUSE_PET_JIAOBEI_DAILY_MAX &&
+           s->jiaobei_streak <= MUSE_PET_JIAOBEI_DAILY_MAX &&
+           s->jiaobei_last <= 3;
 }
 
 uint32_t muse_pet_round_coins_cap(uint32_t score, uint32_t cap)
@@ -114,6 +119,66 @@ static void sudoku_roll(muse_pet_model_t *s, int32_t day)
     s->sudoku_day = day;
     s->sudoku_entry_paid = 0;
     s->sudoku_reward_coins = 0;
+}
+
+/* Start a new 掷圣杯 ledger when the day advances. Same rule as
+ * sudoku_roll (no calibrated clock required): "at most 9 tosses a day"
+ * must hold on a board with no RTC too, and a rollback keeps the stored
+ * ledger so a clock going backwards cannot re-grant tosses. The streak
+ * and last result roll with the count: a new day starts at 0 / none. */
+static void jiaobei_roll(muse_pet_model_t *s, int32_t day)
+{
+    if (s->jiaobei_day == day) {
+        return;
+    }
+    if (s->jiaobei_day != -1 && day < s->jiaobei_day) {
+        return; /* rollback: never re-grant */
+    }
+    s->jiaobei_day = day;
+    s->jiaobei_count = 0;
+    s->jiaobei_streak = 0;
+    s->jiaobei_last = 0;
+}
+
+void muse_pet_jiaobei_today(const muse_pet_model_t *s, int64_t now,
+                           uint32_t *remaining)
+{
+    bool calibrated = false;
+    int32_t day = muse_pet_day(now, &calibrated);
+    (void)calibrated; /* the ledger is day-based only, see jiaobei_roll() */
+    if (remaining) {
+        bool same_day = s->jiaobei_day != -1 && s->jiaobei_day == day;
+        uint32_t used = same_day ? s->jiaobei_count : 0;
+        *remaining = used >= MUSE_PET_JIAOBEI_DAILY_MAX
+                          ? 0
+                          : MUSE_PET_JIAOBEI_DAILY_MAX - used;
+    }
+}
+
+void muse_pet_jiaobei_result_today(const muse_pet_model_t *s, int64_t now,
+                                   uint32_t *streak, uint32_t *last)
+{
+    bool calibrated = false;
+    int32_t day = muse_pet_day(now, &calibrated);
+    (void)calibrated; /* the ledger is day-based only, see jiaobei_roll() */
+    bool same_day = s->jiaobei_day != -1 && s->jiaobei_day == day;
+    if (streak) {
+        *streak = same_day ? s->jiaobei_streak : 0;
+    }
+    if (last) {
+        *last = same_day ? s->jiaobei_last : 0;
+    }
+}
+
+/* The day's fortune card, a pure function of the day number (user
+ * decision 2026-11-14): the same day always draws the same card, on any
+ * board, with no random input. A Fibonacci hash, not day % 20: the plain
+ * remainder cycles the 20 cards in order over 20 days, which reads as
+ * rigged; the hash spreads consecutive days across the deck (15 distinct
+ * cards over 20 consecutive days, checked in the host test). */
+static uint32_t fortune_for_day(int32_t day)
+{
+    return ((uint32_t)day * 2654435761u) % MUSE_PET_FORTUNES;
 }
 
 /* Start a new daily cap when the calibrated day has advanced. On rollback
@@ -191,6 +256,10 @@ int muse_pet_feed_index(muse_pet_action_t action)
 muse_pet_result_t muse_pet_model_apply(muse_pet_model_t *s, muse_pet_action_t action,
                                        int64_t now, uint32_t random, int32_t arg)
 {
+    /* No action uses `random` any more (PET_FORTUNE drew random % 20
+     * until 2026-11-14; the card is now a pure function of the day).
+     * The parameter stays to keep the signature stable. */
+    (void)random;
     /* Internal actions bypass decay: reset means "fresh state, no
      * back-charge", and ack must not erase a notice that decay in this same
      * call would have just created (see PHASE1-NOTES.md §5). */
@@ -338,18 +407,60 @@ muse_pet_result_t muse_pet_model_apply(muse_pet_model_t *s, muse_pet_action_t ac
          * current UTC day, calibrated or not -- no PET_TIME refusal.
          * Same UTC day shows the same card; a new UTC day draws a new one.
          * Consequence, accepted for preview: if SNTP later jumps the date,
-         * the next draw is legitimately a new card for the jumped-to day. */
+         * the next draw is legitimately a new card for the jumped-to day.
+         * User decision 2026-11-14: the draw costs 5 (it used to pay 20),
+         * once a day, and the card is a pure function of the day
+         * (fortune_for_day) -- the same day always draws the same card,
+         * on any board, with no random input. Under 5 coins a first draw
+         * of the day is refused (PET_POOR) and settles nothing, so the
+         * balance never goes negative. */
         (void)calibrated;
         if (s->fortune_day == day) {
             return PET_FORTUNE_SAME;
         }
+        if (s->coins < MUSE_PET_FORTUNE_COST) {
+            return PET_POOR; /* not settled, no card drawn */
+        }
+        s->coins -= MUSE_PET_FORTUNE_COST;
         s->fortune_day = day;
-        s->fortune = random % MUSE_PET_FORTUNES;
-        /* 1.5a (user decision 2026-10-25): a new card pays 20. A same-day
-         * repeat returns PET_FORTUNE_SAME above and pays nothing, so the
-         * daily total is touch 50 + feed 60 + fortune 20 = 130. */
-        s->coins = capped_add(s->coins, MUSE_PET_FORTUNE_COINS);
+        s->fortune = fortune_for_day(day);
         return PET_FORTUNE_NEW;
+    }
+
+    if (action == PET_JIAOBEI_TOSS) {
+        /* One 掷圣杯 toss (user decision 2026-11-14): pure consumption,
+         * 5 coins, at most 9 a day. The ledger rolls like sudoku's (no
+         * calibrated clock required: "at most 9 a day" must hold on a
+         * board with no RTC too). The cap is checked first: a player
+         * with coins but no tosses left gets PET_CAP, not PET_POOR.
+         * The result rides in `arg` (MUSE_PET_JIAOBEI_*): a settled
+         * holy toss extends the day's streak, laughing / yin clear it,
+         * and the last result is recorded -- so the board re-enters the
+         * page showing today's last result and streak. A refused toss
+         * returns before this point and records nothing; a bare request
+         * (arg 0) charges and counts the toss without recording a
+         * result. The streak can never exceed the day's toss count
+         * (9), so the valid() bound holds by construction. */
+        jiaobei_roll(s, day);
+        if (s->jiaobei_count >= MUSE_PET_JIAOBEI_DAILY_MAX) {
+            return PET_CAP; /* today's 9 tosses are used up */
+        }
+        if (s->coins < MUSE_PET_JIAOBEI_COST) {
+            return PET_POOR; /* not settled, no toss */
+        }
+        s->coins -= MUSE_PET_JIAOBEI_COST;
+        s->jiaobei_count++;
+        if (arg == MUSE_PET_JIAOBEI_SHENG) {
+            s->jiaobei_streak++;
+            s->jiaobei_last = (uint32_t)MUSE_PET_JIAOBEI_SHENG;
+        } else if (arg == MUSE_PET_JIAOBEI_XIAO) {
+            s->jiaobei_streak = 0;
+            s->jiaobei_last = (uint32_t)MUSE_PET_JIAOBEI_XIAO;
+        } else if (arg == MUSE_PET_JIAOBEI_YIN) {
+            s->jiaobei_streak = 0;
+            s->jiaobei_last = (uint32_t)MUSE_PET_JIAOBEI_YIN;
+        }
+        return PET_OK;
     }
 
     return PET_BUSY;

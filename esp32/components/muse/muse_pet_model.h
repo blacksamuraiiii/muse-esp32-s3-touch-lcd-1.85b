@@ -36,7 +36,7 @@
 #include <stdint.h>
 
 /* Struct layout version. Bump this whenever the layout below changes. */
-#define MUSE_PET_VERSION 4u
+#define MUSE_PET_VERSION 6u
 
 /* Economy constants (design §4). All amounts are whole coins. */
 #define MUSE_PET_COINS_MAX 100u        /* wallet cap: excess is discarded */
@@ -50,7 +50,13 @@
                                         * scissors round: win +10 net,
                                         * draw 0, loss -10 (user decision
                                         * 2026-11-08, retuned from 5) */
-#define MUSE_PET_FORTUNE_COINS 20u     /* once a day, paid with the new card */
+#define MUSE_PET_FORTUNE_COST 5u     /* one draw a day, charged (user
+                                        * decision 2026-11-14: the draw
+                                        * used to pay 20, now it costs 5) */
+#define MUSE_PET_JIAOBEI_COST 5u     /* one 掷圣杯 toss (PET_JIAOBEI_TOSS,
+                                        * user decision 2026-11-14) */
+#define MUSE_PET_JIAOBEI_DAILY_MAX 9u /* tosses per day (user decision
+                                        * 2026-11-14); the 10th is PET_CAP */
 #define MUSE_PET_DECAY_PER_DAY 20u     /* living cost, per calendar day */
 #define MUSE_PET_FORTUNES 20u          /* fortune cards in muse_pet_text.c */
 
@@ -141,7 +147,21 @@ typedef struct {
     int32_t sudoku_day;          /* day of the sudoku ledger, -1 = none */
     uint32_t sudoku_entry_paid;  /* 1 = today's sudoku entry fee is paid */
     uint32_t sudoku_reward_coins;/* 0..5, paid by today's solved puzzles */
+    int32_t jiaobei_day;         /* day of the 掷圣杯 ledger, -1 = none */
+    uint32_t jiaobei_count;      /* tosses settled today, 0..9 */
+    uint32_t jiaobei_streak;     /* consecutive holy cups today, 0..9 */
+    uint32_t jiaobei_last;       /* last result today: 0 none, 1 holy,
+                                  * 2 laughing, 3 yin (the codes below) */
 } muse_pet_model_t;
+
+/* Result codes carried in `arg` by PET_JIAOBEI_TOSS (same numbering as
+ * muse_jiaobei_result_t -- the model does not include that header, so
+ * the numbers are pinned here). 0 means "no result" (a bare
+ * muse_pet_request(PET_JIAOBEI_TOSS), e.g. from the console): the toss
+ * is charged and counted, but the streak and last result are untouched. */
+#define MUSE_PET_JIAOBEI_SHENG 1
+#define MUSE_PET_JIAOBEI_XIAO 2
+#define MUSE_PET_JIAOBEI_YIN 3
 
 /* Actions. PET_FEED_* settle identically; see the header note above.
  * PET_DECAY_ACK and PET_RESET are internal only: never sent by UI buttons.
@@ -165,6 +185,26 @@ typedef struct {
  * PET_CAP for every later puzzle -- and for any day whose ledger already
  * holds a nonzero reward, including a v4 blob's 5, which is treated as
  * paid and never topped up to 10.
+ * PET_FORTUNE draws the day's card (user decision 2026-11-14: the draw
+ * costs MUSE_PET_FORTUNE_COST (5), once a day, and the card is a pure
+ * function of the day -- the same day always draws the same card, on
+ * any board, with no random input). Same-day repeats return
+ * PET_FORTUNE_SAME and move nothing; under 5 coins a first draw of the
+ * day returns PET_POOR and settles nothing.
+ * PET_JIAOBEI_TOSS settles one 掷圣杯 toss (user decision 2026-11-14):
+ * 5 coins (MUSE_PET_JIAOBEI_COST), at most 9 a day
+ * (MUSE_PET_JIAOBEI_DAILY_MAX). The 10th toss of the day returns
+ * PET_CAP and settles nothing; under 5 coins it returns PET_POOR.
+ * The outcome itself (holy / laughing / yin) is decided UI-side by
+ * muse_jiaobei_toss() and rides in `arg` (MUSE_PET_JIAOBEI_*): a
+ * settled holy toss extends the day's streak by 1, laughing / yin
+ * clear it, and the last result is recorded -- so the board re-enters
+ * the page showing today's last result and streak (user decision
+ * 2026-11-14: the streak survives leaving the page within the same
+ * day, and the midnight day boundary clears it). A refused toss
+ * records nothing: the streak only moves for tosses that settled, and
+ * a bare request (arg 0) charges and counts the toss without recording
+ * a result. The toss itself is pure consumption with no payout.
  * PET_PLAY_REWARD settles a finished score-based round: arg is the coin
  * amount the UI converted with muse_pet_round_coins(), clamped here to
  * 0..MUSE_PET_ROUND_COIN_HARD_MAX (20, the absolute ceiling across all
@@ -187,6 +227,7 @@ typedef enum {
     PET_SUDOKU_ENTRY,
     PET_SUDOKU_SOLVE,
     PET_PLAY_REWARD,
+    PET_JIAOBEI_TOSS,
 } muse_pet_action_t;
 
 /* Results. UI copy must be keyed off these, never guessed (design §4.3).
@@ -264,6 +305,28 @@ int32_t muse_pet_day(int64_t now, bool *calibrated);
 void muse_pet_sudoku_today(const muse_pet_model_t *s, int64_t now,
                            bool *entry_paid, uint32_t *reward_coins);
 
+/*
+ * Today's 掷圣杯 ledger, as a UI can read it without duplicating the
+ * day rule: *remaining is how many tosses are left today
+ * (MUSE_PET_JIAOBEI_DAILY_MAX minus today's settled count, or the full
+ * 9 when no toss has been settled today). Derived from the snapshot;
+ * nothing is written. The pointer may be NULL.
+ */
+void muse_pet_jiaobei_today(const muse_pet_model_t *s, int64_t now,
+                           uint32_t *remaining);
+
+/*
+ * Today's 掷圣杯 streak + last result, as a UI can read them without
+ * duplicating the day rule: *streak is the consecutive holy count
+ * today (0 when nothing was tossed today or the last toss broke it),
+ * *last is the last result today (0 = none, 1 = holy, 2 = laughing,
+ * 3 = yin, the MUSE_PET_JIAOBEI_* codes). Both are 0 on a new day.
+ * Derived from the snapshot; nothing is written. Either pointer may
+ * be NULL.
+ */
+void muse_pet_jiaobei_result_today(const muse_pet_model_t *s, int64_t now,
+                                   uint32_t *streak, uint32_t *last);
+
 /* Settle one calendar day's living cost into `s` (idempotent for a given day).
  * No-op when uncalibrated, and never moves decay_day backwards on rollback. */
 void muse_pet_model_decay(muse_pet_model_t *s, int64_t now);
@@ -281,11 +344,14 @@ void muse_pet_model_decay(muse_pet_model_t *s, int64_t now);
  * muse_pet_sudoku_today(), which compares sudoku_day to today. */
 void muse_pet_model_roll_daily(muse_pet_model_t *s, int64_t now);
 
-/* Settle one action into `s` (decay is applied first). `random` is used only
- * for PET_FORTUNE (index = random % 20). `arg` carries the outcome of a game
- * round (-1 lose / 0 draw / +1 win, decided UI-side at click time, design
- * §5.2) and is ignored by every other action: since 1.5a a round costs 5 on a
- * loss, pays 5 on a win and costs nothing on a draw. */
+/* Settle one action into `s` (decay is applied first). `random` is
+ * currently unused by every action (PET_FORTUNE used to draw
+ * random % 20; since 2026-11-14 the card is a pure function of the day,
+ * so the parameter stays only to keep the signature stable). `arg`
+ * carries the outcome of a game round (-1 lose / 0 draw / +1 win,
+ * decided UI-side at click time, design §5.2) and is ignored by every
+ * other action: since 1.5a a round costs 5 on a loss, pays 5 on a win
+ * and costs nothing on a draw. */
 muse_pet_result_t muse_pet_model_apply(muse_pet_model_t *s, muse_pet_action_t action,
                                        int64_t now, uint32_t random, int32_t arg);
 
