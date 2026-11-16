@@ -58,7 +58,8 @@ static void check_sound(muse_sfx_t sfx, const char *name, size_t want_n)
 int main(void)
 {
     /* Lengths at 16 kHz: GOOD/BAD/DRAW 120 ms, PLACE 45 ms, WIN 330 ms,
-     * EAT 140 ms, PET 80 ms, FORTUNE 180 ms, LOW_BATT 320 ms. */
+     * EAT 140 ms, PET 80 ms, FORTUNE 180 ms, LOW_BATT 320 ms,
+     * TOSS 130 ms, LAUGH 160 ms. */
     check_sound(MUSE_SFX_GOOD, "good", 1920);
     check_sound(MUSE_SFX_BAD, "bad", 1920);
     check_sound(MUSE_SFX_DRAW, "draw", 1920);
@@ -68,6 +69,8 @@ int main(void)
     check_sound(MUSE_SFX_PET, "pet", 1280);
     check_sound(MUSE_SFX_FORTUNE, "fortune", 2880);
     check_sound(MUSE_SFX_LOW_BATT, "low_batt", 5120);
+    check_sound(MUSE_SFX_TOSS, "toss", 2080);
+    check_sound(MUSE_SFX_LAUGH, "laugh", 2560);
     /* EAT is two 50 ms peeps with a 40 ms silent gap in between:
      * samples 800..1439 are exactly 0, both peeps sound. */
     size_t n_eat = muse_audio_sfx_render(MUSE_SFX_EAT, s_buf, MUSE_SFX_MAX_SAMPLES);
@@ -110,6 +113,63 @@ int main(void)
         }
     }
     assert(beep1 > 1000 && beep2 > 1000);
+    /* TOSS is two knocks 70 ms apart: a 5 ms noise burst + a 55 ms
+     * 180 Hz thud each, with a 10 ms silent gap in between (samples
+     * 960..1119 are exactly 0). Both knocks sound, and both noise
+     * bursts are really noise (not just the thud). */
+    size_t n_toss = muse_audio_sfx_render(MUSE_SFX_TOSS, s_buf, MUSE_SFX_MAX_SAMPLES);
+    assert(n_toss == 2080);
+    int32_t knock1 = 0, knock2 = 0, noise1 = 0, noise2 = 0;
+    for (size_t i = 0; i < 960; i++) {
+        int32_t v = s_buf[i] < 0 ? -s_buf[i] : s_buf[i];
+        if (v > knock1) {
+            knock1 = v;
+        }
+    }
+    for (size_t i = 0; i < 80; i++) {
+        int32_t v = s_buf[i] < 0 ? -s_buf[i] : s_buf[i];
+        if (v > noise1) {
+            noise1 = v;
+        }
+    }
+    for (size_t i = 960; i < 1120; i++) {
+        assert(s_buf[i] == 0);
+    }
+    for (size_t i = 1120; i < 2080; i++) {
+        int32_t v = s_buf[i] < 0 ? -s_buf[i] : s_buf[i];
+        if (v > knock2) {
+            knock2 = v;
+        }
+    }
+    for (size_t i = 1120; i < 1200; i++) {
+        int32_t v = s_buf[i] < 0 ? -s_buf[i] : s_buf[i];
+        if (v > noise2) {
+            noise2 = v;
+        }
+    }
+    assert(knock1 > 1000 && knock2 > 1000);
+    assert(noise1 > 500 && noise2 > 500);
+    /* LAUGH is two light notes 660 -> 880 Hz with a 20 ms silent gap in
+     * between: samples 1120..1439 are exactly 0, both notes sound. */
+    size_t n_laugh = muse_audio_sfx_render(MUSE_SFX_LAUGH, s_buf, MUSE_SFX_MAX_SAMPLES);
+    assert(n_laugh == 2560);
+    int32_t note1 = 0, note2 = 0;
+    for (size_t i = 0; i < 1120; i++) {
+        int32_t v = s_buf[i] < 0 ? -s_buf[i] : s_buf[i];
+        if (v > note1) {
+            note1 = v;
+        }
+    }
+    for (size_t i = 1120; i < 1440; i++) {
+        assert(s_buf[i] == 0);
+    }
+    for (size_t i = 1440; i < 2560; i++) {
+        int32_t v = s_buf[i] < 0 ? -s_buf[i] : s_buf[i];
+        if (v > note2) {
+            note2 = v;
+        }
+    }
+    assert(note1 > 1000 && note2 > 1000);
     /* START is not a table sound: it renders nothing (played via chirp). */
     assert(muse_audio_sfx_render(MUSE_SFX_START, s_buf, MUSE_SFX_MAX_SAMPLES) == 0);
     /* A short buffer renders exactly the prefix of the full sound. */

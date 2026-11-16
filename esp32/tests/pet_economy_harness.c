@@ -21,6 +21,17 @@
  *   - PET_SUDOKU_SOLVE: 10 coins for the day's first puzzle, PET_CAP after;
  *     a ledger already holding a nonzero reward -- including a v4 blob's 5
  *     -- counts as paid and is never topped up to 10.
+ *   - PET_FORTUNE (user decision 2026-11-14): 5 coins a draw, once a day,
+ *     the card a pure function of the day (same card all day, same card
+ *     on any board); PET_POOR under 5, PET_FORTUNE_SAME for re-views.
+ *   - PET_JIAOBEI_TOSS (user decision 2026-11-14): 5 coins a toss, at
+ *     most 9 a day; the 10th is PET_CAP and settles nothing. The
+ *     result rides in `arg`: a settled holy toss extends the day's
+ *     streak, laughing / yin clear it, and the last result is recorded
+ *     (the streak survives leaving the page within the same day; the
+ *     midnight day boundary clears it). A refused toss records
+ *     nothing; a bare request (arg 0) charges and counts but records
+ *     no result.
  *   - Day rollback (clock going backwards) never re-charges a paid day.
  *   - muse_pet_sudoku_today() answers the UI's two questions.
  */
@@ -228,6 +239,190 @@ int main(void)
     assert(apply(&m, PET_SUDOKU_ENTRY, d1, 0) == PET_POOR);
     assert(m.coins == 4);
     assert(m.sudoku_entry_paid == 0);
+
+    /* --- fortune: 5 coins a draw, once a day, same card all day --------
+     * (user decision 2026-11-14: the draw used to pay 20, now it costs 5;
+     * the card is a pure function of the day, not a random draw). */
+    muse_pet_model_init(&m);
+    m.coins = 40;
+    assert(apply(&m, PET_FORTUNE, d1, 0) == PET_FORTUNE_NEW);
+    assert(m.coins == 35); /* 5 charged, not 20 paid */
+    assert(m.fortune_day == d1);
+    uint32_t card_d1 = m.fortune;
+    assert(card_d1 < MUSE_PET_FORTUNES);
+    /* Same-day repeat shows the same card and moves nothing. */
+    assert(apply(&m, PET_FORTUNE, d1, 0) == PET_FORTUNE_SAME);
+    assert(m.coins == 35);
+    assert(m.fortune == card_d1);
+    /* Deterministic by date: two fresh models draw the same card on the
+     * same day, whatever `random` the worker passes. */
+    muse_pet_model_t m2;
+    muse_pet_model_init(&m2);
+    m2.coins = 40;
+    assert(muse_pet_model_apply(&m2, PET_FORTUNE, day_now(d1), 12345, 0) ==
+           PET_FORTUNE_NEW);
+    assert(m2.fortune == card_d1);
+    /* The deck spreads across days: at least 10 distinct cards over 20
+     * consecutive days (the plain day % 20 cycle would show all 20 in
+     * order; the hash must not collapse to a few). */
+    bool seen[MUSE_PET_FORTUNES] = {false};
+    uint32_t distinct = 0;
+    for (int32_t d = d1; d < d1 + 20; d++) {
+        muse_pet_model_t md;
+        muse_pet_model_init(&md);
+        md.coins = 40;
+        assert(muse_pet_model_apply(&md, PET_FORTUNE, day_now(d), 0, 0) ==
+               PET_FORTUNE_NEW);
+        if (!seen[md.fortune]) {
+            seen[md.fortune] = true;
+            distinct++;
+        }
+    }
+    assert(distinct >= 10);
+    /* A new day draws a new card (and the 20-coin living cost is settled
+     * first: 35 - 20 - 5 = 10). */
+    assert(apply(&m, PET_FORTUNE, d2, 0) == PET_FORTUNE_NEW);
+    assert(m.coins == 10);
+    assert(m.fortune_day == d2);
+    /* Under 5 coins the first draw of the day is refused and settles
+     * nothing -- the balance never goes negative, and no card is drawn. */
+    muse_pet_model_init(&m);
+    m.coins = 4;
+    assert(apply(&m, PET_FORTUNE, d1, 0) == PET_POOR);
+    assert(m.coins == 4);
+    assert(m.fortune_day == -1);
+    /* Exactly 5 coins draws fine. */
+    m.coins = 5;
+    assert(apply(&m, PET_FORTUNE, d1, 0) == PET_FORTUNE_NEW);
+    assert(m.coins == 0);
+    /* Already drawn today, then spent below 5: re-viewing is still free
+     * (SAME, not POOR -- the same-day check comes first). */
+    assert(apply(&m, PET_FORTUNE, d1, 0) == PET_FORTUNE_SAME);
+    assert(m.coins == 0);
+
+    /* --- jiaobei: 5 coins a toss, at most 9 a day -----------------------
+     * (user decision 2026-11-14: pure consumption, no payout). */
+    muse_pet_model_init(&m);
+    m.coins = 100;
+    uint32_t remaining = 0;
+    muse_pet_jiaobei_today(&m, day_now(d1), &remaining);
+    assert(remaining == 9);
+    for (int i = 0; i < 9; i++) {
+        assert(apply(&m, PET_JIAOBEI_TOSS, d1, 0) == PET_OK);
+    }
+    assert(m.coins == 55); /* 100 - 9 * 5 */
+    assert(m.jiaobei_day == d1);
+    assert(m.jiaobei_count == 9);
+    /* Bare requests (arg 0) charge and count but record no result. */
+    assert(m.jiaobei_streak == 0 && m.jiaobei_last == 0);
+    muse_pet_jiaobei_today(&m, day_now(d1), &remaining);
+    assert(remaining == 0);
+    /* The 10th toss of the day: PET_CAP, and nothing changes -- no
+     * charge, no count, no result (the UI shows the limit prompt). */
+    assert(apply(&m, PET_JIAOBEI_TOSS, d1, 0) == PET_CAP);
+    assert(m.coins == 55);
+    assert(m.jiaobei_count == 9);
+    /* A new day rolls the ledger (the 20-coin living cost is settled
+     * first: 55 - 20 - 5 = 30). */
+    assert(apply(&m, PET_JIAOBEI_TOSS, d2, 0) == PET_OK);
+    assert(m.coins == 30);
+    assert(m.jiaobei_day == d2);
+    assert(m.jiaobei_count == 1);
+    muse_pet_jiaobei_today(&m, day_now(d2), &remaining);
+    assert(remaining == 8);
+    /* Clock rollback never re-grants tosses: the stored day is kept and
+     * the toss settles against it (count 1 -> 2, not reset to 1). */
+    assert(apply(&m, PET_JIAOBEI_TOSS, d2 - 1, 0) == PET_OK);
+    assert(m.coins == 25);
+    assert(m.jiaobei_day == d2);
+    assert(m.jiaobei_count == 2);
+    /* Under 5 coins a toss is refused and settles nothing. */
+    muse_pet_model_init(&m);
+    m.coins = 4;
+    assert(apply(&m, PET_JIAOBEI_TOSS, d1, 0) == PET_POOR);
+    assert(m.coins == 4);
+    assert(m.jiaobei_count == 0);
+    /* Exactly 5 coins tosses fine. */
+    m.coins = 5;
+    assert(apply(&m, PET_JIAOBEI_TOSS, d1, 0) == PET_OK);
+    assert(m.coins == 0);
+    assert(m.jiaobei_count == 1);
+
+    /* --- jiaobei streak: holy +1, laughing / yin clear, same day ----
+     * (user decision 2026-11-14: the streak survives leaving the page
+     * within the same day; the result rides in the toss's `arg`). */
+    muse_pet_model_init(&m);
+    m.coins = 100;
+    uint32_t streak = 0, last = 0;
+    assert(apply(&m, PET_JIAOBEI_TOSS, d1, MUSE_PET_JIAOBEI_SHENG) == PET_OK);
+    assert(m.coins == 95);
+    assert(m.jiaobei_streak == 1 && m.jiaobei_last == MUSE_PET_JIAOBEI_SHENG);
+    muse_pet_jiaobei_result_today(&m, day_now(d1), &streak, &last);
+    assert(streak == 1 && last == MUSE_PET_JIAOBEI_SHENG);
+    assert(apply(&m, PET_JIAOBEI_TOSS, d1, MUSE_PET_JIAOBEI_SHENG) == PET_OK);
+    assert(m.jiaobei_streak == 2);
+    assert(apply(&m, PET_JIAOBEI_TOSS, d1, MUSE_PET_JIAOBEI_XIAO) == PET_OK);
+    assert(m.jiaobei_streak == 0 && m.jiaobei_last == MUSE_PET_JIAOBEI_XIAO);
+    muse_pet_jiaobei_result_today(&m, day_now(d1), &streak, &last);
+    assert(streak == 0 && last == MUSE_PET_JIAOBEI_XIAO);
+    assert(apply(&m, PET_JIAOBEI_TOSS, d1, MUSE_PET_JIAOBEI_SHENG) == PET_OK);
+    assert(m.jiaobei_streak == 1);
+    assert(apply(&m, PET_JIAOBEI_TOSS, d1, MUSE_PET_JIAOBEI_YIN) == PET_OK);
+    assert(m.jiaobei_streak == 0 && m.jiaobei_last == MUSE_PET_JIAOBEI_YIN);
+    /* A new day clears the streak and the last result (the 20-coin
+     * living cost is settled first: 100 - 5*5 - 20 - 5 = 50). */
+    assert(apply(&m, PET_JIAOBEI_TOSS, d2, MUSE_PET_JIAOBEI_SHENG) == PET_OK);
+    assert(m.coins == 50);
+    assert(m.jiaobei_day == d2);
+    assert(m.jiaobei_streak == 1 && m.jiaobei_last == MUSE_PET_JIAOBEI_SHENG);
+    muse_pet_jiaobei_result_today(&m, day_now(d2), &streak, &last);
+    assert(streak == 1 && last == MUSE_PET_JIAOBEI_SHENG);
+    /* The accessor answers for the day asked about, not the stored
+     * one: yesterday reads 0 / none. */
+    muse_pet_jiaobei_result_today(&m, day_now(d1), &streak, &last);
+    assert(streak == 0 && last == 0);
+    /* A refused toss records nothing: 8 more holy (streak 9), the
+     * 10th is PET_CAP and the streak + last result stand. */
+    for (int i = 0; i < 8; i++) {
+        assert(apply(&m, PET_JIAOBEI_TOSS, d2, MUSE_PET_JIAOBEI_SHENG) == PET_OK);
+    }
+    assert(m.coins == 10);
+    assert(m.jiaobei_count == 9 && m.jiaobei_streak == 9);
+    assert(apply(&m, PET_JIAOBEI_TOSS, d2, MUSE_PET_JIAOBEI_XIAO) == PET_CAP);
+    assert(m.coins == 10);
+    assert(m.jiaobei_count == 9 && m.jiaobei_streak == 9);
+    assert(m.jiaobei_last == MUSE_PET_JIAOBEI_SHENG);
+    /* A refused toss for lack of coins records nothing either. */
+    muse_pet_model_init(&m);
+    m.coins = 4;
+    assert(apply(&m, PET_JIAOBEI_TOSS, d1, MUSE_PET_JIAOBEI_SHENG) == PET_POOR);
+    assert(m.coins == 4);
+    assert(m.jiaobei_count == 0 && m.jiaobei_streak == 0 && m.jiaobei_last == 0);
+    /* A bare request (arg 0, e.g. from the console) charges and counts
+     * the toss but records no result. */
+    muse_pet_model_init(&m);
+    m.coins = 100;
+    for (int i = 0; i < 3; i++) {
+        assert(apply(&m, PET_JIAOBEI_TOSS, d1, 0) == PET_OK);
+    }
+    assert(m.coins == 85);
+    assert(m.jiaobei_count == 3 && m.jiaobei_streak == 0 && m.jiaobei_last == 0);
+    muse_pet_jiaobei_result_today(&m, day_now(d1), &streak, &last);
+    assert(streak == 0 && last == 0);
+
+    /* --- validation catches a corrupt jiaobei ledger -------------------- */
+    muse_pet_model_init(&m);
+    m.jiaobei_count = MUSE_PET_JIAOBEI_DAILY_MAX + 1;
+    assert(!muse_pet_model_valid(&m));
+    muse_pet_model_init(&m);
+    m.jiaobei_day = -2;
+    assert(!muse_pet_model_valid(&m));
+    muse_pet_model_init(&m);
+    m.jiaobei_streak = MUSE_PET_JIAOBEI_DAILY_MAX + 1;
+    assert(!muse_pet_model_valid(&m));
+    muse_pet_model_init(&m);
+    m.jiaobei_last = 4;
+    assert(!muse_pet_model_valid(&m));
 
     /* --- a v4 blob's stored 5 counts as paid, never topped up --------- */
     muse_pet_model_init(&m);

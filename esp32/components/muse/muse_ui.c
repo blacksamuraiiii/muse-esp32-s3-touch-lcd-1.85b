@@ -60,6 +60,10 @@
 
 static const char *TAG = "muse_ui";
 
+/* A frame gap above this is not scheduling jitter: the LVGL thread was
+ * blocked. frame_ms is 40 on the S3 boards, so 150 ms is ~4 frames. */
+#define MUSE_UI_STALL_MS 150u
+
 #define METER_SEGS 14
 #define METER_SEG_PX 9
 #define METER_GAP_PX 4
@@ -1834,6 +1838,25 @@ void muse_ui_request_snapshot(void)
 
 static void frame_tick(lv_timer_t *timer)
 {
+    /* Stall probe (2026-11-16, 1.5.3c): this timer runs every frame on the
+     * LVGL thread, so a gap far longer than a frame means that thread was
+     * blocked inside whatever ran before -- which the user sees as "the
+     * whole page is stuck". One line names the gap and both heaps: a
+     * blocked thread and a starving one look identical on screen and only
+     * this tells them apart. */
+    {
+        static uint32_t last_ms;
+        uint32_t now_ms = lv_tick_get();
+        uint32_t gap = last_ms ? now_ms - last_ms : 0;
+        last_ms = now_ms;
+        if (gap > MUSE_UI_STALL_MS) {
+            ESP_LOGW(TAG, "frame gap %u ms (int %u/%u B, psram %u B)",
+                     (unsigned)gap,
+                     (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+                     (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
+                     (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+        }
+    }
     /* Interaction tick runs every frame, BEFORE any early return below:
      * it drains the pet feedback queue (a full queue stalls the worker,
      * phase 1), expires the pet caption, and advances the game animation.

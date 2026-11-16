@@ -50,10 +50,18 @@
  *     (y = 120), and its result line ("喂了…") at y = 262 -- the slot
  *     the rule line used to own before the two swapped on 2026-11-01
  *     (user request); the food names sit at y = 228 between them.
- *     The 今日运势 subpage: rule line "每天+20，同日再抽无效" in the same
- *     TOP slot as the 喂饭 one (y = 84), then a 300x160 card at y = 114
- *     with its content centred (grade 36, 28x2 gold rule 66, body 84),
- *     coin line at y = 302.
+ *     The 今日运势 subpage: rule line "每天抽一次，每次 -5 金币"
+ *     in the same TOP slot as the 喂饭 one (y = 84), then a 300x160
+ *     card at y = 114 with its content centred (grade 36, 28x2 gold
+ *     rule 66, body 84), coin line at y = 302. (2026-11-14: the draw
+ *     went from +20/day to -5/day, once a day, same draw all day --
+ *     the old "每天+20，同日再抽无效" wording is gone with it.)
+ *     The subpage is reached from the main page's 今日运势 card
+ *     (2026-11-14, mockup v13): it holds two 100x100 cards at
+ *     y = 120 (抽签 / 掷筊, icons 80 px, names at y = 228), the
+ *     motto "仅供娱乐" at y = 84 (DIM, the learn page's motto slot),
+ *     and the coin line at y = 302. 抽签 opens the draw page above;
+ *     掷筊 opens the jiaobei board (muse_jiaobei_ui.c).
  *     The 石头剪刀布 game page is the one exception to the coin-slot
  *     rule: its coin line sits at y = 302 and the "点一张手出拳，每局
  *     -10 金币" cost hint at y = 84 (swapped, 2026-11-01, user request),
@@ -110,6 +118,8 @@
 #include "esp_random.h"
 #include "muse_interact_food_art.h"
 #include "muse_interact_hand_assets.h"
+#include "muse_fortune_art.h"  /* 抽签 / 掷筊子页图标 (ARGB8888, 2026-11-14) */
+#include "muse_jiaobei_ui.h"  /* 掷筊板 (2026-11-14) */
 #include "muse_audio.h"   /* game sound effects */
 #include "muse_font.h"    /* muse_font_cjk() / muse_font_btn(), the one CJK chain (1.5b) */
 #include "muse_theme.h"   /* MUSE_THEME_*, the one colour table (1.5b) */
@@ -206,6 +216,8 @@ enum {
     IC_PAGE_FEED,
     IC_PAGE_GAME,
     IC_PAGE_FORTUNE,
+    IC_PAGE_FORTUNE_SUB,
+    IC_PAGE_JIAOBEI,
     IC_PAGE_SUDOKU,
     IC_PAGE_MINIGAME,
     IC_PAGE_SNAKE,
@@ -228,7 +240,8 @@ enum {
 };
 
 static lv_obj_t *s_tile;
-static lv_obj_t *s_main_page, *s_feed_page, *s_game_page, *s_fortune_page, *s_sudoku_page;
+static lv_obj_t *s_main_page, *s_feed_page, *s_game_page, *s_fortune_page,
+    *s_fortune_sub_page, *s_jiaobei_page, *s_sudoku_page;
 static lv_obj_t *s_minigame_page, *s_snake_page, *s_whackamole_page,
     *s_goldrain_page, *s_doodle_page, *s_mathpractice_page, *s_tictactoe_page,
     *s_wordcards_page, *s_wordcards_sets_page, *s_quiz_page, *s_learn_page;
@@ -263,12 +276,20 @@ static lv_obj_t *s_game_coins_lbl;
 static bool s_storage_noted, s_unready_noted;
 static lv_obj_t *s_fortune_card, *s_fortune_grade, *s_fortune_rule,
     *s_fortune_body;
+/* A draw request is in flight: the card shows "抽取中..." until any
+ * PET_FORTUNE feedback lands (drain_feedback clears it). Without it,
+ * a re-entry after a same-day draw would flash "今天还没抽签" while
+ * the snapshot was merely stale -- the worker is the authority, and
+ * it answers within a frame or two. */
+static bool s_fortune_pending;
 /* Bottom gold row (y = 302) on the feed and fortune subpages, added
  * 2026-11-01 so every interaction page ends with the same coin line.
  * Written by refresh_status() from the snapshot, same as s_status1 and
  * s_minigame_coins above. The learn page joined them in the v6 card
- * redesign (2026-11-12): its bottom row is the coin line too. */
-static lv_obj_t *s_feed_coins, *s_fortune_coins, *s_learn_coins;
+ * redesign (2026-11-12): its bottom row is the coin line too. The
+ * fortune subpage joined them on 2026-11-14 (mockup v13). */
+static lv_obj_t *s_feed_coins, *s_fortune_coins, *s_fortune_sub_coins,
+    *s_learn_coins;
 
 static const char *TAG = "muse_ic";
 
@@ -354,6 +375,8 @@ static void show_page(int page)
     if (page == IC_PAGE_FEED) show = s_feed_page;
     if (page == IC_PAGE_GAME) show = s_game_page;
     if (page == IC_PAGE_FORTUNE) show = s_fortune_page;
+    if (page == IC_PAGE_FORTUNE_SUB) show = s_fortune_sub_page;
+    if (page == IC_PAGE_JIAOBEI) show = s_jiaobei_page;
     if (page == IC_PAGE_SUDOKU) show = s_sudoku_page;
     if (page == IC_PAGE_MINIGAME) show = s_minigame_page;
     if (page == IC_PAGE_SNAKE) show = s_snake_page;
@@ -402,14 +425,20 @@ static void on_back(lv_event_t *e)
      * would break the "left < = one level up" rule. The six menu
      * games (game, snake, whack-a-mole, goldrain, doodle, tictactoe)
      * all land on the menu; the three learning games (mathpractice,
-     * wordcards, quiz) land on the 学习 page; feed and fortune are
-     * main-page cards, so they still land on the main page. Leaving a
-     * game page pauses a running game through its hide hook (snake
-     * keeps its board, whack-a-mole, goldrain, doodle, mathpractice,
-     * tictactoe and wordcards resume from their pause overlays; quiz
-     * has no pause overlay, it replays the current question on show),
-     * so none plays on off-screen; the other subpages keep their own
+     * wordcards, quiz) land on the 学习 page; feed is a main-page
+     * card, so it still lands on the main page. Fortune is one level
+     * deeper since 2026-11-14 (mockup v13): the draw page lands on
+     * the fortune subpage, the jiaobei board lands there too, and the
+     * subpage itself lands on the main page. Leaving a game page
+     * pauses a running game through its hide hook (snake keeps its
+     * board, whack-a-mole, goldrain, doodle, mathpractice, tictactoe
+     * and wordcards resume from their pause overlays; quiz has no
+     * pause overlay, it replays the current question on show), so
+     * none plays on off-screen; the other subpages keep their own
      * return-visit rules. */
+    if (s_page == IC_PAGE_JIAOBEI) {
+        muse_jiaobei_ui_hide();
+    }
     if (s_page == IC_PAGE_SNAKE) {
         muse_snake_ui_hide();
     }
@@ -440,6 +469,11 @@ static void on_back(lv_event_t *e)
         /* One level deeper than the other games: back to the
          * category page, not the minigame list. */
         show_page(IC_PAGE_WORDCARDS_SETS);
+    } else if (s_page == IC_PAGE_FORTUNE || s_page == IC_PAGE_JIAOBEI) {
+        /* Fortune is one level deeper since 2026-11-14 (mockup v13):
+         * the draw page and the jiaobei board both land on the
+         * fortune subpage, not on the main page. */
+        show_page(IC_PAGE_FORTUNE_SUB);
     } else if (s_page == IC_PAGE_GAME || s_page == IC_PAGE_SUDOKU ||
                s_page == IC_PAGE_SNAKE || s_page == IC_PAGE_WHACKAMOLE ||
                s_page == IC_PAGE_GOLDRAIN ||
@@ -503,6 +537,7 @@ static void refresh_status(void)
         set_label(s_minigame_coins, "金币 --/100");
         set_label(s_feed_coins, "金币 --/100");
         set_label(s_fortune_coins, "金币 --/100");
+        set_label(s_fortune_sub_coins, "金币 --/100");
         set_label(s_learn_coins, "金币 --/100");
         return;
     }
@@ -512,6 +547,7 @@ static void refresh_status(void)
     set_label(s_minigame_coins, buf);
     set_label(s_feed_coins, buf);
     set_label(s_fortune_coins, buf);
+    set_label(s_fortune_sub_coins, buf);
     set_label(s_learn_coins, buf);
 
     /* Mini-game rows: snake, whack-a-mole, goldrain, doodle and
@@ -1027,11 +1063,29 @@ static void fortune_layout(void)
     lv_obj_align(s_fortune_body, LV_ALIGN_TOP_MID, 0, top + 56);
 }
 
+/* Day-aware since 2026-11-14 (the draw went from +20/day to -5/day,
+ * once a day, same draw all day): the stored grade is today's only
+ * when fortune_day IS today. A stale snapshot (yesterday's draw, or
+ * no draw yet) shows "今天还没抽签", not yesterday's card; a request
+ * in flight shows "抽取中..." instead. */
 static void show_fortune_card(void)
 {
-    if (!s_have_snap || s_snap.fortune_day < 0) {
+    if (!s_have_snap) {
         lv_label_set_text(s_fortune_grade, "-");
         lv_label_set_text(s_fortune_body, "抽取中...");
+        fortune_layout();
+        return;
+    }
+    if (s_fortune_pending) {
+        lv_label_set_text(s_fortune_grade, "-");
+        lv_label_set_text(s_fortune_body, "抽取中...");
+        fortune_layout();
+        return;
+    }
+    int32_t today = muse_pet_day((int64_t)time(NULL), NULL);
+    if (s_snap.fortune_day < 0 || s_snap.fortune_day != today) {
+        lv_label_set_text(s_fortune_grade, "-");
+        lv_label_set_text(s_fortune_body, "今天还没抽签");
         fortune_layout();
         return;
     }
@@ -1049,11 +1103,13 @@ static void on_fortune_open(lv_event_t *e)
      * and opens the subpage (design §5.2: direct reveal, no fake shuffle,
      * no separate "draw" button on the subpage). A same-day repeat
      * returns PET_FORTUNE_SAME and shows the same card -- that IS the
-     * designed behaviour, not a bug. */
+     * designed behaviour, not a bug. Since 2026-11-14 the draw costs
+     * 5 coins; a balance under 5 returns PET_POOR and draws nothing. */
     if (!muse_pet_request(PET_FORTUNE)) {
         write_pet_caption("互动未就绪");
         return;
     }
+    s_fortune_pending = true;
     show_page(IC_PAGE_FORTUNE);
     show_fortune_card(); /* "抽取中..." until the feedback lands */
 }
@@ -1219,7 +1275,29 @@ static void drain_feedback(void)
              * caption is deliberately left alone -- it is not on screen while a
              * game is being played anyway. */
             break;
+        case PET_JIAOBEI_TOSS:
+            /* The jiaobei board words its own refusals on the page
+             * (fee_refused writes the message row, limit_reached pops
+             * the v21 prompt); the worker is the authority, the
+             * snapshot gates in the UI are advisory only. PET_OK needs
+             * nothing here -- the board already flipped on the request.
+             * The face caption only covers the poor case, pointing at
+             * the ways to earn coins; the cap case needs none, the
+             * prompt itself is the feedback. */
+            if (fb.result == PET_POOR) {
+                muse_jiaobei_ui_fee_refused();
+                write_pet_caption("金币不够，先摸摸 / 喂饭 / 抽运势");
+            } else if (fb.result == PET_CAP) {
+                muse_jiaobei_ui_limit_reached();
+            } else if (fb.result == PET_STORAGE) {
+                write_pet_caption("互动数据损坏");
+            }
+            break;
         case PET_FORTUNE:
+            /* Any PET_FORTUNE feedback ends the pending state, even a
+             * refusal: the card is day-aware now, so a stale "抽取中..."
+             * must never outlive the answer. */
+            s_fortune_pending = false;
             show_fortune_card();
             if (fb.result == PET_FORTUNE_NEW || fb.result == PET_FORTUNE_SAME) {
                 /* Interface gap (see PHASE2-NOTES.md §4): the phase-1
@@ -1229,7 +1307,7 @@ static void drain_feedback(void)
                  * shows grade + full body. Do NOT invent card names. */
                 const char *grade = muse_pet_fortune_grade(s_snap.fortune);
                 if (fb.result == PET_FORTUNE_NEW) {
-                    snprintf(buf, sizeof(buf), "今日运势：%s +20 金币",
+                    snprintf(buf, sizeof(buf), "今日运势：%s -5 金币",
                              grade ? grade : "吉");
                     /* Fresh draw only: re-viewing today's card stays silent. */
                     muse_audio_sfx(MUSE_SFX_FORTUNE);
@@ -1237,6 +1315,13 @@ static void drain_feedback(void)
                     snprintf(buf, sizeof(buf), "今日已抽过：%s",
                              grade ? grade : "吉");
                 }
+                write_pet_caption(buf);
+            } else if (fb.result == PET_POOR) {
+                /* The draw costs 5 coins (2026-11-14); under 5 the
+                 * worker draws nothing, so the card stays on
+                 * "今天还没抽签" and the caption explains why. */
+                snprintf(buf, sizeof(buf), "金币不够，抽签要 %u 枚",
+                         (unsigned)MUSE_PET_FORTUNE_COST);
                 write_pet_caption(buf);
             } else if (fb.result == PET_STORAGE) {
                 write_pet_caption("互动数据损坏");
@@ -1354,6 +1439,22 @@ static void on_open_learn(lv_event_t *e)
     show_page(IC_PAGE_LEARN);
 }
 
+/* Fortune subpage (2026-11-14, mockup v13): the main page's 今日运势
+ * card opens this, not the draw page. The draw and the jiaobei board
+ * are one level down from here. */
+static void on_open_fortune_sub(lv_event_t *e)
+{
+    (void)e;
+    show_page(IC_PAGE_FORTUNE_SUB);
+}
+
+static void on_open_jiaobei(lv_event_t *e)
+{
+    (void)e;
+    show_page(IC_PAGE_JIAOBEI);
+    muse_jiaobei_ui_show();
+}
+
 static void on_open_snake(lv_event_t *e)
 {
     (void)e;
@@ -1387,7 +1488,7 @@ static void build_main(void)
      * (mockup v3). */
     grid_card(s_main_page, IC_GRID_X0, IC_GRID_Y0,
               MUSE_MAIN_GRID_ART[MUSE_MAIN_GRID_FORTUNE], "今日运势",
-              on_fortune_open);
+              on_open_fortune_sub);
     grid_card(s_main_page, IC_GRID_X1, IC_GRID_Y0,
               MUSE_MAIN_GRID_ART[MUSE_MAIN_GRID_FEED], "喂饭", on_open_feed);
     grid_card(s_main_page, IC_GRID_X0, IC_GRID_Y1,
@@ -1710,6 +1811,63 @@ static void build_game(void)
     lv_obj_align(s_game_hint_lbl, LV_ALIGN_TOP_MID, 0, 84);
 }
 
+/* One card of the fortune subpage (mockup v13, 2026-11-14): the learn
+ * page's card-column pattern -- a 100x128 column holding a 100x100
+ * card (icon 80 px, centred) and the name 8 px below it, so the name
+ * sits at y = 228 when the column starts at y = 120. The difference
+ * from the learn cards is the icon: these are ARGB8888 colour pictures
+ * (the 135editor qiantong, the red/flat jiaobei pair), stored at the
+ * 80 px display size, so they are drawn with no recolour and no scale
+ * -- an A8 mask could not carry their colours. The image is not
+ * clickable: the card takes the click. */
+static void fortune_sub_card(lv_obj_t *parent, int x, int slot, const char *name,
+                             lv_event_cb_t cb)
+{
+    lv_obj_t *item = lv_obj_create(parent);
+    lv_obj_remove_style_all(item);
+    lv_obj_set_size(item, IC_FEED_CARD, 128);
+    lv_obj_set_pos(item, x, 120);
+    lv_obj_set_flex_flow(item, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(item, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
+                          LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_row(item, 8, 0);
+    lv_obj_remove_flag(item, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_t *card = muse_card(item, IC_FEED_CARD, IC_FEED_CARD, IC_RADIUS);
+    lv_obj_t *img = lv_image_create(card);
+    lv_image_set_src(img, MUSE_FORTUNE_ART[slot]);
+    lv_obj_set_size(img, IC_FEED_ICON, IC_FEED_ICON);
+    lv_obj_center(img);
+    lv_obj_remove_flag(img, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(card, cb, LV_EVENT_CLICKED, NULL);
+    label(item, muse_font_cjk(), MUSE_THEME_DIM, name);
+}
+
+static void build_fortune_sub(void)
+{
+    page_header(s_fortune_sub_page, "今日运势", on_back);
+    /* Same layout as the learn page (mockup v13): the motto takes the
+     * feed rule line's slot (y = 84, DIM), two cards sit in a row at
+     * y = 120, and the coin line ends the page at y = 302 (TEXT, live
+     * via refresh_status, same as the feed and fortune pages). The
+     * motto is "仅供娱乐" -- the v12 slot was left empty, the v13
+     * mockup fills it. The cards are centred as a pair (x = 76/184):
+     * 100 px each with an 8 px gap, the pair's centre on the screen's
+     * centreline. */
+    lv_obj_t *motto = label(s_fortune_sub_page, muse_font_cjk(), MUSE_THEME_DIM,
+                            "仅供娱乐");
+    lv_obj_align(motto, LV_ALIGN_TOP_MID, 0, 84);
+    fortune_sub_card(s_fortune_sub_page, 76, MUSE_FORTUNE_QIAN, "抽签",
+                     on_fortune_open);
+    fortune_sub_card(s_fortune_sub_page, 184, MUSE_FORTUNE_JIAOBEI, "掷筊",
+                     on_open_jiaobei);
+    /* Coin line: the page's last row, same slot as the other pages'
+     * (y = 302), so every interaction page ends the same way
+     * (2026-11-01, user request "统一页面内容"). A live status, not a
+     * static label: refresh_status() rewrites it from the snapshot. */
+    s_fortune_sub_coins = label(s_fortune_sub_page, muse_font_cjk(), MUSE_THEME_TEXT, "金币 --/100");
+    lv_obj_align(s_fortune_sub_coins, LV_ALIGN_TOP_MID, 0, 302);
+}
+
 static void build_fortune(void)
 {
     page_header(s_fortune_page, "今日运势", on_back);
@@ -1772,11 +1930,13 @@ static void build_fortune(void)
      * rule line uses (user request 2026-11-01: "同喂饭那句的位置").
      * It is read before the card, and it keeps the bottom free
      * for the coin line alone. Card sits at 114 (300x160, ends 274) --
-     * 14 px under this line and 28 px above the coin row. Copy is the
-     * shortened one, DIM colour unchanged; ~148 px wide, far inside the
-     * 316 px chord at y = 94. */
+     * 14 px under this line and 28 px above the coin row. The draw
+     * costs 5 coins a day and can be drawn only once a day (user
+     * decision 2026-11-14): the old "每天+20，同日再抽无效" is gone
+     * with the +20 reward. Copy is the shortened one, DIM colour
+     * unchanged; ~148 px wide, far inside the 316 px chord at y = 94. */
     lv_obj_t *rule = label(s_fortune_page, muse_font_cjk(), MUSE_THEME_DIM,
-                           "每天+20，同日再抽无效");
+                           "每天抽一次，每次 -5 金币");
     lv_obj_align(rule, LV_ALIGN_TOP_MID, 0, 84);
     /* Coin line: same slot as the main / feed / mini-game pages (y = 302),
      * so all interaction pages end the same way (2026-11-01, "统一页面
@@ -1795,6 +1955,8 @@ void muse_interact_ui_build(lv_obj_t *tile)
     s_feed_page = page_group(tile);
     s_game_page = page_group(tile);
     s_fortune_page = page_group(tile);
+    s_fortune_sub_page = page_group(tile);
+    s_jiaobei_page = page_group(tile);
     s_sudoku_page = page_group(tile);
     s_minigame_page = page_group(tile);
     s_snake_page = page_group(tile);
@@ -1811,8 +1973,10 @@ void muse_interact_ui_build(lv_obj_t *tile)
     build_feed();
     build_game();
     build_fortune();
+    build_fortune_sub();
     build_minigame();
     build_learn();
+    muse_jiaobei_ui_build(s_jiaobei_page, on_back);
     muse_sudoku_ui_build(s_sudoku_page, on_back);
     muse_snake_ui_build(s_snake_page, on_back);
     muse_whackamole_ui_build(s_whackamole_page, on_back);
@@ -1858,6 +2022,7 @@ void muse_interact_ui_on_hidden(void)
     muse_tictactoe_ui_hide();
     muse_wordcards_ui_hide();
     muse_quiz_ui_hide();
+    muse_jiaobei_ui_hide();
     show_page(IC_PAGE_MAIN);
 }
 

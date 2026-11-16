@@ -26,6 +26,8 @@
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/idf_additions.h"
+#include "freertos/queue.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 
@@ -65,10 +67,27 @@ static SemaphoreHandle_t s_lock;
  * into one shared static buffer, while the callers run on the input task
  * (LOW_BATT), the voice task (BAD, reply audio, chirp) and the LVGL thread
  * (every game sound). Two writers at once used to interleave slices of each
- * other's audio into the same buffers. The lock is separate from s_lock so
- * a long sound never blocks a codec power switch, and the two never nest:
- * nothing takes s_lock while holding this one, or vice versa. */
+ * other's audio into the same buffers.
+ *
+ * Lock order is s_lock -> s_write_lock and nothing takes them the other
+ * way round: the codec open/close path (muse_audio_power) takes this one
+ * before touching s_spk, because esp_codec_dev_close() racing a write that
+ * is inside esp_codec_dev_write() leaves the write waiting on a codec
+ * mutex or a disabled I2S channel for its full 1 s timeout -- per 20 ms
+ * chunk. A UI sound fired into that stall is what made the whole page
+ * look frozen (2026-11-16, 1.5.3c). No audio path takes s_lock while
+ * holding this one, so the order cannot deadlock. */
 static SemaphoreHandle_t s_write_lock;
+/* The sound-effect worker. Sounds fired from the LVGL thread are posted
+ * here instead of being written on that thread: a write blocks for the
+ * sound's own length (up to 330 ms) plus any wait for the lock above, and
+ * a 100 ms frame budget cannot absorb either (2026-11-16). One slot: a new
+ * sound replaces one that has not started yet, which is what a fast tap
+ * wants anyway. muse_audio_sfx_sync() keeps the old blocking path for the
+ * two callers that must know whether the sound really went out. */
+static QueueHandle_t s_sfx_queue;
+static TaskHandle_t s_sfx_task;
+static bool sfx_worker_init(void);
 static int16_t s_in_frame[MUSE_AUDIO_CHUNK * IN_SLOTS_MAX];
 static int16_t s_out_stereo[MUSE_AUDIO_CHUNK * OUT_CHANNELS];
 /* Slots per capture frame, from the board at init. 2 until then, so a board
@@ -189,6 +208,10 @@ esp_err_t muse_audio_init(int volume, int mic_gain_db)
         ESP_LOGE(TAG, "audio write lock");
         return ESP_ERR_NO_MEM;
     }
+    /* The async sound-effect worker, created here so no two tasks race to
+     * create it. A board without a speaker still gets it: the worker's
+     * writes fail harmlessly there. */
+    (void)sfx_worker_init();
     /* Before anything opens a codec: the capture frame width is the board's,
      * and the ES7210 has to be told the same number the rx channel carries. */
     s_in_slots = muse_board->mic_slots > 0 ? muse_board->mic_slots : 2;
@@ -246,6 +269,12 @@ void muse_audio_power(bool on)
      * harmless error. */
     esp_log_level_t lvl = esp_log_level_get("i2s_common");
     esp_log_level_set("i2s_common", ESP_LOG_NONE);
+    /* No write may be inside the codec while it opens or closes: a close
+     * racing a writer leaves that write waiting out its full 1 s timeout
+     * (and, on a bad day, writing into a freed channel). Taking the write
+     * lock for the switch is what makes the two mutual, in the s_lock ->
+     * s_write_lock order (2026-11-16). */
+    write_lock();
     /* The codecs' supply comes up before they open and goes once both have
      * closed. The amp goes on once they're open and set, and off before they
      * close, so it never passes on their power-up or power-down. */
@@ -272,6 +301,7 @@ void muse_audio_power(bool on)
         s_open = false;
         codec_power(false);
     }
+    write_unlock();
     esp_log_level_set("i2s_common", lvl);
     unlock();
 }
@@ -568,7 +598,7 @@ esp_err_t muse_audio_chirp(int rising)
     return err;
 }
 
-esp_err_t muse_audio_sfx(muse_sfx_t sfx)
+esp_err_t muse_audio_sfx_sync(muse_sfx_t sfx)
 {
     write_lock();
     esp_err_t err;
@@ -598,4 +628,53 @@ esp_err_t muse_audio_sfx(muse_sfx_t sfx)
     err = muse_audio_write_locked(buf, n);
     write_unlock();
     return err;
+}
+
+/* --- async sound effects (the LVGL thread's path) --------------------- */
+
+#define SFX_TASK_STACK 3072
+/* Below the reply/word audio tasks (4) and the LVGL thread (5): a page
+ * full of taps must never delay a word or a reply by one millisecond. */
+#define SFX_TASK_PRIO 3
+
+static void sfx_task(void *arg)
+{
+    (void)arg;
+    int32_t v;
+    for (;;) {
+        if (xQueueReceive(s_sfx_queue, &v, portMAX_DELAY) != pdTRUE) {
+            continue;
+        }
+        muse_audio_sfx_sync((muse_sfx_t)v);
+    }
+}
+
+/* Created once, beside the locks (muse_audio_init), so no two tasks can
+ * race to create it. */
+static bool sfx_worker_init(void)
+{
+    if (!s_sfx_queue && !(s_sfx_queue = xQueueCreate(1, sizeof(int32_t)))) {
+        ESP_LOGE(TAG, "sfx queue");
+        return false;
+    }
+    if (!s_sfx_task &&
+        xTaskCreateWithCaps(sfx_task, "muse_sfx", SFX_TASK_STACK, NULL,
+                            SFX_TASK_PRIO, &s_sfx_task, MUSE_BIG_CAPS) != pdPASS) {
+        ESP_LOGE(TAG, "sfx task");
+        s_sfx_task = NULL;
+        return false;
+    }
+    return true;
+}
+
+esp_err_t muse_audio_sfx(muse_sfx_t sfx)
+{
+    if (!s_sfx_queue || !s_sfx_task) {
+        return ESP_ERR_INVALID_STATE; /* audio not up yet */
+    }
+    int32_t v = (int32_t)sfx;
+    if (xQueueOverwrite(s_sfx_queue, &v) != pdTRUE) {
+        return ESP_ERR_NO_MEM;
+    }
+    return ESP_OK; /* queued: the worker writes it, this call never blocks */
 }
