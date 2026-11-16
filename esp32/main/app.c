@@ -59,6 +59,7 @@
 #include "vm_connect.h"
 #include "noise_control.h"
 #include "muse_settings.h"
+#include "muse_state.h"   /* the ui=frames/bands heartbeat counters */
 #include "muse_chat.h"
 #include "image_fetch.h"
 #include "noise_tunnel.h"
@@ -3146,10 +3147,13 @@ void app_run(void) {
         size_t free_dma = heap_caps_get_free_size(MALLOC_CAP_DMA);
         size_t largest_dma = heap_caps_get_largest_free_block(MALLOC_CAP_DMA);
         size_t free_psram = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
+        uint32_t ui_frames = 0, bands_sent = 0;
+        muse_state_screen_stats(&ui_frames, &bands_sent);
         tunnel_stats_t tun;
         tunnel_netif_get_stats(&tun);
         ESP_LOGI(HEARTBEAT_TAG, "hb t=%llds setup=%s wifi=%s ws=%s raw=%s ble=%s "
                        "int=%uK/%uK min=%uK%s dma=%uK/%uK psram=%uK "
+                       "ui=%lu/%lu "
                        "tun rx+%lu/%luB tx+%lu/%luB drop+%lu",
                  esp_timer_get_time() / 1000000,
                  s_setup_stage,
@@ -3164,6 +3168,8 @@ void app_run(void) {
                  (unsigned)(free_dma / 1024),
                  (unsigned)(largest_dma / 1024),
                  (unsigned)(free_psram / 1024),
+                 (unsigned long)ui_frames,
+                 (unsigned long)bands_sent,
                  (unsigned long)(tun.rx_pkts - prev_tun.rx_pkts),
                  (unsigned long)(tun.rx_bytes - prev_tun.rx_bytes),
                  (unsigned long)(tun.tx_pkts - prev_tun.tx_pkts),

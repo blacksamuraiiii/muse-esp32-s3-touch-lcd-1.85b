@@ -251,3 +251,27 @@ float muse_state_happiness(void)
     /* Ease out over the last 0.4 s. */
     return left > 0.4f ? 1.0f : left / 0.4f;
 }
+
+/* Bumped from two tasks and read from a third: single words, no lock. */
+static volatile uint32_t s_ui_frames;
+static volatile uint32_t s_bands_sent;
+
+void muse_state_note_ui_frame(void)
+{
+    s_ui_frames++;
+}
+
+void muse_state_note_band_sent(void)
+{
+    s_bands_sent++;
+}
+
+void muse_state_screen_stats(uint32_t *frames, uint32_t *bands)
+{
+    if (frames) {
+        *frames = s_ui_frames;
+    }
+    if (bands) {
+        *bands = s_bands_sent;
+    }
+}

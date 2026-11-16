@@ -37,9 +37,15 @@ for hi in range(0xB0, 0xF8):
         except UnicodeDecodeError:
             pass
 print(",".join(hex(c) for c in sorted(cps)))')
+# Rare UI characters the copy needs that GB2312 does not carry. Add here,
+# never by hand-editing the generated .c: the file is rewritten wholesale
+# on every run. 筊 (0x7B4A) is the 掷筊 board's name -- 筊 is GBK-only, so
+# the GB2312 sweep above misses it and the page rendered a blank
+# (2026-11-16).
+EXTRA="0x7B4A"
 npx -y lv_font_conv@1.5.3 --font "$TMP/noto.otf" --size 16 --bpp 4 \
     --format lvgl --lv-font-name muse_font_cjk_noto_16 --no-compress \
-    -r 0x20-0x7E -r 0xA0-0xFF -r 0x3000-0x30FF -r 0xFF00-0xFFEF -r "$HANZI" -o "$TMP/font.c"
+    -r 0x20-0x7E -r 0xA0-0xFF -r 0x3000-0x30FF -r 0xFF00-0xFFEF -r "$HANZI" -r "$EXTRA" -o "$TMP/font.c"
 sed -e 's|#include "lvgl/lvgl.h"|#include "lvgl.h"|' -e "s|$TMP/||g" "$TMP/font.c" > "$OUT"
 # Pin the line box to 20/5 (see fonts/README.md): Noto's own metrics are
 # 31/9, but every layout number on this screen was tuned to the 20/5 line

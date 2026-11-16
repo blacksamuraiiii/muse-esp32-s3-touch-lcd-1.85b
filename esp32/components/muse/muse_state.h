@@ -101,3 +101,17 @@ void muse_state_nudge(void);
 /* Touch/pet reaction. */
 void muse_state_make_happy(void);
 float muse_state_happiness(void);
+
+/*
+ * Frozen-screen counters (2026-11-16, 1.5.3c). A page that stops updating
+ * while everything else keeps running is either the UI thread blocked or
+ * the band sender stuck, and on screen the two look the same. The UI bumps
+ * `frames` once per frame_tick (the timer that runs every frame on the UI
+ * thread) and the band sender bumps `bands` once per band it has finished
+ * writing, so the heartbeat's `ui=frames/bands` pair tells the two apart:
+ * a frozen `frames` means the UI thread is blocked, a frozen `bands` with
+ * `frames` still climbing means the send path is.
+ */
+void muse_state_note_ui_frame(void);
+void muse_state_note_band_sent(void);
+void muse_state_screen_stats(uint32_t *frames, uint32_t *bands);

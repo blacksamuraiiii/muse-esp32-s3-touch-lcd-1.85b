@@ -30,6 +30,7 @@
 #include "freertos/task.h"
 
 #include "muse_mem.h"
+#include "muse_state.h"   /* the ui=frames/bands counters */
 
 typedef struct {
     const uint8_t *data;   /* NULL: run s_call instead */
@@ -142,7 +143,13 @@ static esp_err_t queue_band(lv_display_t *disp, esp_lcd_panel_handle_t panel, in
     xSemaphoreTake(s_band_done, 0);   /* left by a band that had gone before LVGL waited for it */
     s_band_busy = true;
     if (xQueueSend(s_bands, &b, 0) != pdTRUE) {
+        /* Dropped, and LVGL must be told so: it waits for flush_ready, and
+         * wait_band() returns at once here (s_band_busy is already false),
+         * so without this release the display would stop for good with
+         * nothing in the log (2026-11-16). */
         s_band_busy = false;
+        ESP_LOGE(TAG, "band dropped: queue full, releasing the flush");
+        lv_display_flush_ready(s_disp);
         return ESP_FAIL;
     }
     return ESP_OK;
@@ -346,6 +353,10 @@ static void send_bands(void *arg)
             }
             k ^= 1;
         }
+        /* One band is on the panel (2026-11-16): the heartbeat's ui=frames/
+         * bands pair uses this to tell a blocked UI thread from a stuck
+         * send path. */
+        muse_state_note_band_sent();
     }
 }
 
@@ -407,18 +418,38 @@ fail:
     return NULL;
 }
 
+/*
+ * Runs fn on the send task, bounded. Every wait here used to be
+ * portMAX_DELAY, so a send task stuck in a lost SPI completion (see
+ * wire_idle) took the caller with it -- and the caller is the UI task on
+ * the screen-sleep path, which is a frozen page with nothing in the log
+ * (2026-11-16, the 1.5.3b freeze). Give up after 2 s, name it, and let the
+ * caller carry on: a panel command that did not go out is a missed sleep,
+ * not a dead device.
+ */
+#define BANDS_CALL_WAIT_MS 2000
+
 void muse_lcd_bands_run(void (*fn)(void *arg), void *arg)
 {
     if (!s_bands) {
         fn(arg);
         return;
     }
-    xSemaphoreTake(s_call_lock, portMAX_DELAY);
+    if (xSemaphoreTake(s_call_lock, pdMS_TO_TICKS(BANDS_CALL_WAIT_MS)) != pdTRUE) {
+        ESP_LOGW(TAG, "band call: lock held for %d ms, skipped", BANDS_CALL_WAIT_MS);
+        return;
+    }
     s_call = fn;
     s_call_arg = arg;
     const band_t call = { 0 };
-    xQueueSend(s_bands, &call, portMAX_DELAY);
-    xSemaphoreTake(s_call_done, portMAX_DELAY);
+    if (xQueueSend(s_bands, &call, pdMS_TO_TICKS(BANDS_CALL_WAIT_MS)) != pdTRUE) {
+        ESP_LOGW(TAG, "band call: queue full, skipped");
+        xSemaphoreGive(s_call_lock);
+        return;
+    }
+    if (xSemaphoreTake(s_call_done, pdMS_TO_TICKS(BANDS_CALL_WAIT_MS)) != pdTRUE) {
+        ESP_LOGW(TAG, "band call: no answer in %d ms, giving up", BANDS_CALL_WAIT_MS);
+    }
     xSemaphoreGive(s_call_lock);
 }
 

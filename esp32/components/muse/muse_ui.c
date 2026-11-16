@@ -61,8 +61,11 @@
 static const char *TAG = "muse_ui";
 
 /* A frame gap above this is not scheduling jitter: the LVGL thread was
- * blocked. frame_ms is 40 on the S3 boards, so 150 ms is ~4 frames. */
+ * blocked. frame_ms is 40 on the S3 boards, so 150 ms is ~4 frames. Gaps
+ * before MUSE_UI_STALL_AFTER_MS are boot work (Wi-Fi, TLS, page builds)
+ * and stay out of the log, so a "frozen" report has one clear signal. */
 #define MUSE_UI_STALL_MS 150u
+#define MUSE_UI_STALL_AFTER_MS 15000u
 
 #define METER_SEGS 14
 #define METER_SEG_PX 9
@@ -1849,7 +1852,13 @@ static void frame_tick(lv_timer_t *timer)
         uint32_t now_ms = lv_tick_get();
         uint32_t gap = last_ms ? now_ms - last_ms : 0;
         last_ms = now_ms;
-        if (gap > MUSE_UI_STALL_MS) {
+        /* Counted for the heartbeat's ui=frames/bands pair: a frozen screen
+         * with this still climbing is the send path, not this thread
+         * (muse_state.h). */
+        muse_state_note_ui_frame();
+        /* Boot is allowed to be slow (Wi-Fi, TLS, the first page builds):
+         * only gaps after the first 15 s are symptoms worth a line. */
+        if (gap > MUSE_UI_STALL_MS && now_ms > MUSE_UI_STALL_AFTER_MS) {
             ESP_LOGW(TAG, "frame gap %u ms (int %u/%u B, psram %u B)",
                      (unsigned)gap,
                      (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
