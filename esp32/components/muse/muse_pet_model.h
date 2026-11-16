@@ -35,6 +35,15 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+/* The Test build compiles this header with the same sdkconfig the rest of
+ * the firmware sees; the host harnesses have no sdkconfig at all, so the
+ * include has to be optional (see MUSE_PET_JIAOBEI_DAILY_MAX). */
+#if defined(__has_include)
+#if __has_include("sdkconfig.h")
+#include "sdkconfig.h"
+#endif
+#endif
+
 /* Struct layout version. Bump this whenever the layout below changes. */
 #define MUSE_PET_VERSION 6u
 
@@ -55,8 +64,18 @@
                                         * used to pay 20, now it costs 5) */
 #define MUSE_PET_JIAOBEI_COST 5u     /* one 掷圣杯 toss (PET_JIAOBEI_TOSS,
                                         * user decision 2026-11-14) */
-#define MUSE_PET_JIAOBEI_DAILY_MAX 9u /* tosses per day (user decision
-                                        * 2026-11-14); the 10th is PET_CAP */
+/* Tosses per day. The Test build has no cap: the user is exercising the
+ * board and hit the 9th toss within minutes (2026-11-16, "把今天的 10 次
+ * 限制给取消，我要做测试"). Release keeps 9. The host harnesses build
+ * without sdkconfig, so they always see the Release number and keep
+ * testing the cap itself. */
+#if defined(CONFIG_MUSE_BUILD_TEST) && CONFIG_MUSE_BUILD_TEST
+#define MUSE_PET_JIAOBEI_DAILY_MAX 999999u /* effectively unlimited */
+#else
+#define MUSE_PET_JIAOBEI_DAILY_MAX 9u      /* tosses per day (user decision
+                                            * 2026-11-14); the 10th is
+                                            * PET_CAP */
+#endif
 #define MUSE_PET_DECAY_PER_DAY 20u     /* living cost, per calendar day */
 #define MUSE_PET_FORTUNES 20u          /* fortune cards in muse_pet_text.c */
 

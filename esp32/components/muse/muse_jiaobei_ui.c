@@ -5,7 +5,7 @@
  * Layout (360x360, all y from the mockup):
  *   title "掷圣杯" y=44 (shared muse_page_title, ACCENT) + "<" back
  *   two cups 100x100, centres (130,160) / (230,160), black background
- *   凸/平 face labels y=216 (DIM, result state only)
+ *   阴/阳 face labels y=216 (DIM, result state only)
  *   message row y=282: ready "掷筊，每次 -5 金币" (DIM); holy
  *     "连续圣杯 ×N，神明应允" (GOLD); laughing "笑杯，神明笑了" (GOLD);
  *     yin "阴杯，时机未到" (GOLD)
@@ -269,7 +269,7 @@ static void refresh_display(void)
             s_shown_face[i] = want;
         }
         if (scale != s_shown_scale[i]) {
-            lv_obj_set_style_transform_scale_x(s_cup_img[i], (int32_t)scale, 0);
+            lv_image_set_scale_x(s_cup_img[i], scale);
             s_shown_scale[i] = scale;
         }
     }
@@ -280,8 +280,8 @@ static void refresh_display(void)
             lv_obj_clear_flag(s_face_label[i], LV_OBJ_FLAG_HIDDEN);
             set_text(s_face_label[i],
                      (i == 0 ? s_game.left : s_game.right) == MUSE_JIAOBEI_ROUND
-                         ? "凸"
-                         : "平");
+                         ? "阴"
+                         : "阳");
         } else {
             lv_obj_add_flag(s_face_label[i], LV_OBJ_FLAG_HIDDEN);
         }
@@ -481,7 +481,10 @@ void muse_jiaobei_ui_build(lv_obj_t *page, lv_event_cb_t back_cb)
     lv_obj_add_event_cb(touch, on_tap, LV_EVENT_CLICKED, NULL);
 
     muse_back_button(page, back_cb);
-    muse_page_title(page, "掷圣杯", 44);
+    /* The page is called 掷筊, the same name the 今日运势 card uses (user
+     * 2026-11-16: the card said 掷筊 and the board said 掷圣杯, so the two
+     * names read as two features). */
+    muse_page_title(page, "掷筊", 44);
 
     /* The two cups: one PSRAM tile per face (flat / round), 20 KB each,
      * allocated up front and painted on first use (see the tile note at
@@ -515,8 +518,14 @@ void muse_jiaobei_ui_build(lv_obj_t *page, lv_event_cb_t back_cb)
         lv_obj_set_pos(s_cup_img[i], MUSE_JIAOBEI_CUP_X0 + 100 * i,
                        MUSE_JIAOBEI_CUP_Y);
         lv_obj_set_size(s_cup_img[i], MUSE_JIAOBEI_CUP_PX, MUSE_JIAOBEI_CUP_PX);
-        lv_obj_set_style_transform_pivot_x(s_cup_img[i], LV_PCT(50), 0);
-        lv_obj_set_style_transform_pivot_y(s_cup_img[i], LV_PCT(50), 0);
+        /* The flip squeezes the cup with lv_image_set_scale_x(), not the
+         * style transform: a transform makes LVGL render the object through
+         * a layer, and on this panel that layer came back stretched and
+         * clipped -- the crescents lost their top and bottom tips and read
+         * as two flat-cut moons (2026-11-16, user: "上下的半圆显示不完整").
+         * The image's own scale draws straight into the object's box. */
+        lv_image_set_pivot(s_cup_img[i], MUSE_JIAOBEI_CUP_PX / 2,
+                           MUSE_JIAOBEI_CUP_PX / 2);
         lv_obj_remove_flag(s_cup_img[i], LV_OBJ_FLAG_CLICKABLE);
         if (!any) {
             lv_obj_add_flag(s_cup_img[i], LV_OBJ_FLAG_HIDDEN);
@@ -526,9 +535,11 @@ void muse_jiaobei_ui_build(lv_obj_t *page, lv_event_cb_t back_cb)
         s_shown_scale[i] = 0;
     }
 
-    /* 凸/平 face labels under each cup (result state only). */
+    /* 阴/阳 face labels under each cup (result state only): the flat
+     * side is 阳 and the round side is 阴 (user 2026-11-16 -- 平/凸 was the
+     * shape, 阴/阳 is what the toss means). */
     for (int i = 0; i < 2; i++) {
-        s_face_label[i] = mk_label(page, MUSE_THEME_DIM, "平");
+        s_face_label[i] = mk_label(page, MUSE_THEME_DIM, "阳");
         lv_obj_align(s_face_label[i], LV_ALIGN_TOP_MID, i == 0 ? -50 : 50, 216);
         lv_obj_add_flag(s_face_label[i], LV_OBJ_FLAG_HIDDEN);
     }

@@ -83,8 +83,8 @@ typedef enum {
 } muse_jiaobei_result_t;
 
 typedef enum {
-    MUSE_JIAOBEI_FLAT = 0,  /* 平面朝上 */
-    MUSE_JIAOBEI_ROUND,     /* 凸面朝上 */
+    MUSE_JIAOBEI_FLAT = 0,  /* 平面朝上; the board labels it 阳 */
+    MUSE_JIAOBEI_ROUND,     /* 凸面朝上; the board labels it 阴 */
 } muse_jiaobei_face_t;
 
 typedef struct {
