@@ -93,18 +93,29 @@ typedef enum {
 /* Longest table sound (WIN, 330 ms) in samples: the playback buffer size. */
 #define MUSE_SFX_MAX_SAMPLES (MUSE_AUDIO_RATE * 330 / 1000)
 
-/* Play one sound effect, blocking (the chirp idiom: sounds fired from
- * LVGL are short -- TOSS 130 ms, EAT 140 ms, FORTUNE 180 ms -- and the
- * 330 ms WIN only fires at OVER when nothing needs responding). The
- * write path is serialised on the audio write lock, so a
- * sound from the input task, the voice task and the LVGL thread cannot
- * interleave slices of each other's audio. Returns ESP_OK when the sound
- * was written out (muted counts: the speaker-off setting silences it on
- * purpose), ESP_FAIL when the codecs are closed -- the caller that must
- * know the beep really sounded (the low-battery gate) checks this --
+/* Play one sound effect without blocking the caller (2026-11-16,
+ * 1.5.3c): the sound is posted to one worker task and written there, so
+ * a call from the LVGL thread never waits for the audio write lock or
+ * for the sound's own 130-330 ms of audio -- a page that fires sounds on
+ * every tap cannot be frozen by the audio path. One slot deep: a sound
+ * asked for while another is still queued replaces it (a fast tap wants
+ * the latest sound, not a backlog). Returns ESP_OK when queued,
+ * ESP_ERR_INVALID_STATE before the audio subsystem is up.
+ *
+ * The write path stays serialised on the audio write lock, so a sound
+ * from the input task, the voice task and this worker cannot interleave
+ * slices of each other's audio. */
+esp_err_t muse_audio_sfx(muse_sfx_t sfx);
+
+/* The same sound, written by the caller: blocks for the sound's length.
+ * Use it only where the *result* drives logic -- the low-battery gate
+ * disarms only when the beep really went out -- or on a task that has
+ * nothing else to do (the voice task's send-failure sound). Returns
+ * ESP_OK when the sound was written out (muted counts: the speaker-off
+ * setting silences it on purpose), ESP_FAIL when the codecs are closed,
  * ESP_ERR_NO_MEM when the render buffer could not be allocated, or
  * ESP_ERR_INVALID_ARG for a sound with no rendering. */
-esp_err_t muse_audio_sfx(muse_sfx_t sfx);
+esp_err_t muse_audio_sfx_sync(muse_sfx_t sfx);
 
 /* Pure synthesis: render `sfx` into `out` (capacity `cap` samples) and
  * return the samples written. No hardware, no state: the host test calls

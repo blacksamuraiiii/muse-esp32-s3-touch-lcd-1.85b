@@ -973,7 +973,9 @@ static void input_task(void *arg)
                  * write fails and the trigger stays armed for the next
                  * poll / after waking, instead of being swallowed unheard. */
                 if (muse_battery_low_beep_due(&p)) {
-                    if (muse_audio_sfx(MUSE_SFX_LOW_BATT) == ESP_OK) {
+                    /* The sync path on purpose: the gate may only disarm
+                     * once the beep really went out (see its comment). */
+                    if (muse_audio_sfx_sync(MUSE_SFX_LOW_BATT) == ESP_OK) {
                         muse_battery_low_beep_played();
                     }
                 }

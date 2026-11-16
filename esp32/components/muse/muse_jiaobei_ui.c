@@ -54,6 +54,12 @@ static const char *TAG = "muse_jiaobei_ui";
 #define MUSE_JIAOBEI_CUP_X0 80
 #define MUSE_JIAOBEI_CUP_Y 110
 #define MUSE_JIAOBEI_LIMIT_MS 2000u /* prompt auto-dismiss */
+/* Shake polling runs on the LVGL thread, and a wedged I2C bus blocks a
+ * read for up to the driver's 1 s timeout. Three bad (or absurdly slow)
+ * reads in a row and the page stops polling until it is entered again,
+ * rather than freezing every 50 ms tick (2026-11-16 audit). */
+#define MUSE_JIAOBEI_SHAKE_FAIL_MAX 3
+#define MUSE_JIAOBEI_SHAKE_SLOW_MS 100u
 
 /* Limit prompt box (mockup v21, measured from the PNG): 280x84 centred
  * on the screen (x 40..319, y 138..221, centre (180,180)). The dim is
@@ -65,12 +71,24 @@ static const char *TAG = "muse_jiaobei_ui";
 #define MUSE_JIAOBEI_PROMPT_Y 138
 #define MUSE_JIAOBEI_PROMPT_DIM_OPA 90
 
+/*
+ * Cup tiles are painted once per face and cached: [cup][face], where
+ * face is the muse_jiaobei_face_t value (FLAT 0 / ROUND 1). Painting
+ * is 2x2-supersampled float work over 100x100 px (~160 k samples), so
+ * doing it inside a flip stalls the LVGL thread -- the tile is painted
+ * the first time that face is needed and only its descriptor is
+ * swapped afterwards (2026-11-16, 1.5.3c audit). Four tiles at 20 KB
+ * each live in PSRAM.
+ */
 static muse_jiaobei_t s_game;
 static muse_jiaobei_shake_t s_shake;
 static lv_obj_t *s_cup_img[2];
-static lv_image_dsc_t s_cup_dsc[2];
-static uint16_t *s_cup_buf[2];
+static lv_image_dsc_t s_cup_dsc[2][2];
+static uint16_t *s_cup_buf[2][2];
+static bool s_cup_painted[2][2];
 static muse_jiaobei_face_t s_shown_face[2];
+static uint32_t s_shown_scale[2];
+static uint32_t s_shake_fail;   /* consecutive bad/absent IMU reads */
 static lv_obj_t *s_face_label[2];
 static lv_obj_t *s_msg;
 static lv_obj_t *s_coins;
@@ -224,21 +242,36 @@ static void hide_limit(void)
 
 static void refresh_display(void)
 {
-    /* Cups: repaint when the shown faces changed, squeeze for the flip. */
+    /* Cups: the tile for the face being shown is painted the first time
+     * it is needed and cached afterwards, so a flip only swaps the
+     * descriptor -- the 2x2-supersampled paint (~160 k float samples
+     * per tile) never runs inside a flip on the LVGL thread. The
+     * squeeze scale is written only when it actually changes: setting
+     * transform_scale_x every tick forces LVGL to redraw the whole
+     * transformed tile, which on a 50 ms timer is the stutter the
+     * word-card page was fixed for in 1.5.2d (same lesson, 1.5.3c). */
+    uint32_t scale = muse_jiaobei_flip_scale(&s_game);
+    if (scale == 0) {
+        scale = 1; /* a 0-wide transform is degenerate in LVGL */
+    }
     for (int i = 0; i < 2; i++) {
         muse_jiaobei_face_t want = i == 0 ? s_game.left : s_game.right;
+        int f = (int)want;
+        if (s_cup_buf[i][f] == NULL) {
+            continue; /* allocation failed at build: message rows only */
+        }
+        if (!s_cup_painted[i][f]) {
+            paint_cup(s_cup_buf[i][f], i, want);
+            s_cup_painted[i][f] = true;
+        }
         if (want != s_shown_face[i]) {
-            paint_cup(s_cup_buf[i], i, want);
+            lv_image_set_src(s_cup_img[i], &s_cup_dsc[i][f]);
             s_shown_face[i] = want;
-            lv_obj_invalidate(s_cup_img[i]);
         }
-        /* Clamp the midpoint to 1: a 0-wide transform is degenerate in
-         * LVGL, and a 1/256 sliver is invisible for one timer tick. */
-        uint32_t scale = muse_jiaobei_flip_scale(&s_game);
-        if (scale == 0) {
-            scale = 1;
+        if (scale != s_shown_scale[i]) {
+            lv_obj_set_style_transform_scale_x(s_cup_img[i], (int32_t)scale, 0);
+            s_shown_scale[i] = scale;
         }
-        lv_obj_set_style_transform_scale_x(s_cup_img[i], (int32_t)scale, 0);
     }
     /* Face labels: result state only. */
     bool show_faces = s_game.phase == MUSE_JIAOBEI_RESULT;
@@ -282,12 +315,17 @@ static void refresh_display(void)
     muse_pet_model_t snap;
     if (muse_pet_snapshot(&snap)) {
         char buf[32];
-        snprintf(buf, sizeof(buf), "金币 %u/100", (unsigned)snap.coins);
+        snprintf(buf, sizeof(buf), "金币 %u/%u", (unsigned)snap.coins,
+                 (unsigned)MUSE_PET_COINS_MAX);
         set_text(s_coins, buf);
     } else {
         set_text(s_coins, "金币 --/100");
     }
 }
+
+/* Defined below on_timer; the tick calls it, the definition cannot sit
+ * above without the whole toss path. */
+static void update_shake(uint32_t elapsed_ms);
 
 static void on_timer(lv_timer_t *t)
 {
@@ -383,16 +421,32 @@ static void on_tap(lv_event_t *e)
  * sustained shake starts one toss through the same path as a tap.
  * Skipped while the limit prompt is up (the prompt is modal: a shake
  * must not re-show it) and when the chip is absent (tap still works).
- * A failed read is ignored for this tick. */
+ * A failed read costs one tick; MUSE_JIAOBEI_SHAKE_FAIL_MAX bad reads
+ * in a row turn polling off for the visit (the read runs on the LVGL
+ * thread and a wedged I2C bus would otherwise block it every tick). */
 static void update_shake(uint32_t elapsed_ms)
 {
-    if (s_limit_since != 0 || !muse_imu_available()) {
+    if (s_limit_since != 0 || s_shake_fail >= MUSE_JIAOBEI_SHAKE_FAIL_MAX ||
+        !muse_imu_available()) {
         return;
     }
     float ax, ay, az;
-    if (muse_imu_read_accel(&ax, &ay, &az) != ESP_OK) {
+    uint32_t t0 = lv_tick_get();
+    esp_err_t err = muse_imu_read_accel(&ax, &ay, &az);
+    uint32_t took = lv_tick_get() - t0;
+    if (err != ESP_OK || took > MUSE_JIAOBEI_SHAKE_SLOW_MS) {
+        /* This read blocks the LVGL thread for as long as the I2C
+         * transfer takes (1 s on a wedged bus), so a bus that has gone
+         * bad would freeze the page once per 50 ms tick. Three in a row
+         * and shake-to-toss is off for this visit; tapping still
+         * works. */
+        if (++s_shake_fail == MUSE_JIAOBEI_SHAKE_FAIL_MAX) {
+            ESP_LOGW(TAG, "shake off: IMU read failed or took %u ms",
+                     (unsigned)took);
+        }
         return;
     }
+    s_shake_fail = 0;
     if (muse_jiaobei_shake_feed(&s_shake, ax, ay, az, elapsed_ms)) {
         /* Shaking never touches the screen: poke the idle timer, or
          * the screen would sleep on a shake-only player (same idiom
@@ -426,27 +480,34 @@ void muse_jiaobei_ui_build(lv_obj_t *page, lv_event_cb_t back_cb)
     muse_back_button(page, back_cb);
     muse_page_title(page, "掷圣杯", 44);
 
-    /* The two cups, painted at runtime into PSRAM buffers (20 KB
-     * each). A failed allocation hides that cup; the page still works
-     * (message + coin rows), it just shows no cups. */
+    /* The two cups: one PSRAM tile per face (flat / round), 20 KB each,
+     * allocated up front and painted on first use (see the tile note at
+     * the top). A failed allocation hides that cup; the page still
+     * works (message + coin rows), it just shows no cups. */
     for (int i = 0; i < 2; i++) {
-        s_cup_buf[i] = (uint16_t *)heap_caps_malloc(
-            (size_t)MUSE_JIAOBEI_CUP_PX * MUSE_JIAOBEI_CUP_PX * sizeof(uint16_t),
-            MALLOC_CAP_SPIRAM);
-        if (s_cup_buf[i] == NULL) {
-            ESP_LOGE(TAG, "cup %d PSRAM alloc failed", i);
+        bool any = false;
+        for (int f = 0; f < 2; f++) {
+            s_cup_buf[i][f] = (uint16_t *)heap_caps_malloc(
+                (size_t)MUSE_JIAOBEI_CUP_PX * MUSE_JIAOBEI_CUP_PX * sizeof(uint16_t),
+                MALLOC_CAP_SPIRAM);
+            if (s_cup_buf[i][f] == NULL) {
+                ESP_LOGE(TAG, "cup %d face %d PSRAM alloc failed", i, f);
+            } else {
+                any = true;
+            }
+            s_cup_painted[i][f] = false;
+            s_cup_dsc[i][f].header.magic = LV_IMAGE_HEADER_MAGIC;
+            s_cup_dsc[i][f].header.cf = LV_COLOR_FORMAT_RGB565;
+            s_cup_dsc[i][f].header.flags = 0;
+            s_cup_dsc[i][f].header.w = MUSE_JIAOBEI_CUP_PX;
+            s_cup_dsc[i][f].header.h = MUSE_JIAOBEI_CUP_PX;
+            s_cup_dsc[i][f].header.stride = MUSE_JIAOBEI_CUP_PX * 2;
+            s_cup_dsc[i][f].header.reserved_2 = 0;
+            s_cup_dsc[i][f].data_size =
+                (size_t)MUSE_JIAOBEI_CUP_PX * MUSE_JIAOBEI_CUP_PX * sizeof(uint16_t);
+            s_cup_dsc[i][f].data = (const uint8_t *)s_cup_buf[i][f];
+            s_cup_dsc[i][f].reserved = NULL;
         }
-        s_cup_dsc[i].header.magic = LV_IMAGE_HEADER_MAGIC;
-        s_cup_dsc[i].header.cf = LV_COLOR_FORMAT_RGB565;
-        s_cup_dsc[i].header.flags = 0;
-        s_cup_dsc[i].header.w = MUSE_JIAOBEI_CUP_PX;
-        s_cup_dsc[i].header.h = MUSE_JIAOBEI_CUP_PX;
-        s_cup_dsc[i].header.stride = MUSE_JIAOBEI_CUP_PX * 2;
-        s_cup_dsc[i].header.reserved_2 = 0;
-        s_cup_dsc[i].data_size =
-            (size_t)MUSE_JIAOBEI_CUP_PX * MUSE_JIAOBEI_CUP_PX * sizeof(uint16_t);
-        s_cup_dsc[i].data = s_cup_buf[i];
-        s_cup_dsc[i].reserved = NULL;
         s_cup_img[i] = lv_image_create(page);
         lv_obj_set_pos(s_cup_img[i], MUSE_JIAOBEI_CUP_X0 + 100 * i,
                        MUSE_JIAOBEI_CUP_Y);
@@ -454,13 +515,12 @@ void muse_jiaobei_ui_build(lv_obj_t *page, lv_event_cb_t back_cb)
         lv_obj_set_style_transform_pivot_x(s_cup_img[i], LV_PCT(50), 0);
         lv_obj_set_style_transform_pivot_y(s_cup_img[i], LV_PCT(50), 0);
         lv_obj_remove_flag(s_cup_img[i], LV_OBJ_FLAG_CLICKABLE);
-        if (s_cup_buf[i] != NULL) {
-            lv_image_set_src(s_cup_img[i], &s_cup_dsc[i]);
-        } else {
+        if (!any) {
             lv_obj_add_flag(s_cup_img[i], LV_OBJ_FLAG_HIDDEN);
         }
-        /* Force the first paint on the first refresh. */
+        /* Force the first paint-and-src on the first refresh. */
         s_shown_face[i] = (muse_jiaobei_face_t)-1;
+        s_shown_scale[i] = 0;
     }
 
     /* 凸/平 face labels under each cup (result state only). */
@@ -539,6 +599,7 @@ void muse_jiaobei_ui_show(void)
     s_note[0] = '\0';
     hide_limit();
     muse_jiaobei_shake_init(&s_shake);
+    s_shake_fail = 0; /* a new visit tries the IMU again */
     muse_imu_wake();
     s_last_tick = lv_tick_get();
     refresh_display();
