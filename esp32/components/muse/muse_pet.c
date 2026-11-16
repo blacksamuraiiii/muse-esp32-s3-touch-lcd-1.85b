@@ -529,6 +529,13 @@ bool muse_pet_request_game(int outcome)
     return request_cmd(PET_GAME, arg);
 }
 
+bool muse_pet_debug_set_coins(int32_t coins)
+{
+    /* Test only: the console's >pet.coins=N. The model clamps and refuses
+     * negatives; the command itself is Test-gated in muse_input.c. */
+    return request_cmd(PET_SET_COINS, coins);
+}
+
 bool muse_pet_request_jiaobei_toss(int32_t result)
 {
     /* Only 1..3 record a result; anything else is a bare toss (charged

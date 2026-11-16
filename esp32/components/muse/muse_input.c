@@ -1666,6 +1666,20 @@ static bool console_command(char *line, bool whole)
         }
 #endif /* CONFIG_MUSE_BUILD_TEST: mutating pet.* commands */
 #if CONFIG_MUSE_BUILD_TEST
+        if (!strncmp(line, "pet.coins=", 10)) {
+            /* Set the wallet outright (Test only, 2026-11-16: the user
+             * needed the balance back at 100 after the prices changed to
+             * 2). Prints the snapshot so the result is visible. */
+            int32_t want = atoi(line + 10);
+            muse_pet_feedback_t fb;
+            if (muse_pet_debug_set_coins(want) &&
+                pet_console_wait(PET_SET_COINS, &fb) && fb.result == PET_OK) {
+                pet_console_snapshot();
+            } else {
+                printf("@pet coins error\n");
+            }
+            return true;
+        }
         if (!strcmp(line, "pet.reset")) {
             /* Destructive, Test only (design §3.3). Two paths:
              *  - worker running: PET_RESET through the queue (race-free,

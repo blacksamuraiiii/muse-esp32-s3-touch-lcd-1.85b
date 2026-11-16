@@ -50,7 +50,7 @@
  *     (y = 120), and its result line ("喂了…") at y = 262 -- the slot
  *     the rule line used to own before the two swapped on 2026-11-01
  *     (user request); the food names sit at y = 228 between them.
- *     The 今日运势 subpage: rule line "每天抽一次，每次 -5 金币"
+ *     The 今日运势 subpage: rule line "每天抽一次，每次 -2 金币"
  *     in the same TOP slot as the 喂饭 one (y = 84), then a 300x160
  *     card at y = 114 with its content centred (grade 36, 28x2 gold
  *     rule 66, body 84), coin line at y = 302. (2026-11-14: the draw
@@ -1315,8 +1315,9 @@ static void drain_feedback(void)
                  * shows grade + full body. Do NOT invent card names. */
                 const char *grade = muse_pet_fortune_grade(s_snap.fortune);
                 if (fb.result == PET_FORTUNE_NEW) {
-                    snprintf(buf, sizeof(buf), "今日运势：%s -5 金币",
-                             grade ? grade : "吉");
+                    snprintf(buf, sizeof(buf), "今日运势：%s -%u 金币",
+                             grade ? grade : "吉",
+                             (unsigned)MUSE_PET_FORTUNE_COST);
                     /* Fresh draw only: re-viewing today's card stays silent. */
                     muse_audio_sfx(MUSE_SFX_FORTUNE);
                 } else {
@@ -1943,8 +1944,11 @@ static void build_fortune(void)
      * decision 2026-11-14): the old "每天+20，同日再抽无效" is gone
      * with the +20 reward. Copy is the shortened one, DIM colour
      * unchanged; ~148 px wide, far inside the 316 px chord at y = 94. */
+    char rule_text[40];
+    snprintf(rule_text, sizeof(rule_text), "每天抽一次，每次 -%u 金币",
+             (unsigned)MUSE_PET_FORTUNE_COST);
     lv_obj_t *rule = label(s_fortune_page, muse_font_cjk(), MUSE_THEME_DIM,
-                           "每天抽一次，每次 -5 金币");
+                           rule_text);
     lv_obj_align(rule, LV_ALIGN_TOP_MID, 0, 84);
     /* Coin line: same slot as the main / feed / mini-game pages (y = 302),
      * so all interaction pages end the same way (2026-11-01, "统一页面

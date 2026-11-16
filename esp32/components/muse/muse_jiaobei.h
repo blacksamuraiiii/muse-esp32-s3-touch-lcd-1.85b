@@ -27,8 +27,9 @@
  * model only records a result for a toss the worker settled: the UI
  * sends the already-decided result with the toss request
  * (muse_pet_request_jiaobei_toss), so a refused toss records nothing.
- * The economy lives in the pet model, not here: each toss costs 5 coins
- * (MUSE_PET_JIAOBEI_COST) and the day holds at most 9 tosses
+ * The economy lives in the pet model, not here: each toss costs
+ * MUSE_PET_JIAOBEI_COST (2 since 2026-11-16, 5 before) and the day holds at
+ * most 9 tosses (no cap in a Test build)
  * (MUSE_PET_JIAOBEI_DAILY_MAX), both settled by the worker through
  * PET_JIAOBEI_TOSS. This file never touches coins.
  *

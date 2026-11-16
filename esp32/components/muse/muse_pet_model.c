@@ -267,6 +267,16 @@ muse_pet_result_t muse_pet_model_apply(muse_pet_model_t *s, muse_pet_action_t ac
         muse_pet_model_init(s);
         return PET_OK;
     }
+    if (action == PET_SET_COINS) {
+        /* Test only (console >pet.coins=N). Clamped, never negative, and
+         * no decay: the point is an exact balance to test prices against. */
+        if (arg < 0) {
+            return PET_BUSY;
+        }
+        s->coins = (uint32_t)arg > MUSE_PET_COINS_MAX ? MUSE_PET_COINS_MAX
+                                                     : (uint32_t)arg;
+        return PET_OK;
+    }
     if (action == PET_DECAY_ACK) {
         /* 1.5b: arg is the day the UI announced. Only clear a notice for
          * that day: an ACK that arrives after a midnight rollover created
@@ -408,7 +418,8 @@ muse_pet_result_t muse_pet_model_apply(muse_pet_model_t *s, muse_pet_action_t ac
          * Same UTC day shows the same card; a new UTC day draws a new one.
          * Consequence, accepted for preview: if SNTP later jumps the date,
          * the next draw is legitimately a new card for the jumped-to day.
-         * User decision 2026-11-14: the draw costs 5 (it used to pay 20),
+         * User decision 2026-11-14 (price 5 -> 2 on 2026-11-16): the draw
+         * costs MUSE_PET_FORTUNE_COST (it used to pay 20),
          * once a day, and the card is a pure function of the day
          * (fortune_for_day) -- the same day always draws the same card,
          * on any board, with no random input. Under 5 coins a first draw

@@ -6,7 +6,8 @@
  *   title "掷圣杯" y=44 (shared muse_page_title, ACCENT) + "<" back
  *   two cups 100x100, centres (130,160) / (230,160), black background
  *   阴/阳 face labels y=216 (DIM, result state only)
- *   message row y=282: ready "掷筊，每次 -5 金币" (DIM); holy
+ *   message row y=282: ready "掷筊，每次 -2 金币" (DIM, built from
+ *     MUSE_PET_JIAOBEI_COST); holy
  *     "连续圣杯 ×N，神明应允" (GOLD); laughing "笑杯，神明笑了" (GOLD);
  *     yin "阴杯，时机未到" (GOLD)
  *   coin row y=302 (TEXT, from the snapshot, like every other page)
@@ -97,6 +98,9 @@ static lv_timer_t *s_timer;
 static uint32_t s_last_tick;
 static uint32_t s_limit_since; /* lv_tick_get() when the prompt showed, 0 = hidden */
 static char s_note[64];        /* one-shot note in the message row, "" = none */
+/* The ready row's copy, built once from MUSE_PET_JIAOBEI_COST so a price
+ * change cannot leave the board advertising the old one. */
+static char s_ready_msg[32];
 static uint32_t s_msg_color;   /* colour s_msg currently has */
 static bool s_seeded;
 
@@ -309,7 +313,7 @@ static void refresh_display(void)
             break;
         }
     } else if (s_game.phase == MUSE_JIAOBEI_READY) {
-        set_msg("掷筊，每次 -5 金币", MUSE_THEME_DIM);
+        set_msg(s_ready_msg, MUSE_THEME_DIM);
     }
     /* Coin row, from the snapshot (like every other page). */
     muse_pet_model_t snap;
@@ -394,7 +398,10 @@ static void start_toss(void)
              * -- a tap that does nothing at all reads as a broken page).
              * The note is the same one the worker's refusal writes, so the
              * two paths say the same thing. */
-            set_note("金币不够（需 5 枚）");
+            char note[32];
+            snprintf(note, sizeof(note), "金币不够（需 %u 枚）",
+                     (unsigned)MUSE_PET_JIAOBEI_COST);
+            set_note(note);
             refresh_display();
             return;
         }
@@ -545,7 +552,9 @@ void muse_jiaobei_ui_build(lv_obj_t *page, lv_event_cb_t back_cb)
     }
 
     /* Message row y=282, coin row y=302 (the shared bottom rows). */
-    s_msg = mk_label(page, MUSE_THEME_DIM, "掷筊，每次 -5 金币");
+    snprintf(s_ready_msg, sizeof(s_ready_msg), "掷筊，每次 -%u 金币",
+             (unsigned)MUSE_PET_JIAOBEI_COST);
+    s_msg = mk_label(page, MUSE_THEME_DIM, s_ready_msg);
     lv_obj_set_width(s_msg, 320);
     lv_obj_set_style_text_align(s_msg, LV_TEXT_ALIGN_CENTER, 0);
     lv_label_set_long_mode(s_msg, LV_LABEL_LONG_DOT);
@@ -636,7 +645,10 @@ void muse_jiaobei_ui_fee_refused(void)
     if (s_game.phase == MUSE_JIAOBEI_FLIPPING) {
         muse_jiaobei_cancel(&s_game);
     }
-    set_note("金币不够（需 5 枚）");
+    char note[32];
+    snprintf(note, sizeof(note), "金币不够（需 %u 枚）",
+             (unsigned)MUSE_PET_JIAOBEI_COST);
+    set_note(note);
     refresh_display();
 }
 

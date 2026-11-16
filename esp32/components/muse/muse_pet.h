@@ -71,6 +71,15 @@ bool muse_pet_request_game(int outcome);
 bool muse_pet_request_jiaobei_toss(int32_t result);
 
 /*
+ * Test only (console `>pet.coins=N`): set the wallet outright, no decay,
+ * clamped to 0..MUSE_PET_COINS_MAX. The balance is the one thing about the
+ * model that only ever moves through play, so a tester who needs an exact
+ * balance had no way to get it. Returns false when the worker is not ready
+ * or its queue is full.
+ */
+bool muse_pet_debug_set_coins(int32_t coins);
+
+/*
  * Settle a finished mini-game round (snake / whack-a-mole) at OVER:
  * `coins` is what the UI converted the round's score to with
  * muse_pet_round_coins() (0..5). Sent once per round, never per point.

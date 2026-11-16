@@ -59,11 +59,13 @@
                                         * scissors round: win +10 net,
                                         * draw 0, loss -10 (user decision
                                         * 2026-11-08, retuned from 5) */
-#define MUSE_PET_FORTUNE_COST 5u     /* one draw a day, charged (user
-                                        * decision 2026-11-14: the draw
-                                        * used to pay 20, now it costs 5) */
-#define MUSE_PET_JIAOBEI_COST 5u     /* one 掷圣杯 toss (PET_JIAOBEI_TOSS,
-                                        * user decision 2026-11-14) */
+#define MUSE_PET_FORTUNE_COST 2u     /* one draw a day, charged (user
+                                        * decision 2026-11-16: it was 5,
+                                        * the draw used to pay 20 before
+                                        * 2026-11-14) */
+#define MUSE_PET_JIAOBEI_COST 2u     /* one 掷圣杯 toss (PET_JIAOBEI_TOSS;
+                                        * 5 until the user set it to 2 on
+                                        * 2026-11-16) */
 /* Tosses per day. The Test build has no cap: the user is exercising the
  * board and hit the 9th toss within minutes (2026-11-16, "把今天的 10 次
  * 限制给取消，我要做测试"). Release keeps 9. The host harnesses build
@@ -211,7 +213,7 @@ typedef struct {
  * PET_FORTUNE_SAME and move nothing; under 5 coins a first draw of the
  * day returns PET_POOR and settles nothing.
  * PET_JIAOBEI_TOSS settles one 掷圣杯 toss (user decision 2026-11-14):
- * 5 coins (MUSE_PET_JIAOBEI_COST), at most 9 a day
+ * MUSE_PET_JIAOBEI_COST coins (2 since 2026-11-16), at most 9 a day
  * (MUSE_PET_JIAOBEI_DAILY_MAX). The 10th toss of the day returns
  * PET_CAP and settles nothing; under 5 coins it returns PET_POOR.
  * The outcome itself (holy / laughing / yin) is decided UI-side by
@@ -247,6 +249,10 @@ typedef enum {
     PET_SUDOKU_SOLVE,
     PET_PLAY_REWARD,
     PET_JIAOBEI_TOSS,
+    /* Test only, console `>pet.coins=N`: set the wallet outright. Not
+     * reachable from the UI, and the console command is Test-gated like
+     * the other mutating pet.* ones. Bypasses decay like PET_RESET. */
+    PET_SET_COINS,
 } muse_pet_action_t;
 
 /* Results. UI copy must be keyed off these, never guessed (design §4.3).
