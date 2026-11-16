@@ -134,18 +134,16 @@ void muse_jiaobei_tick(muse_jiaobei_t *g, uint32_t ms)
     }
 }
 
-uint32_t muse_jiaobei_flip_scale(const muse_jiaobei_t *g)
+uint32_t muse_jiaobei_flip_angle(const muse_jiaobei_t *g)
 {
     if (g->phase != MUSE_JIAOBEI_FLIPPING) {
-        return 256;
+        return 0;
     }
-    /* Triangle 256 -> 0 -> 256 across the flip, so the cups squeeze to
-     * a line exactly as the faces swap at the midpoint. */
-    uint32_t half = MUSE_JIAOBEI_FLIP_MS / 2u;
-    if (g->flip_ms < half) {
-        return 256 - (256 * g->flip_ms) / half;
-    }
-    return (256 * (g->flip_ms - half)) / half;
+    /* Linear through the whole spin: the cups turn at a constant rate and
+     * stop on a whole number of turns, so landing is a stop, not a jump. */
+    const uint32_t span = 360u * MUSE_JIAOBEI_FLIP_TURNS;
+    uint32_t a = (span * g->flip_ms) / MUSE_JIAOBEI_FLIP_MS;
+    return a > span ? span : a;
 }
 
 void muse_jiaobei_cancel(muse_jiaobei_t *g)

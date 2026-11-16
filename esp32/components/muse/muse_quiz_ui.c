@@ -32,7 +32,7 @@
  * Payout (same shape as the math game): at OVER the HUD turns gold
  * and reads "本局 n 分，+m 金币" with m the GROSS payout the wallet
  * actually accepted (s_round_coins, from muse_pet_round_coins_cap()
- * with the shared 20-coin ceiling -- 1 point per coin; the score is
+ * capped at MUSE_QUIZ_COIN_CAP -- 1 point per coin; the score is
  * settled once, at OVER). The score only ever goes up (a wrong pick
  * is +0, never -1), so the HUD never shows a negative.
  *
@@ -269,7 +269,7 @@ static void settle_round(void)
     }
     s_settled = true;
     uint32_t coins = muse_pet_round_coins_cap(s_game.score,
-                                              MUSE_PET_ROUND_COIN_MAX);
+                                              MUSE_QUIZ_COIN_CAP);
     s_round_coins = 0;
     if (coins != 0 && muse_pet_request_play_reward(coins)) {
         s_round_coins = coins;

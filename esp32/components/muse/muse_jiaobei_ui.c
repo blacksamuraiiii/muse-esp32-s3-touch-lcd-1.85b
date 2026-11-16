@@ -88,7 +88,7 @@ static lv_image_dsc_t s_cup_dsc[2][2];
 static uint16_t *s_cup_buf[2][2];
 static bool s_cup_painted[2][2];
 static muse_jiaobei_face_t s_shown_face[2];
-static uint32_t s_shown_scale[2];
+static uint32_t s_shown_angle[2];   /* tenths of a degree, as LVGL takes it */
 static uint32_t s_shake_fail;   /* consecutive bad/absent IMU reads */
 static lv_obj_t *s_face_label[2];
 static lv_obj_t *s_msg;
@@ -124,20 +124,38 @@ static void seed_once(void)
     }
 }
 
-/* One cup tile, 100x100 RGB565, painted from the mockup geometry
- * (jiaobei-mockup-v18.py cup_tile, S=1). 2x2 supersampling for smooth
- * edges. Outside the crescent is black (0x0000), which reads as
- * transparent on the black page. The outline ring is solid and
- * unshaded; the gradient, the round-face band and the flat-face line
- * apply to the base (fill) region only, in mockup order. */
+/* The mockup geometry (jiaobei-mockup-v18.py cup_tile) drawn at S=1
+ * filled the tile edge to edge: the outer circle's centre sat at y=50 with
+ * r=50, so its top and bottom touched y=0 and y=100 and the 3 px outline
+ * ring there was a wide, flat band -- on the board the moons looked cut
+ * off square at both ends (user 2026-11-16, twice: "上下的半圆显示不完整",
+ * then after the transform change "还是被切平的边缘"). Drawing at 0.9
+ * about the tile centre leaves ~2.5 px of black above and below the ring,
+ * so the tips stay round. Every radius and offset below is the mockup
+ * number times MUSE_JIAOBEI_CUP_S. */
+#define MUSE_JIAOBEI_CUP_S 0.9f
+#define CUP_SQ(v) ((v) * (v))
+
+/* One cup tile, 100x100 RGB565. 2x2 supersampling for smooth edges.
+ * Outside the crescent is black (0x0000), which reads as transparent on
+ * the black page. The outline ring is solid and unshaded; the gradient,
+ * the round-face band and the flat-face line apply to the base (fill)
+ * region only, in mockup order. */
 static void paint_cup(uint16_t *buf, int side, muse_jiaobei_face_t face)
 {
     if (buf == NULL) {
         return;
     }
-    /* side 0 = left "(", side 1 = right ")". */
-    int ox = side == 0 ? 64 : 36;
-    int bx = side == 0 ? 88 : 12;
+    /* side 0 = left "(", side 1 = right ")". Centres scale about the tile
+     * centre (50, 50); dy stays measured from that centre. */
+    const float ox = 50.0f + (side == 0 ? 14.0f : -14.0f) * MUSE_JIAOBEI_CUP_S;
+    const float bx = 50.0f + (side == 0 ? 38.0f : -38.0f) * MUSE_JIAOBEI_CUP_S;
+    const float out2 = CUP_SQ(50.0f * MUSE_JIAOBEI_CUP_S);      /* fill */
+    const float in2 = CUP_SQ(44.0f * MUSE_JIAOBEI_CUP_S);
+    const float out_ring2 = CUP_SQ(53.0f * MUSE_JIAOBEI_CUP_S); /* + 3 px */
+    const float in_ring2 = CUP_SQ(47.0f * MUSE_JIAOBEI_CUP_S);
+    const float band2 = CUP_SQ(38.0f * MUSE_JIAOBEI_CUP_S);     /* round band */
+    const float line_off = 17.0f * MUSE_JIAOBEI_CUP_S;          /* flat line */
     int fr, fg, fb, or_, og, ob;
     if (face == MUSE_JIAOBEI_ROUND) {
         fr = 214; fg = 74; fb = 54;   /* 朱红 */
@@ -153,13 +171,13 @@ static void paint_cup(uint16_t *buf, int side, muse_jiaobei_face_t face)
                 for (int sx = 0; sx < 2; sx++) {
                     float px = (float)x + (sx == 0 ? 0.25f : 0.75f);
                     float py = (float)y + (sy == 0 ? 0.25f : 0.75f);
-                    float dxo = px - (float)ox;
-                    float dxi = px - (float)bx;
+                    float dxo = px - ox;
+                    float dxi = px - bx;
                     float dy = py - 50.0f;
                     float d_out2 = dxo * dxo + dy * dy;
                     float d_in2 = dxi * dxi + dy * dy;
-                    bool inside = d_out2 <= 2500.0f && d_in2 > 1936.0f;
-                    bool grown = d_out2 <= 2809.0f && d_in2 > 2209.0f;
+                    bool inside = d_out2 <= out2 && d_in2 > in2;
+                    bool grown = d_out2 <= out_ring2 && d_in2 > in_ring2;
                     int r = 0, g = 0, b = 0;
                     if (grown && !inside) {
                         /* The 3 px outline ring: solid, unshaded. */
@@ -184,7 +202,7 @@ static void paint_cup(uint16_t *buf, int side, muse_jiaobei_face_t face)
                         }
                         if (face == MUSE_JIAOBEI_ROUND) {
                             /* Band along the outer arc (outside R=38). */
-                            if (d_out2 > 1444.0f) {
+                            if (d_out2 > band2) {
                                 int a = 100;
                                 r += ((255 - r) * a) / 255;
                                 g += ((150 - g) * a) / 255;
@@ -194,9 +212,10 @@ static void paint_cup(uint16_t *buf, int side, muse_jiaobei_face_t face)
                             /* Thin dark line along the concave edge:
                              * inside the base but outside the d=17
                              * crescent (inner circle at ox +/- 17). */
-                            float dx17 = px - (float)(side == 0 ? ox + 17 : ox - 17);
+                            float dx17 = px - (side == 0 ? ox + line_off
+                                                         : ox - line_off);
                             float d17 = dx17 * dx17 + dy * dy;
-                            if (d17 <= 1936.0f) {
+                            if (d17 <= in2) {
                                 int a = 110;
                                 r += ((int)or_ - r) * a / 255;
                                 g += ((int)og - g) * a / 255;
@@ -249,15 +268,13 @@ static void refresh_display(void)
     /* Cups: the tile for the face being shown is painted the first time
      * it is needed and cached afterwards, so a flip only swaps the
      * descriptor -- the 2x2-supersampled paint (~160 k float samples
-     * per tile) never runs inside a flip on the LVGL thread. The
-     * squeeze scale is written only when it actually changes: setting
-     * transform_scale_x every tick forces LVGL to redraw the whole
-     * transformed tile, which on a 50 ms timer is the stutter the
-     * word-card page was fixed for in 1.5.2d (same lesson, 1.5.3c). */
-    uint32_t scale = muse_jiaobei_flip_scale(&s_game);
-    if (scale == 0) {
-        scale = 1; /* a 0-wide transform is degenerate in LVGL */
-    }
+     * per tile) never runs inside a flip on the LVGL thread. The spin
+     * angle is written only when it actually changes: rewriting a
+     * transform every tick forces LVGL to redraw the whole tile, which
+     * on a 50 ms timer is the stutter the word-card page was fixed for
+     * in 1.5.2d. lv_image_set_rotation() takes tenths of a degree, so
+     * the model's degrees are multiplied by 10 here. */
+    uint32_t angle = muse_jiaobei_flip_angle(&s_game) * 10u;
     for (int i = 0; i < 2; i++) {
         muse_jiaobei_face_t want = i == 0 ? s_game.left : s_game.right;
         int f = (int)want;
@@ -272,9 +289,9 @@ static void refresh_display(void)
             lv_image_set_src(s_cup_img[i], &s_cup_dsc[i][f]);
             s_shown_face[i] = want;
         }
-        if (scale != s_shown_scale[i]) {
-            lv_image_set_scale_x(s_cup_img[i], scale);
-            s_shown_scale[i] = scale;
+        if (angle != s_shown_angle[i]) {
+            lv_image_set_rotation(s_cup_img[i], (int32_t)angle);
+            s_shown_angle[i] = angle;
         }
     }
     /* Face labels: result state only. */
@@ -525,12 +542,10 @@ void muse_jiaobei_ui_build(lv_obj_t *page, lv_event_cb_t back_cb)
         lv_obj_set_pos(s_cup_img[i], MUSE_JIAOBEI_CUP_X0 + 100 * i,
                        MUSE_JIAOBEI_CUP_Y);
         lv_obj_set_size(s_cup_img[i], MUSE_JIAOBEI_CUP_PX, MUSE_JIAOBEI_CUP_PX);
-        /* The flip squeezes the cup with lv_image_set_scale_x(), not the
-         * style transform: a transform makes LVGL render the object through
-         * a layer, and on this panel that layer came back stretched and
-         * clipped -- the crescents lost their top and bottom tips and read
-         * as two flat-cut moons (2026-11-16, user: "上下的半圆显示不完整").
-         * The image's own scale draws straight into the object's box. */
+        /* The flip spins the cup about its centre with
+         * lv_image_set_rotation(), the image's own transform -- not the
+         * style transform. (The flat-cut tips the user reported twice were
+         * the paint geometry, not the transform: see paint_cup's note.) */
         lv_image_set_pivot(s_cup_img[i], MUSE_JIAOBEI_CUP_PX / 2,
                            MUSE_JIAOBEI_CUP_PX / 2);
         lv_obj_remove_flag(s_cup_img[i], LV_OBJ_FLAG_CLICKABLE);
@@ -539,7 +554,7 @@ void muse_jiaobei_ui_build(lv_obj_t *page, lv_event_cb_t back_cb)
         }
         /* Force the first paint-and-src on the first refresh. */
         s_shown_face[i] = (muse_jiaobei_face_t)-1;
-        s_shown_scale[i] = 0;
+        s_shown_angle[i] = 0;
     }
 
     /* 阴/阳 face labels under each cup (result state only): the flat

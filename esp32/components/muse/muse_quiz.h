@@ -11,16 +11,17 @@
  * answer. The three options are shuffled, so the answer is not in a
  * fixed slot.
  *
- * A pick is graded at once: right is +1, wrong is +0 (never
- * negative). The verdict stays on screen for
+ * A pick is graded at once: right is +MUSE_QUIZ_POINTS_PER_PICK (2 since
+ * 2026-11-16, 1 before), wrong is +0 (never negative). The verdict stays on screen for
  * MUSE_QUIZ_FEEDBACK_MS and during that window nothing is dealt and
  * no answer is taken -- a fast double tap can never skip a question.
  * The round clock keeps running through the verdict (it is round
  * time, the math game's rule).
  *
- * Score only ever goes up, so the settlement is 1 point per coin with
- * the shared 20-coin ceiling (a round tops out at 5 coins: 5 questions
- * x 1 point). Free entry (user decision 2026-11-11): no fee is charged
+ * Score only ever goes up, so the settlement is 1 point per coin, capped
+ * at MUSE_QUIZ_COIN_CAP (10 coins since 2026-11-16; a perfect round is
+ * 5 questions x 2 points = 10, so the cap and the perfect score agree).
+ * Free entry (user decision 2026-11-11): no fee is charged
  * at start, so there is no fee-refused path and no charge in this
  * module -- the UI settles through muse_pet_round_coins_cap() at OVER,
  * the math game's shape.
@@ -55,6 +56,11 @@
 #include "muse_wordcards.h"
 
 /* One round is 5 questions in 60 seconds (user 2026-11-11, was 120). */
+/* Points per right pick, and the most a round can pay out (user
+ * 2026-11-16: "每题答对奖励2分，游戏结束结算金币上限为10金币"). 1 point
+ * converts to 1 coin, so a perfect round pays exactly the cap. */
+#define MUSE_QUIZ_POINTS_PER_PICK 2u
+#define MUSE_QUIZ_COIN_CAP 10u
 #define MUSE_QUIZ_QUESTIONS 5
 #define MUSE_QUIZ_OPTIONS 3
 #define MUSE_QUIZ_POOL_WORDS 20

@@ -12,11 +12,11 @@
  *
  * The board never leaves the page: there is no start page and no OVER
  * settlement (user decision 2026-11-14). A tap in READY or RESULT starts
- * a 300 ms in-place flip (FLIPPING); the faces swap at the midpoint and
- * the result lands at the end. The UI reads the flip progress through
- * muse_jiaobei_flip_scale() and squeezes both cups 1 -> 0 -> 1 around
- * their centres -- the cups never change position or angle (user
- * decision 2026-11-14, mockup v12).
+ * an in-place flip (FLIPPING) that spins the cups MUSE_JIAOBEI_FLIP_TURNS
+ * times (user 2026-11-16, replacing the 300 ms squeeze); the faces swap at
+ * the midpoint and the result lands at the end. The UI reads the flip
+ * progress through muse_jiaobei_flip_angle() and turns both cups about
+ * their centres -- the cups never change position.
  *
  * The consecutive-holy streak ("连续圣杯 xN") is session state with a
  * day: it counts consecutive holy results, clears on a laughing or yin
@@ -52,8 +52,12 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-/* Flip duration, ms (one squeeze 1 -> 0 -> 1, faces swap at the middle). */
-#define MUSE_JIAOBEI_FLIP_MS 300u
+/* Flip duration, ms. The cups spin MUSE_JIAOBEI_FLIP_TURNS times in place
+ * and land showing the result; the faces swap at the halfway point, where
+ * the spin is fastest and the swap cannot be seen (user 2026-11-16: "转三圈
+ * 再落", the earlier 300 ms squeeze read as a blink). */
+#define MUSE_JIAOBEI_FLIP_MS 1000u
+#define MUSE_JIAOBEI_FLIP_TURNS 3u
 
 /* Shake-to-toss tuning (see the header note). Starting values only --
  * the right numbers depend on how hard the player shakes, so tune on
@@ -151,10 +155,11 @@ void muse_jiaobei_toss(muse_jiaobei_t *g, uint32_t random);
  * midpoint; at MUSE_JIAOBEI_FLIP_MS the phase becomes RESULT. */
 void muse_jiaobei_tick(muse_jiaobei_t *g, uint32_t ms);
 
-/* Horizontal squeeze for the flip, 0..256: 256 at rest, 0 at the
- * midpoint, back to 256 at the end. The UI applies it as the cups'
- * transform scale_x. */
-uint32_t muse_jiaobei_flip_scale(const muse_jiaobei_t *g);
+/* Spin for the flip, in degrees: 0 at rest, 0 .. 360*MUSE_JIAOBEI_FLIP_TURNS
+ * while FLIPPING, and 0 from RESULT on (a whole number of turns, so the
+ * image is back where it started and nothing jumps). The UI feeds
+ * lv_image_set_rotation(), which takes tenths of a degree. */
+uint32_t muse_jiaobei_flip_angle(const muse_jiaobei_t *g);
 
 /* FLIPPING -> the pre-toss state (muse_jiaobei_toss() saved it): the
  * toss never happened, so the previous result, faces and streak stand.

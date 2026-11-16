@@ -150,26 +150,26 @@ static void test_answer_feedback(void)
     assert(g.last_pick == -1);
     assert(muse_quiz_pending_audio(&g)); /* next question reads itself */
     muse_quiz_clear_pending_audio(&g);
-    /* A right pick: +1. */
+    /* A right pick: +MUSE_QUIZ_POINTS_PER_PICK. */
     correct = g.questions[1].correct;
     assert(muse_quiz_answer(&g, correct));
-    assert(g.score == 1 && g.answered == 2);
+    assert(g.score == MUSE_QUIZ_POINTS_PER_PICK && g.answered == 2);
     assert(g.last_right && g.last_pick == correct);
     /* Out of range is refused. */
     tick_n(&g, MUSE_QUIZ_FEEDBACK_MS / MUSE_QUIZ_TICK_MS);
     assert(!muse_quiz_answer(&g, -1));
     assert(!muse_quiz_answer(&g, MUSE_QUIZ_OPTIONS));
     assert(g.answered == 2);
-    /* Answer the rest right: Q1 was already right, so the last three
-     * right picks bring the score to 4 (Q0 was wrong); OVER after
-     * the last verdict. */
+    /* Answer the rest right: Q0 was wrong, so four right picks in all
+     * bring the score to 4 * MUSE_QUIZ_POINTS_PER_PICK; OVER after the
+     * last verdict. */
     for (int qi = 2; qi < MUSE_QUIZ_QUESTIONS; qi++) {
         assert(g.q == qi);
         assert(muse_quiz_answer(&g, g.questions[qi].correct));
         tick_n(&g, MUSE_QUIZ_FEEDBACK_MS / MUSE_QUIZ_TICK_MS);
     }
     assert(g.phase == MUSE_QUIZ_OVER);
-    assert(g.score == 4 && g.answered == 5);
+    assert(g.score == 4 * MUSE_QUIZ_POINTS_PER_PICK && g.answered == 5);
     /* No answers after OVER, no replay, no current answer. */
     assert(!muse_quiz_answer(&g, 0));
     assert(!muse_quiz_replay(&g));

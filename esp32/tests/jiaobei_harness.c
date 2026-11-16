@@ -8,9 +8,10 @@
  *     0 or 1), laughing 25% (2), yin 25% (3).
  *   - Faces: holy is left round + right flat, laughing both flat, yin
  *     both round (mockup v12).
- *   - The 300 ms in-place flip: faces swap at the midpoint, the scale
- *     squeezes 256 -> 0 -> 256, the result lands at the end; a tap
- *     mid-flip never starts a second toss.
+ *   - The in-place flip: faces swap at the midpoint of a
+ *     MUSE_JIAOBEI_FLIP_MS spin, the angle runs 0 -> 360 * turns and is
+ *     0 again once the result has landed (a whole number of turns), and
+ *     a tap mid-flip never starts a second toss.
  *   - The consecutive-holy streak: holy +1, laughing / yin clear it,
  *     reset() starts it at 0. Re-entering the page restores it:
  *     muse_jiaobei_restore() rebuilds the settled board (result faces
@@ -58,7 +59,7 @@ int main(void)
     assert(g.left == MUSE_JIAOBEI_FLAT);
     assert(g.right == MUSE_JIAOBEI_FLAT);
     assert(g.streak == 0);
-    assert(muse_jiaobei_flip_scale(&g) == 256);
+    assert(muse_jiaobei_flip_angle(&g) == 0);
 
     /* --- outcome mapping ------------------------------------------------ */
     assert(muse_jiaobei_result_from_random(0) == MUSE_JIAOBEI_SHENG);
@@ -94,23 +95,24 @@ int main(void)
     assert(g.result == MUSE_JIAOBEI_SHENG);
     assert(g.streak == 1); /* decided at toss time, shown at RESULT */
     assert(g.left == MUSE_JIAOBEI_FLAT && g.right == MUSE_JIAOBEI_FLAT);
-    assert(muse_jiaobei_flip_scale(&g) == 256);
-    muse_jiaobei_tick(&g, 75);
-    assert(muse_jiaobei_flip_scale(&g) == 128);
+    assert(muse_jiaobei_flip_angle(&g) == 0);
+    muse_jiaobei_tick(&g, MUSE_JIAOBEI_FLIP_MS / 4);
+    assert(muse_jiaobei_flip_angle(&g) == 360u * MUSE_JIAOBEI_FLIP_TURNS / 4);
     assert(!g.face_swapped);
-    muse_jiaobei_tick(&g, 75); /* 150 ms: the midpoint */
+    muse_jiaobei_tick(&g, MUSE_JIAOBEI_FLIP_MS / 4); /* the midpoint */
     assert(g.face_swapped);
     assert(g.left == MUSE_JIAOBEI_ROUND && g.right == MUSE_JIAOBEI_FLAT);
-    assert(muse_jiaobei_flip_scale(&g) == 0);
+    assert(muse_jiaobei_flip_angle(&g) == 360u * MUSE_JIAOBEI_FLIP_TURNS / 2);
     /* A tap mid-flip never starts a second toss. */
     muse_jiaobei_toss(&g, 3);
     assert(g.result == MUSE_JIAOBEI_SHENG);
     assert(g.streak == 1);
-    muse_jiaobei_tick(&g, 75);
-    assert(muse_jiaobei_flip_scale(&g) == 128);
-    muse_jiaobei_tick(&g, 75); /* 300 ms: the result lands */
+    muse_jiaobei_tick(&g, MUSE_JIAOBEI_FLIP_MS / 4);
+    assert(muse_jiaobei_flip_angle(&g) ==
+           360u * MUSE_JIAOBEI_FLIP_TURNS * 3u / 4u);
+    muse_jiaobei_tick(&g, MUSE_JIAOBEI_FLIP_MS / 4); /* the result lands */
     assert(g.phase == MUSE_JIAOBEI_RESULT);
-    assert(muse_jiaobei_flip_scale(&g) == 256);
+    assert(muse_jiaobei_flip_angle(&g) == 0); /* a whole number of turns */
     assert(g.left == MUSE_JIAOBEI_ROUND && g.right == MUSE_JIAOBEI_FLAT);
 
     /* --- the streak: holy +1, laughing / yin clear ---------------------- */
@@ -163,7 +165,7 @@ int main(void)
     assert(g.result == MUSE_JIAOBEI_NONE);
     assert(g.streak == 0);
     assert(g.left == MUSE_JIAOBEI_FLAT && g.right == MUSE_JIAOBEI_FLAT);
-    assert(muse_jiaobei_flip_scale(&g) == 256);
+    assert(muse_jiaobei_flip_angle(&g) == 0);
     /* Two holy in a row, left and re-entered: the result board stands
      * with the streak intact. */
     muse_jiaobei_restore(&g, MUSE_JIAOBEI_SHENG, 2);
@@ -171,7 +173,7 @@ int main(void)
     assert(g.result == MUSE_JIAOBEI_SHENG);
     assert(g.streak == 2);
     assert(g.left == MUSE_JIAOBEI_ROUND && g.right == MUSE_JIAOBEI_FLAT);
-    assert(muse_jiaobei_flip_scale(&g) == 256);
+    assert(muse_jiaobei_flip_angle(&g) == 0);
     /* A laughing result restores both flat with the streak cleared. */
     muse_jiaobei_restore(&g, MUSE_JIAOBEI_XIAO, 0);
     assert(g.phase == MUSE_JIAOBEI_RESULT);

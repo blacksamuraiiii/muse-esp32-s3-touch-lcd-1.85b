@@ -196,7 +196,7 @@ bool muse_quiz_answer(muse_quiz_t *g, int opt)
     g->last_pick = opt;
     g->last_right = (opt == g->questions[g->q].correct);
     if (g->last_right) {
-        g->score++;
+        g->score += MUSE_QUIZ_POINTS_PER_PICK;
     }
     g->feedback_ms = MUSE_QUIZ_FEEDBACK_MS;
     return g->last_right;
