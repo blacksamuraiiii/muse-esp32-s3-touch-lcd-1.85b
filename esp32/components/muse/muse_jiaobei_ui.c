@@ -390,9 +390,12 @@ static void start_toss(void)
             return;
         }
         if (snap.coins < MUSE_PET_JIAOBEI_COST) {
-            /* Silent on purpose (user decision 2026-11-14): no note,
-             * no sound, no charge -- the coin row already shows the
-             * balance, and the worker would refuse it anyway. */
+            /* Not silent any more (2026-11-16, user: "目前也没法再次掷圣杯"
+             * -- a tap that does nothing at all reads as a broken page).
+             * The note is the same one the worker's refusal writes, so the
+             * two paths say the same thing. */
+            set_note("金币不够（需 5 枚）");
+            refresh_display();
             return;
         }
     }

@@ -359,6 +359,14 @@ static void show_page(int page)
     lv_obj_add_flag(s_feed_page, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(s_game_page, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(s_fortune_page, LV_OBJ_FLAG_HIDDEN);
+    /* Every page this file owns must be in this list: a page that is shown
+     * once and never hidden stays on top of all the others for good -- its
+     * cards and pictures float over every page after it, and its full-page
+     * touch layer swallows the taps meant for them (2026-11-16: the 运势
+     * subpage and the 掷筊 board were missing here, which read as "有三个
+     * 页面叠在一起" and as a frozen screen whose taps did nothing). */
+    lv_obj_add_flag(s_fortune_sub_page, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(s_jiaobei_page, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(s_sudoku_page, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(s_minigame_page, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(s_snake_page, LV_OBJ_FLAG_HIDDEN);
