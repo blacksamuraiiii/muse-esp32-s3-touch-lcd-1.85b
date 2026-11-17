@@ -25,6 +25,7 @@
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/idf_additions.h"
 #include "minimp3.h"
 
 #include "muse_audio.h"
@@ -274,7 +275,7 @@ static void play_task(void *arg)
     free(req->url);
     free(req);
     s_task = NULL;
-    vTaskDelete(NULL);
+    vTaskDeleteWithCaps(NULL);
 }
 
 bool muse_audio_play_url(const char *url, muse_audio_play_done_cb_t done, void *user)
@@ -293,7 +294,8 @@ bool muse_audio_play_url(const char *url, muse_audio_play_done_cb_t done, void *
     }
     s_abort = false;
     s_dropped = false;
-    if (xTaskCreate(play_task, "muse_aplay", TASK_STACK, req, TASK_PRIO, &s_task) != pdPASS) {
+    if (xTaskCreateWithCaps(play_task, "muse_aplay", TASK_STACK, req, TASK_PRIO, &s_task,
+                            MALLOC_CAP_SPIRAM) != pdPASS) {
         free(req->url);
         free(req);
         s_task = NULL;

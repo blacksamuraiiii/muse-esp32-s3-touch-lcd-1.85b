@@ -44,6 +44,12 @@ CONFIG_LV_DRAW_SW_DRAW_UNIT_CNT=2
 CONFIG_BT_NIMBLE_MEM_ALLOC_MODE_EXTERNAL=y
 CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
 
+# Internal RAM is tight once Wi-Fi, BLE and both VM sessions are up, and
+# code and rodata run from PSRAM, so the setup task stacks (the Muse VM
+# lookup, the VM credential refresh, the Wi-Fi scan refresh) go to PSRAM:
+# the 8 KB lookup and refresh stacks otherwise find no free block.
+CONFIG_HOMEHUB_SETUP_TASKS_IN_PSRAM=y
+
 # Static buffers in PSRAM: Wi-Fi's, lwIP's and BT's, and those marked
 # EXT_RAM_BSS_ATTR (Muse's chat turn, the tunnel batch). Without it light
 # sleep's code leaves Link under 16 KB of DMA RAM once connected, too little
