@@ -149,7 +149,7 @@ static esp_err_t queue_band(lv_display_t *disp, esp_lcd_panel_handle_t panel, in
     (void)disp;
     (void)panel;
     (void)ctx;
-    band_t b = { data, x1, y1, x2, y2 };
+    band_t b = { .data = data, .x1 = x1, .y1 = y1, .x2 = x2, .y2 = y2 };
     xSemaphoreTake(s_band_done, 0);   /* left by a band that had gone before LVGL waited for it */
     s_band_busy = true;
     if (xQueueSend(s_bands, &b, 0) != pdTRUE) {
