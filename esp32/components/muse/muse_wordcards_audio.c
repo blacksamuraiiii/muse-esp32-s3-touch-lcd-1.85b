@@ -389,11 +389,12 @@ static void fetch_task(void *arg)
      * rather than overwrite audio being decoded. A word is not "~1 s":
      * the 32 KB slot cap is ~5.5 s at ~48 kbps, so wait out a whole
      * word (WC_PLAY_MAX_WAIT_MS). If it is still running after that,
-     * give up this round instead of writing over the slot. In single
-     * mode the tail below fails the words a superseded prefetch left
-     * FETCHING, so a later tap can retry them (S1, 2026-11-17); in
-     * whole-list mode the marks are left untouched, so READY words
-     * keep their bytes and the rest are retried on the next entry. */
+     * give up this round instead of writing over the slot. Both modes
+     * run the same tail as the normal exit below: a word left FETCHING
+     * with no task to resolve it can never be retried by a tap, so
+     * giving up silently left the user with a dead card until the set
+     * was re-entered (S1, 2026-11-17). READY words keep their bytes
+     * either way. */
     for (int i = 0; i < (int)(WC_PLAY_MAX_WAIT_MS / 100) &&
                     s_play_task && !s_fetch_abort;
          i++) {
@@ -401,13 +402,12 @@ static void fetch_task(void *arg)
     }
     if (s_play_task && !s_fetch_abort) {
         ESP_LOGW(TAG, "prefetch abandoned: playback still running");
-        if (single) {
-            /* S1 (2026-11-17): the same tail as the normal exit
-             * below. Failing only the retried slot left the other
-             * words a superseded prefetch had marked FETCHING
-             * dangling, with no task to resolve them. */
-            fail_unready_words(&list, gen);
-        }
+        /* S1 (2026-11-17): the same tail as the normal exit below.
+         * Failing only the retried slot left the other words a
+         * superseded prefetch had marked FETCHING dangling, with no
+         * task to resolve them -- and the whole-list case had the
+         * same dead card until the set was re-entered. */
+        fail_unready_words(&list, gen);
         fetch_task_exit();
         return;
     }
