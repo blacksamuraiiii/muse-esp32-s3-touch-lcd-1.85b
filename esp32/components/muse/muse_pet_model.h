@@ -110,8 +110,11 @@
  * different ceiling. The worker clamps PET_PLAY_REWARD to the hard
  * maximum below, so a UI bug still cannot mint more than any game's
  * ceiling. */
-#define MUSE_PET_ROUND_COIN_MAX_MATHPRACTICE 20u
-#define MUSE_PET_ROUND_COIN_HARD_MAX 20u
+#define MUSE_PET_ROUND_COIN_HARD_MAX MUSE_PET_COINS_MAX /* the wallet: one
+                                        * round can fill it and no more
+                                        * (2026-11-17, was 20 -- the maths
+                                        * page has no ceiling below the
+                                        * wallet any more) */
 
 /*
  * Sudoku pays in completions, not points: the first puzzle solved on a
@@ -228,8 +231,8 @@ typedef struct {
  * a result. The toss itself is pure consumption with no payout.
  * PET_PLAY_REWARD settles a finished score-based round: arg is the coin
  * amount the UI converted with muse_pet_round_coins(), clamped here to
- * 0..MUSE_PET_ROUND_COIN_HARD_MAX (20, the absolute ceiling across all
- * games) so a UI bug cannot mint coins. The round's net is that payout
+ * 0..MUSE_PET_ROUND_COIN_HARD_MAX (the wallet, 100 since 2026-11-17, was
+ * 20) so a UI bug cannot mint coins. The round's net is that payout
  * minus the 10-coin entry fee the UI already charged with PET_FEE; the
  * model never nets the two itself. */
 typedef enum {

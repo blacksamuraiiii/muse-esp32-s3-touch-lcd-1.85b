@@ -195,9 +195,17 @@ static void refresh_display(void)
     if (s_game.phase == MUSE_QUIZ_OVER) {
         lv_obj_add_flag(s_verdict, LV_OBJ_FLAG_HIDDEN);
     } else if (verdict) {
-        set_label(s_verdict, s_game.last_right
-                                 ? LV_SYMBOL_OK " 答对了，+1 分"
-                                 : LV_SYMBOL_CLOSE " 答错了，不得分");
+        if (s_game.last_right) {
+            /* The reward is a knob (MUSE_QUIZ_POINTS_PER_PICK), so the copy
+             * is built from it -- the "+1 分" left over after the 2-point
+             * change told the player the wrong number (user 2026-11-17). */
+            char ok[48];
+            snprintf(ok, sizeof(ok), LV_SYMBOL_OK " 答对了，+%u 分",
+                     (unsigned)MUSE_QUIZ_POINTS_PER_PICK);
+            set_label(s_verdict, ok);
+        } else {
+            set_label(s_verdict, LV_SYMBOL_CLOSE " 答错了，不得分");
+        }
         lv_obj_set_style_text_color(
             s_verdict,
             lv_color_hex(s_game.last_right ? MUSE_THEME_OK : MUSE_THEME_DANGER),

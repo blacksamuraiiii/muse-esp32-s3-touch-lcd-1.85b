@@ -25,7 +25,7 @@
  * white symbol and no border.
  *
  * The verdict line (user 2026-11-08: "点击之后要提示正确还是错误")
- * sits at y=280, directly above the score line: green "正确，+1 分"
+ * sits at y=280, directly above the score line: green "正确，+2 分"
  * or red "错误，不得分", the icon and the words in ONE label so the
  * font chain (Noto 16 with the Montserrat icon tail) keeps them on
  * one line. It only appears while the verdict window is up (600 ms),
@@ -56,7 +56,7 @@
  * Payout: entry is free (user decision 2026-11-12, 学习全部免费),
  * so at OVER the HUD turns gold and reads "本局 n 分，+m 金币" with m
  * the GROSS payout the wallet actually accepted (s_round_coins, from
- * muse_pet_round_coins_cap() with this game's own 20-coin ceiling --
+ * muse_pet_round_coins_cap() with no per-game ceiling --
  * 1 point per coin; the score is settled once, at OVER). There is no
  * fee to net against any more, so payout IS the net. The score only
  * ever goes up (a wrong pick is +0, never -1), so the HUD never
@@ -220,9 +220,14 @@ static void refresh_display(void)
      * LV_SYMBOL_OK / LV_SYMBOL_CLOSE glyph). */
     bool verdict = (s_game.feedback_ms != 0);
     if (verdict) {
-        set_label(s_verdict, s_game.last_right
-                                 ? LV_SYMBOL_OK " 正确，+1 分"
-                                 : LV_SYMBOL_CLOSE " 错误，不得分");
+        if (s_game.last_right) {
+            char ok[48];
+            snprintf(ok, sizeof(ok), LV_SYMBOL_OK " 正确，+%u 分",
+                     (unsigned)MUSE_MATHPRACTICE_POINTS_PER_PICK);
+            set_label(s_verdict, ok);
+        } else {
+            set_label(s_verdict, LV_SYMBOL_CLOSE " 错误，不得分");
+        }
         lv_obj_set_style_text_color(
             s_verdict,
             lv_color_hex(s_game.last_right ? MUSE_THEME_OK : MUSE_THEME_DANGER),
@@ -370,9 +375,8 @@ static void pause_game(void)
 
 /* Score -> coins, once per round, at OVER (user decision 2026-11-01,
  * ceiling retuned to 20 on 2026-11-08). This game converts through
- * muse_pet_round_coins_cap() with its own ceiling (not the shared
- * muse_pet_round_coins() curve) -- 1 point per right pick, 20 coins per
- * round ceiling (user decision 2026-11-12: unchanged) -- and entry is
+ * muse_pet_round_coins_cap() with no per-game ceiling (2026-11-17; it was
+ * 20) -- 1 point per coin and 2 points per right pick -- and entry is
  * free (user decision 2026-11-12, 学习全部免费), so the round's net
  * IS the payout: nothing is deducted. The score only ever goes up, so
  * no floor helper is needed. A refused request (worker not ready /
@@ -384,10 +388,11 @@ static void settle_round(void)
         return;
     }
     s_settled = true;
-    /* 2-minute round: the ceiling is this game's own 20, not the
-     * standard 10 (user decision 2026-11-08). */
+    /* No per-game ceiling any more (user 2026-11-17: "取消金币兑换上限"):
+     * 1 point = 1 coin up to what a wallet can hold, which is also the
+     * model's own hard ceiling for one round. */
     uint32_t coins = muse_pet_round_coins_cap(
-        s_game.score, MUSE_PET_ROUND_COIN_MAX_MATHPRACTICE);
+        s_game.score, MUSE_PET_ROUND_COIN_HARD_MAX);
     s_round_coins = 0;
     if (coins != 0 && muse_pet_request_play_reward(coins)) {
         s_round_coins = coins;

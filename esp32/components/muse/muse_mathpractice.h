@@ -24,7 +24,7 @@
  * clock keeps running through the verdict (it is round time).
  *
  * Score only ever goes up, so the settlement is
- * muse_pet_round_coins_cap() with this game's own 20-coin ceiling (1
+ * muse_pet_round_coins_cap() with no per-game ceiling (1
  * point per coin; raised from the shared 10 on 2026-11-08 because the
  * round is 3 minutes now). The 10-coin entry fee was already charged at
  * start.
@@ -42,8 +42,11 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-/* One round is 2 minutes (user 2026-11-09, was 3 minutes). */
-#define MUSE_MATHPRACTICE_GAME_MS 120000u
+/* One round is 60 seconds (user 2026-11-17; it was 2 minutes, and 3 before
+ * that). */
+#define MUSE_MATHPRACTICE_GAME_MS 60000u
+/* Points per right pick (user 2026-11-17: 2, was 1). */
+#define MUSE_MATHPRACTICE_POINTS_PER_PICK 2u
 #define MUSE_MATHPRACTICE_TICK_MS 50u
 /* How long the verdict stays up before the next question is dealt
  * (user 2026-11-08). Answer taps are ignored during it. */
@@ -86,7 +89,8 @@ typedef struct {
     muse_mathpractice_cmp_t correct; /* the comparison that is true */
     uint32_t feedback_ms; /* > 0: verdict showing, no new question */
     bool last_right;      /* how the last pick was graded (for the UI) */
-    uint32_t score;       /* +1 per right pick, never decreases */
+    uint32_t score;       /* +MUSE_MATHPRACTICE_POINTS_PER_PICK per
+                           * right pick, never decreases */
     uint32_t answered;    /* picks graded so far */
     uint32_t elapsed_ms;
 } muse_mathpractice_t;
@@ -116,7 +120,8 @@ void muse_mathpractice_tick(muse_mathpractice_t *g, uint32_t ms);
 
 /* Pick a comparison: `cmp` is the button the player tapped (GT for
  * >, LT for <, EQ for =). Returns true when the pick was right
- * (score +1), false otherwise (score unchanged). Either way the
+ * (score += MUSE_MATHPRACTICE_POINTS_PER_PICK), false otherwise (score
+ * unchanged). Either way the
  * verdict shows for MUSE_MATHPRACTICE_FEEDBACK_MS and the next
  * question appears when it ends. No-op (returns false, nothing
  * changes) unless PLAYING and no verdict is showing. */

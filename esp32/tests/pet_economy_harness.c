@@ -83,17 +83,9 @@ int main(void)
     assert(muse_pet_round_coins(26) == 20);
     assert(muse_pet_round_coins(28) == 20);
     assert(muse_pet_round_coins(1000) == 20);
-    /* 加减练习 runs 3-minute rounds since 2026-11-08, so it pays against
-     * its own ceiling of 20 (user decision); the shared ceiling is now 20
-     * too, so the two constants are equal -- the math game's own knob is
-     * kept in case its 3-minute round ever wants a different ceiling. */
-    assert(MUSE_PET_ROUND_COIN_MAX_MATHPRACTICE == 20);
-    assert(MUSE_PET_ROUND_COIN_HARD_MAX == 20);
-    assert(muse_pet_round_coins_cap(9, MUSE_PET_ROUND_COIN_MAX_MATHPRACTICE) == 9);
-    assert(muse_pet_round_coins_cap(13, MUSE_PET_ROUND_COIN_MAX_MATHPRACTICE) == 13);
-    assert(muse_pet_round_coins_cap(20, MUSE_PET_ROUND_COIN_MAX_MATHPRACTICE) == 20);
-    assert(muse_pet_round_coins_cap(25, MUSE_PET_ROUND_COIN_MAX_MATHPRACTICE) == 20);
-    /* the same call with the standard ceiling is the old behaviour. */
+    /* The hard ceiling is the wallet (2026-11-17: it was 20; 加减练习 pays
+     * 1 coin per point with no per-game ceiling). */
+    assert(MUSE_PET_ROUND_COIN_HARD_MAX == MUSE_PET_COINS_MAX);
     assert(muse_pet_round_coins_cap(13, MUSE_PET_ROUND_COIN_MAX) == 13);
     assert(muse_pet_round_coins_cap(1000, 0) == 0);
 
@@ -112,13 +104,16 @@ int main(void)
     assert(apply(&m, PET_PLAY_REWARD, d1, 15) == PET_OK);
     assert(m.coins == 37); /* 15 asked, 15 paid: below the hard maximum */
     assert(apply(&m, PET_PLAY_REWARD, d1, 25) == PET_OK);
-    assert(m.coins == 57); /* 25 asked, 20 paid */
+    assert(m.coins == 62); /* 25 asked, 25 paid: under the wallet ceiling */
     /* A negative arg is a zero payout, not a refund. */
     assert(apply(&m, PET_PLAY_REWARD, d1, -4) == PET_OK);
-    assert(m.coins == 57);
+    assert(m.coins == 62);
     /* 0 is a valid settlement (a scoreless round) and changes nothing. */
     assert(apply(&m, PET_PLAY_REWARD, d1, 0) == PET_OK);
-    assert(m.coins == 57);
+    assert(m.coins == 62);
+    /* Anything above the wallet is clamped to it. */
+    assert(apply(&m, PET_PLAY_REWARD, d1, 500) == PET_OK);
+    assert(m.coins == MUSE_PET_COINS_MAX);
     /* The wallet cap still applies. */
     m.coins = MUSE_PET_COINS_MAX - 2;
     assert(apply(&m, PET_PLAY_REWARD, d1, 5) == PET_OK);

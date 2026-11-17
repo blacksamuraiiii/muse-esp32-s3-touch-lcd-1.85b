@@ -139,7 +139,7 @@ bool muse_mathpractice_answer(muse_mathpractice_t *g, muse_mathpractice_cmp_t cm
     }
     bool right = (cmp == g->correct);
     if (right) {
-        g->score++;
+        g->score += MUSE_MATHPRACTICE_POINTS_PER_PICK;
     }
     g->answered++;
     g->last_right = right;

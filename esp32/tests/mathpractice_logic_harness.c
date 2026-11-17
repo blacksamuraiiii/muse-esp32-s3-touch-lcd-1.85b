@@ -12,10 +12,11 @@
  *     digit, so the subtraction borrows ten);
  *   - the comparison number d is the true value or a near-miss of
  *     +-1 / +-2, and `correct` is exactly the sign of value - d;
- *   - a right pick is +1, a wrong one +0 (never negative);
+ *   - a right pick is +MUSE_MATHPRACTICE_POINTS_PER_PICK, a wrong one +0
+ *     (never negative);
  *   - the verdict holds for FEEDBACK_MS: no new question, no answer
  *     taken, then the next question lands;
- *   - the round is 2 minutes (MUSE_MATHPRACTICE_GAME_MS).
+ *   - the round is MUSE_MATHPRACTICE_GAME_MS (60 s since 2026-11-17).
  */
 #include <assert.h>
 #include <stdbool.h>
@@ -113,7 +114,7 @@ int main(void)
 
     /* Grading and the verdict window, over 10 short rounds (each
      * round is restarted so the 3-minute clock never ends it early):
-     *   - a right pick is +1 and answered +1;
+     *   - a right pick is +MUSE_MATHPRACTICE_POINTS_PER_PICK and answered +1;
      *   - the verdict holds for the whole window: another tap is
      *     ignored (score and answered unchanged) and the question
      *     does not change;
@@ -126,14 +127,15 @@ int main(void)
             uint32_t score0 = g.score;
             uint32_t answered0 = g.answered;
             assert(muse_mathpractice_answer(&g, g.correct));
-            assert(g.score == score0 + 1);
+            assert(g.score == score0 + MUSE_MATHPRACTICE_POINTS_PER_PICK);
             assert(g.answered == answered0 + 1);
             assert(g.feedback_ms == MUSE_MATHPRACTICE_FEEDBACK_MS);
             assert(g.last_right);
             /* A tap during the window is ignored: nothing moves, and
              * especially no question is skipped. */
             assert(!muse_mathpractice_answer(&g, g.correct));
-            assert(g.score == score0 + 1 && g.answered == answered0 + 1);
+            assert(g.score == score0 + MUSE_MATHPRACTICE_POINTS_PER_PICK &&
+                   g.answered == answered0 + 1);
             assert(g.a == a_before && g.b == b_before && g.d == d_before);
             /* One tick short of the window: still the same question. */
             tick_n(&g, (int)(MUSE_MATHPRACTICE_FEEDBACK_MS /

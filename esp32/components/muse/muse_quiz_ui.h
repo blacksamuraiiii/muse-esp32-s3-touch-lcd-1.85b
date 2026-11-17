@@ -28,7 +28,7 @@
  *
  * The verdict line (y=280, the math game's slot) reads "第 n/5 题"
  * while a question is open and, for 600 ms after a pick, "✓ 答对了，
- * +1 分" in green or "✗ 答错了，不得分" in red (LV_SYMBOL_OK /
+ * +2 分" in green or "✗ 答错了，不得分" in red (LV_SYMBOL_OK /
  * LV_SYMBOL_CLOSE, the math game's icons). The picked card takes a
  * pressed fill and a 3 px GOLD (right) / DANGER (wrong) ring for the
  * same window; only the picked card is ringed, the right answer is

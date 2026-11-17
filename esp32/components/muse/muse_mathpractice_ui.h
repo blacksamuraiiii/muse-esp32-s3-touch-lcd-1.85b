@@ -9,7 +9,7 @@
  * 2026-11-08 (user decision): the separate 凑十法练习 page was fused
  * into this one. One game, two kinds of question -- 个位数相加（凑十法）
  * and 十几减个位（借十法）-- three comparison buttons (> < =), and a
- * verdict line that says 正确，+1 分 / 错误，不得分 after every pick.
+ * verdict line that says 正确，+2 分 / 错误，不得分 after every pick.
  *
  * Threading follows the interact contract: LVGL callbacks only touch
  * this module's own objects and the RAM game state
@@ -42,7 +42,7 @@
  * that borrows ten ("14 - 6 ? 8") -- and three buttons: > at x=30, <
  * at x=135, = at x=240. The player taps the comparison that makes the
  * statement true. A right pick is +1, a wrong one +0, and the verdict
- * ("正确，+1 分" / "错误，不得分") holds for 600 ms; the next question
+ * ("正确，+2 分" / "错误，不得分") holds for 600 ms; the next question
  * is dealt when it ends, and taps during the window are ignored, so a
  * fast double tap cannot skip a question. Pausing is a LONG HOLD on
  * the question area (finger within ~12 px for 500 ms, the doodle
