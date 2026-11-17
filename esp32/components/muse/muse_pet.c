@@ -547,9 +547,16 @@ bool muse_pet_request_jiaobei_toss(int32_t result)
 bool muse_pet_request_play_reward(uint32_t coins)
 {
     /* Clamped here as well as in the model: the queue's arg is int32_t and a
-     * caller passing (uint32_t)-1 must not become a huge payout. */
-    int32_t arg = coins > MUSE_PET_ROUND_COIN_MAX ? (int32_t)MUSE_PET_ROUND_COIN_MAX
-                                                  : (int32_t)coins;
+     * caller passing (uint32_t)-1 must not become a huge payout. The clamp
+     * here and the worker's (muse_pet_model.c, PET_PLAY_REWARD) must both
+     * be MUSE_PET_ROUND_COIN_HARD_MAX: clamping here any lower would
+     * silently cap a payout the worker would have paid in full (the
+     * maths page has no per-game ceiling below the wallet since
+     * 2026-11-17 -- 20 correct answers pay 40, not 20), and the other
+     * games are unaffected, since their UIs convert with their own
+     * 20-coin ceiling before they get here. */
+    int32_t arg = coins > MUSE_PET_ROUND_COIN_HARD_MAX ? (int32_t)MUSE_PET_ROUND_COIN_HARD_MAX
+                                                       : (int32_t)coins;
     return request_cmd(PET_PLAY_REWARD, arg);
 }
 

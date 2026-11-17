@@ -364,7 +364,20 @@ static void show_page(int page)
      * cards and pictures float over every page after it, and its full-page
      * touch layer swallows the taps meant for them (2026-11-16: the 运势
      * subpage and the 掷筊 board were missing here, which read as "有三个
-     * 页面叠在一起" and as a frozen screen whose taps did nothing). */
+     * 页面叠在一起" and as a frozen screen whose taps did nothing).
+     * A new page must be added in FOUR places, not just here: 1) this
+     * hide list, 2) the show mapping if-chain below, 3) the hide hooks
+     * in on_back(), 4) the hide hooks in muse_interact_ui_on_hidden().
+     * (A single static page registry driving all four is a follow-up,
+     * not done here -- 2026-11-17 review fix.) Check 18/18 after any
+     * change, from esp32/components/muse:
+     *   grep -o "s_[a-z_]*_page" muse_interact_ui.c | sort -u | wc -l
+     *     (= 18 distinct page objects)
+     *   sed -n '/^static void show_page/,/^    lv_obj_t \*show/p' \
+     *       muse_interact_ui.c | grep -c "^    lv_obj_add_flag"
+     *     (= 18 hide lines in this list -- one add_flag per page object;
+     *     the lv_obj_remove_flag below is the one show, not a hide, so
+     *     it is not counted). */
     lv_obj_add_flag(s_fortune_sub_page, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(s_jiaobei_page, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(s_sudoku_page, LV_OBJ_FLAG_HIDDEN);
@@ -446,6 +459,13 @@ static void on_back(lv_event_t *e)
      * return-visit rules. */
     if (s_page == IC_PAGE_JIAOBEI) {
         muse_jiaobei_ui_hide();
+    }
+    if (s_page == IC_PAGE_SUDOKU) {
+        /* Same as on_hidden: closes the keypad popup and the win overlay
+         * (the puzzle itself keeps its progress). Without this, a popup
+         * left open survives the "<" press and is still there on the
+         * next visit. */
+        muse_sudoku_ui_hide();
     }
     if (s_page == IC_PAGE_SNAKE) {
         muse_snake_ui_hide();

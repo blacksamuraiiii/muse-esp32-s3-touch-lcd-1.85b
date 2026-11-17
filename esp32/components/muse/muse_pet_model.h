@@ -78,6 +78,15 @@
                                             * 2026-11-14); the 10th is
                                             * PET_CAP */
 #endif
+/* Structural upper bound for the 掷圣杯 ledger (jiaobei_count /
+ * jiaobei_streak), used by muse_pet_model_valid() only. It is NOT the
+ * daily policy cap: that is MUSE_PET_JIAOBEI_DAILY_MAX and is still
+ * enforced per toss by muse_pet_model_apply(). valid() only checks that
+ * a stored blob is structurally sane, so it must not depend on a
+ * build-time policy constant -- a Test build legitimately stores more
+ * than 9 tosses in a day, and that blob must still load on Release
+ * (2026-11-17, B2). */
+#define MUSE_PET_JIAOBEI_LEDGER_MAX 999999u
 #define MUSE_PET_DECAY_PER_DAY 20u     /* living cost, per calendar day */
 #define MUSE_PET_FORTUNES 20u          /* fortune cards in muse_pet_text.c */
 
@@ -210,15 +219,16 @@ typedef struct {
  * holds a nonzero reward, including a v4 blob's 5, which is treated as
  * paid and never topped up to 10.
  * PET_FORTUNE draws the day's card (user decision 2026-11-14: the draw
- * costs MUSE_PET_FORTUNE_COST (5), once a day, and the card is a pure
+ * costs MUSE_PET_FORTUNE_COST, once a day, and the card is a pure
  * function of the day -- the same day always draws the same card, on
  * any board, with no random input). Same-day repeats return
- * PET_FORTUNE_SAME and move nothing; under 5 coins a first draw of the
- * day returns PET_POOR and settles nothing.
+ * PET_FORTUNE_SAME and move nothing; under MUSE_PET_FORTUNE_COST a
+ * first draw of the day returns PET_POOR and settles nothing.
  * PET_JIAOBEI_TOSS settles one 掷圣杯 toss (user decision 2026-11-14):
  * MUSE_PET_JIAOBEI_COST coins (2 since 2026-11-16), at most 9 a day
  * (MUSE_PET_JIAOBEI_DAILY_MAX). The 10th toss of the day returns
- * PET_CAP and settles nothing; under 5 coins it returns PET_POOR.
+ * PET_CAP and settles nothing; under MUSE_PET_JIAOBEI_COST it returns
+ * PET_POOR.
  * The outcome itself (holy / laughing / yin) is decided UI-side by
  * muse_jiaobei_toss() and rides in `arg` (MUSE_PET_JIAOBEI_*): a
  * settled holy toss extends the day's streak by 1, laughing / yin

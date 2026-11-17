@@ -8,11 +8,13 @@
  *     0 or 1), laughing 25% (2), yin 25% (3).
  *   - Faces: holy is left round + right flat, laughing both flat, yin
  *     both round (mockup v12).
- *   - The in-place flip: faces swap at 5/12 of a MUSE_JIAOBEI_FLIP_MS spin
- *     (the edge-on quarter turn nearest the middle, where the UI's
- *     scale_y = |cos| flip cannot show the change), the angle runs
- *     0 -> 360 * turns and is 0 again once the result has landed (a whole
- *     number of turns), and a tap mid-flip never starts a second toss.
+ *   - The in-place flip: faces swap at 1/4 of a MUSE_JIAOBEI_FLIP_MS spin
+ *     (the first edge-on quarter turn, where the UI's scale_x = |cos|
+ *     flip cannot show the change), the angle runs 0 -> 360 * turns and
+ *     is 0 again once the result has landed (a whole number of turns),
+ *     and a tap mid-flip never starts a second toss. The 50 ms tick
+ *     scale_x sequence is monotone inside each quarter turn, with
+ *     single-frame jumps of at most 80/256 (B3).
  *   - The consecutive-holy streak: holy +1, laughing / yin clear it,
  *     reset() starts it at 0. Re-entering the page restores it:
  *     muse_jiaobei_restore() rebuilds the settled board (result faces
@@ -31,6 +33,7 @@
  *     shows when the 9 daily tosses are used up.
  */
 #include <assert.h>
+#include <math.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -90,7 +93,7 @@ int main(void)
     muse_jiaobei_result_faces(MUSE_JIAOBEI_YIN, &l, &r);
     assert(l == MUSE_JIAOBEI_ROUND && r == MUSE_JIAOBEI_ROUND);
 
-    /* --- one holy toss: flip, midpoint swap, result --------------------- */
+    /* --- one holy toss: flip, quarter-turn swap, result ---------------- */
     muse_jiaobei_toss(&g, 0); /* holy */
     assert(g.phase == MUSE_JIAOBEI_FLIPPING);
     assert(g.result == MUSE_JIAOBEI_SHENG);
@@ -99,8 +102,11 @@ int main(void)
     assert(muse_jiaobei_flip_angle(&g) == 0);
     muse_jiaobei_tick(&g, MUSE_JIAOBEI_FLIP_MS / 4);
     assert(muse_jiaobei_flip_angle(&g) == 360u * MUSE_JIAOBEI_FLIP_TURNS / 4);
-    assert(!g.face_swapped);
-    muse_jiaobei_tick(&g, MUSE_JIAOBEI_FLIP_MS / 4); /* past 5/12: swapped */
+    /* 1/4 of the spin is the first edge-on point, so the faces swap
+     * here -- the rest of the flip already shows the new face. */
+    assert(g.face_swapped);
+    assert(g.left == MUSE_JIAOBEI_ROUND && g.right == MUSE_JIAOBEI_FLAT);
+    muse_jiaobei_tick(&g, MUSE_JIAOBEI_FLIP_MS / 4); /* halfway */
     assert(g.face_swapped);
     assert(g.left == MUSE_JIAOBEI_ROUND && g.right == MUSE_JIAOBEI_FLAT);
     assert(muse_jiaobei_flip_angle(&g) == 360u * MUSE_JIAOBEI_FLIP_TURNS / 2);
@@ -117,6 +123,51 @@ int main(void)
     assert(g.phase == MUSE_JIAOBEI_RESULT);
     assert(muse_jiaobei_flip_angle(&g) == 0); /* a whole number of turns */
     assert(g.left == MUSE_JIAOBEI_ROUND && g.right == MUSE_JIAOBEI_FLAT);
+
+    /* --- the flip's scale_x sequence: 1 turn, no aliasing (B3) --------- */
+    /* One turn in 1000 ms at 50 ms ticks is 18 degrees a tick, so the
+     * UI's sx = |cos| * 256 walks 256 -> 0 -> 256 once per quarter turn:
+     * monotone inside each quarter, one-frame jumps of at most 79/256,
+     * and the face swap (at the 5th tick, 90 degrees) lands on sx = 0. */
+    muse_jiaobei_reset(&g);
+    muse_jiaobei_toss(&g, 0); /* holy */
+    uint32_t prev_sx = 256;
+    for (int tick = 1; tick <= 20; tick++) {
+        muse_jiaobei_tick(&g, 50);
+        uint32_t angle = muse_jiaobei_flip_angle(&g);
+        /* The 20th tick lands the result, so the angle reads 0 again:
+         * it is still the 360-degree point of the spin. */
+        if (tick == 20) {
+            angle = 360;
+        }
+        float rad = (float)angle * 3.14159265f / 180.0f;
+        uint32_t sx = (uint32_t)(fabsf(cosf(rad)) * 256.0f);
+        /* Single-frame jump, in either direction, at most 80/256. */
+        uint32_t jump = sx > prev_sx ? sx - prev_sx : prev_sx - sx;
+        assert(jump <= 80);
+        /* Monotone inside each quarter turn: down in Q1/Q3, up in Q2/Q4
+         * (the 5th, 10th, 15th and 20th ticks are the quarter points
+         * themselves, so the step into one is the last step of the
+         * quarter it closes). */
+        if (tick % 5 != 1) {
+            int quarter = (tick - 1) / 5;
+            if (quarter % 2 == 0) {
+                assert(sx <= prev_sx); /* Q1, Q3: shrinking */
+            } else {
+                assert(sx >= prev_sx); /* Q2, Q4: growing */
+            }
+        }
+        /* The face swap happens on the 5th tick, edge-on. */
+        if (tick == 4) {
+            assert(!g.face_swapped);
+        }
+        if (tick == 5) {
+            assert(g.face_swapped);
+            assert(sx <= 16);
+        }
+        prev_sx = sx;
+    }
+    assert(g.phase == MUSE_JIAOBEI_RESULT);
 
     /* --- the streak: holy +1, laughing / yin clear ---------------------- */
     muse_jiaobei_toss(&g, 1); /* holy again */

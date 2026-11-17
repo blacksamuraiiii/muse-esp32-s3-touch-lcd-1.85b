@@ -49,6 +49,8 @@
  * firmware. Pressing TALK mid-reply (barge-in) first discards
  * CONFIG_MUSE_BARGE_IN_SETTLE_MS of capture (muse_voice.c).
  */
+#include <stdint.h>   /* uintptr_t: panel_sleep passes its bool by value */
+
 #include "bq27220.h"
 #include "driver/gpio.h"
 #include "driver/i2c_master.h"
@@ -1129,18 +1131,21 @@ static void send_panel_sleep(void *sleep)
      * 2.0.2 registers del/reset/init/draw_bitmap/disp_on_off and no base.disp_sleep,
      * so the call came back ESP_ERR_NOT_SUPPORTED and the panel kept its charge
      * pump and bias running (the official 1.75C sends these two commands for the
-     * same reason). */
+     * same reason).
+     * The bool arrives by value, cast through uintptr_t: the call may run
+     * after panel_sleep has returned, when its stack frame is gone, so
+     * there is no pointer to dereference. */
     if (s_panel_io == NULL) {
         return;
     }
-    const bool in = *(bool *)sleep;
+    const bool in = (bool)(uintptr_t)sleep;
     esp_lcd_panel_io_tx_param(s_panel_io, (0x02u << 24) | ((in ? 0x10u : 0x11u) << 8), NULL, 0);
 }
 
 static void panel_sleep(bool sleep)
 {
     s_panel_dark = sleep;
-    muse_lcd_bands_run(send_panel_sleep, &sleep);
+    muse_lcd_bands_run(send_panel_sleep, (void *)(uintptr_t)sleep);
     vTaskDelay(pdMS_TO_TICKS(120));   /* SLPIN/SLPOUT settle, as 1.75C/1.85C do */
     /* The controller idles down with the panel and comes back with it: this is
      * the ~2 mA the touch wake line used to cost (touch_autosleep). Runs on the
@@ -1762,7 +1767,7 @@ static esp_err_t power_off(void)
      * panel's charge pump and bias running. GRAM is lost either way and the
      * next boot re-inits the panel. */
     bool sleep = true;
-    muse_lcd_bands_run(send_panel_sleep, &sleep);
+    muse_lcd_bands_run(send_panel_sleep, (void *)(uintptr_t)sleep);
     muse_lcd_bands_run(send_disp_off, NULL);
     /* The amp must not be left enabled: PA_EN high is tens of mA in "off". */
     gpio_set_direction(PA_EN, GPIO_MODE_OUTPUT);

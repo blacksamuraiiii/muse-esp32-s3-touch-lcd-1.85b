@@ -125,12 +125,12 @@ void muse_jiaobei_tick(muse_jiaobei_t *g, uint32_t ms)
     }
     g->flip_ms += ms;
     /* The face changes while the cup is edge-on, so the swap cannot be
-     * seen: the UI draws the spin as a flip about the horizontal axis
-     * (scale_y = |cos|), which is edge-on at every odd quarter turn. With
-     * MUSE_JIAOBEI_FLIP_TURNS 3 the quarter turns are 90 degrees apart, and
-     * 5/12 of the spin (450 degrees) is the one nearest the middle. */
+     * seen: the UI draws the spin as a flip about the vertical axis
+     * (scale_x = |cos|), which is edge-on at every quarter turn. With
+     * one turn the first quarter turn (90 degrees, 1/4 of the spin) is
+     * the swap point: the rest of the flip already shows the new face. */
     if (!g->face_swapped &&
-        g->flip_ms >= MUSE_JIAOBEI_FLIP_MS * 5u / 12u) {
+        g->flip_ms >= MUSE_JIAOBEI_FLIP_MS / 4u) {
         muse_jiaobei_result_faces(g->result, &g->left, &g->right);
         g->face_swapped = true;
     }

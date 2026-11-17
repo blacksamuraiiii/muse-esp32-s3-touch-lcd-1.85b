@@ -32,9 +32,21 @@
 #include "muse_mem.h"
 #include "muse_state.h"   /* the ui=frames/bands counters */
 
+/* A frame for send_frame: kept with the call item, never as a pointer to
+ * the caller's stack (see muse_lcd_bands_run). Defined before band_t so the
+ * item can carry one by value. */
 typedef struct {
-    const uint8_t *data;   /* NULL: run s_call instead */
+    int x1, y1, x2, y2, rows;
+    muse_lcd_fill_fn fill;
+    void *arg;
+} frame_job_t;
+
+typedef struct {
+    const uint8_t *data;   /* NULL: run fn(arg) instead */
     int x1, y1, x2, y2;
+    void (*fn)(void *arg); /* the call this item carries, with its arg */
+    void *arg;
+    frame_job_t job;       /* the frame for send_frame, copied with the item */
 } band_t;
 
 static const char *TAG = "lcd_bands";
@@ -46,8 +58,6 @@ static int s_gap_x, s_gap_y;
 static QueueHandle_t s_bands;            /* room for LVGL's band and a call */
 static SemaphoreHandle_t s_call_lock;
 static SemaphoreHandle_t s_call_done;
-static void (*s_call)(void *);
-static void *s_call_arg;
 static SemaphoreHandle_t s_chunk_free;   /* internal buffers not on the wire */
 static uint8_t *s_chunk[2];
 static size_t s_chunk_bytes;
@@ -306,6 +316,9 @@ static void te_band(int y1, int y2, size_t bytes)
  * copied while the one before is on the wire. Even row counts keep every
  * piece's window starting on an even row, which the CO5300 needs.
  */
+/* Forward: send_bands hands a frame call its job from the queued item. */
+static void send_frame(void *arg);
+
 static void send_bands(void *arg)
 {
     (void)arg;
@@ -315,7 +328,10 @@ static void send_bands(void *arg)
         xQueueReceive(s_bands, &b, portMAX_DELAY);
         if (!b.data) {
             wire_idle(0);
-            s_call(s_call_arg);
+            /* The call carries its own fn/arg in the item: no shared slot
+             * for a later caller to overwrite. send_frame reads its job
+             * from this copy of the item, which lives until it returns. */
+            b.fn(b.fn == send_frame ? (void *)&b.job : b.arg);
             xSemaphoreGive(s_call_done);
             continue;
         }
@@ -426,23 +442,32 @@ fail:
  * (2026-11-16, the 1.5.3b freeze). Give up after 2 s, name it, and let the
  * caller carry on: a panel command that did not go out is a missed sleep,
  * not a dead device.
+ *
+ * fn and arg travel inside the queued item, by value: there is no shared
+ * slot for a later caller to overwrite, so a call that timed out still runs
+ * its own fn with its own arg when the send task reaches it, and never
+ * another caller's. The same timeout means the item may run after the
+ * caller has returned, so arg must stay valid past the call (or be carried
+ * in the item, as muse_lcd_bands_frame does with its frame job): never pass
+ * a pointer to a stack temporary. A value that fits in a pointer (a bool,
+ * a level) goes by value, cast through uintptr_t.
  */
 #define BANDS_CALL_WAIT_MS 2000
 
-void muse_lcd_bands_run(void (*fn)(void *arg), void *arg)
+/* Queue one call item and wait for the send task to run it. Shared by
+ * muse_lcd_bands_run and muse_lcd_bands_frame, which differ only in what
+ * the item carries. */
+static void bands_run_item(const band_t *item)
 {
-    if (!s_bands) {
-        fn(arg);
-        return;
-    }
     if (xSemaphoreTake(s_call_lock, pdMS_TO_TICKS(BANDS_CALL_WAIT_MS)) != pdTRUE) {
         ESP_LOGW(TAG, "band call: lock held for %d ms, skipped", BANDS_CALL_WAIT_MS);
         return;
     }
-    s_call = fn;
-    s_call_arg = arg;
-    const band_t call = { 0 };
-    if (xQueueSend(s_bands, &call, pdMS_TO_TICKS(BANDS_CALL_WAIT_MS)) != pdTRUE) {
+    /* Drain any token a previous timed-out call left behind: without this,
+     * the take below would return at once for a call this item never ran. */
+    while (xSemaphoreTake(s_call_done, 0) == pdTRUE) {
+    }
+    if (xQueueSend(s_bands, item, pdMS_TO_TICKS(BANDS_CALL_WAIT_MS)) != pdTRUE) {
         ESP_LOGW(TAG, "band call: queue full, skipped");
         xSemaphoreGive(s_call_lock);
         return;
@@ -453,11 +478,15 @@ void muse_lcd_bands_run(void (*fn)(void *arg), void *arg)
     xSemaphoreGive(s_call_lock);
 }
 
-typedef struct {
-    int x1, y1, x2, y2, rows;
-    muse_lcd_fill_fn fill;
-    void *arg;
-} frame_job_t;
+void muse_lcd_bands_run(void (*fn)(void *arg), void *arg)
+{
+    if (!s_bands) {
+        fn(arg);
+        return;
+    }
+    const band_t call = { .data = NULL, .fn = fn, .arg = arg };
+    bands_run_item(&call);
+}
 
 /* On the send task: each piece is filled straight into a free DMA buffer
  * while the one before is on the wire. */
@@ -570,6 +599,19 @@ void muse_lcd_bands_set_te(int gpio)
 
 void muse_lcd_bands_frame(int x1, int y1, int x2, int y2, int rows, muse_lcd_fill_fn fill, void *arg)
 {
-    frame_job_t j = { x1, y1, x2, y2, rows, fill, arg };
-    muse_lcd_bands_run(send_frame, &j);
+    /* The job travels inside the queued item, not as a pointer to this
+     * stack frame: the queue copies the item by value, and the send task
+     * reads its own copy, which lives until send_frame returns. fill and
+     * arg are still the caller's to keep alive for the call (the video
+     * path's fill arg lives in the show task until draw_frame returns). */
+    band_t call = {
+        .data = NULL,
+        .fn = send_frame,
+        .job = { x1, y1, x2, y2, rows, fill, arg },
+    };
+    if (!s_bands) {
+        send_frame(&call.job);
+        return;
+    }
+    bands_run_item(&call);
 }

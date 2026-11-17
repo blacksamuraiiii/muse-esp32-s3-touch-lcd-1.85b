@@ -97,8 +97,8 @@ int main(void)
     m.coins = 10;
     assert(apply(&m, PET_PLAY_REWARD, d1, 3) == PET_OK);
     assert(m.coins == 13);
-    /* Clamped to the hard maximum (20, 加减练习's own ceiling), even if
-     * the UI asks for more. */
+    /* Clamped to the hard maximum (the wallet, MUSE_PET_COINS_MAX), even
+     * if the UI asks for more. */
     assert(apply(&m, PET_PLAY_REWARD, d1, 9) == PET_OK);
     assert(m.coins == 22);
     assert(apply(&m, PET_PLAY_REWARD, d1, 15) == PET_OK);
@@ -404,19 +404,39 @@ int main(void)
     muse_pet_jiaobei_result_today(&m, day_now(d1), &streak, &last);
     assert(streak == 0 && last == 0);
 
-    /* --- validation catches a corrupt jiaobei ledger -------------------- */
+    /* --- validation catches a corrupt jiaobei ledger --------------------
+     * (the bound is the structural MUSE_PET_JIAOBEI_LEDGER_MAX, not the
+     * per-day policy cap -- see the B2 section below). */
     muse_pet_model_init(&m);
-    m.jiaobei_count = MUSE_PET_JIAOBEI_DAILY_MAX + 1;
+    m.jiaobei_count = MUSE_PET_JIAOBEI_LEDGER_MAX + 1;
     assert(!muse_pet_model_valid(&m));
     muse_pet_model_init(&m);
     m.jiaobei_day = -2;
     assert(!muse_pet_model_valid(&m));
     muse_pet_model_init(&m);
-    m.jiaobei_streak = MUSE_PET_JIAOBEI_DAILY_MAX + 1;
+    m.jiaobei_streak = MUSE_PET_JIAOBEI_LEDGER_MAX + 1;
     assert(!muse_pet_model_valid(&m));
     muse_pet_model_init(&m);
     m.jiaobei_last = 4;
     assert(!muse_pet_model_valid(&m));
+
+    /* --- a Test build's jiaobei ledger still loads on Release (B2) -----
+     * (2026-11-17: valid() only checks the structural bound, so a blob
+     * that racked up more than 9 tosses on a Test build does not make
+     * the whole pet state invalid -- and therefore does not disable
+     * every pet reward -- when the board is flashed back to Release). */
+    muse_pet_model_init(&m);
+    m.coins = 100;
+    m.jiaobei_day = d1;
+    m.jiaobei_count = 50;
+    m.jiaobei_streak = 50;
+    assert(muse_pet_model_valid(&m));
+    /* ... but the day is still capped at 9: the 51st toss of the day is
+     * PET_CAP and settles nothing -- no charge, no count, no result. */
+    assert(apply(&m, PET_JIAOBEI_TOSS, d1, 0) == PET_CAP);
+    assert(m.coins == 100);
+    assert(m.jiaobei_count == 50);
+    assert(m.jiaobei_streak == 50);
 
     /* --- a v4 blob's stored 5 counts as paid, never topped up --------- */
     muse_pet_model_init(&m);

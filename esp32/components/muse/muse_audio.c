@@ -632,7 +632,15 @@ esp_err_t muse_audio_sfx_sync(muse_sfx_t sfx)
 
 /* --- async sound effects (the LVGL thread's path) --------------------- */
 
-#define SFX_TASK_STACK 3072
+/* 4096 bytes: the worker -> muse_audio_sfx_sync -> render ->
+ * esp_codec_dev_write -> I2S driver chain is estimated at just over 2 KB,
+ * so this leaves about one times headroom (was 3072, the smallest audio
+ * task stack in the tree -- TTS takes 12288, word playback 24576). The
+ * render buffer is static PSRAM (see muse_audio_sfx_sync), not stack.
+ * Confirm on the real board with uxTaskGetStackHighWaterMark after
+ * playing every game sound: if less than 512 bytes remain, raise this
+ * again. */
+#define SFX_TASK_STACK 4096
 /* Below the reply/word audio tasks (4) and the LVGL thread (5): a page
  * full of taps must never delay a word or a reply by one millisecond. */
 #define SFX_TASK_PRIO 3
@@ -650,7 +658,11 @@ static void sfx_task(void *arg)
 }
 
 /* Created once, beside the locks (muse_audio_init), so no two tasks can
- * race to create it. */
+ * race to create it. If creation fails, the ESP_LOGE below is the only
+ * trace: after that every muse_audio_sfx() returns ESP_ERR_INVALID_STATE
+ * and all game sounds stay silent. That only happens when PSRAM is
+ * exhausted (the queue is 1 slot, the task is 4 KB), so it is not
+ * retried here. */
 static bool sfx_worker_init(void)
 {
     if (!s_sfx_queue && !(s_sfx_queue = xQueueCreate(1, sizeof(int32_t)))) {

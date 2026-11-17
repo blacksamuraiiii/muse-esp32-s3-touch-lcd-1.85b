@@ -64,8 +64,12 @@ bool muse_pet_model_valid(const muse_pet_model_t *s)
            s->sudoku_entry_paid <= 1 &&
            s->sudoku_reward_coins <= MUSE_PET_SUDOKU_DAILY_MAX &&
            s->jiaobei_day >= -1 &&
-           s->jiaobei_count <= MUSE_PET_JIAOBEI_DAILY_MAX &&
-           s->jiaobei_streak <= MUSE_PET_JIAOBEI_DAILY_MAX &&
+           /* Structural bound only (MUSE_PET_JIAOBEI_LEDGER_MAX): valid()
+            * checks that a stored blob is sane, not that it honours the
+            * per-day policy cap -- a Test blob with more than 9 tosses
+            * must still load on Release (2026-11-17, B2). */
+           s->jiaobei_count <= MUSE_PET_JIAOBEI_LEDGER_MAX &&
+           s->jiaobei_streak <= MUSE_PET_JIAOBEI_LEDGER_MAX &&
            s->jiaobei_last <= 3;
 }
 
@@ -422,7 +426,8 @@ muse_pet_result_t muse_pet_model_apply(muse_pet_model_t *s, muse_pet_action_t ac
          * costs MUSE_PET_FORTUNE_COST (it used to pay 20),
          * once a day, and the card is a pure function of the day
          * (fortune_for_day) -- the same day always draws the same card,
-         * on any board, with no random input. Under 5 coins a first draw
+         * on any board, with no random input. Under
+         * MUSE_PET_FORTUNE_COST a first draw
          * of the day is refused (PET_POOR) and settles nothing, so the
          * balance never goes negative. */
         (void)calibrated;
@@ -440,7 +445,8 @@ muse_pet_result_t muse_pet_model_apply(muse_pet_model_t *s, muse_pet_action_t ac
 
     if (action == PET_JIAOBEI_TOSS) {
         /* One 掷圣杯 toss (user decision 2026-11-14): pure consumption,
-         * 5 coins, at most 9 a day. The ledger rolls like sudoku's (no
+         * MUSE_PET_JIAOBEI_COST, at most MUSE_PET_JIAOBEI_DAILY_MAX a day.
+         * The ledger rolls like sudoku's (no
          * calibrated clock required: "at most 9 a day" must hold on a
          * board with no RTC too). The cap is checked first: a player
          * with coins but no tosses left gets PET_CAP, not PET_POOR.
