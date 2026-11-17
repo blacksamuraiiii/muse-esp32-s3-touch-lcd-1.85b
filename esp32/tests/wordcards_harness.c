@@ -26,6 +26,10 @@
  *  6. Pending audio: set by flip/replay, cleared on demand. (The UI
  *     also clears it when a card is flipped back or the page is left
  *     -- that is UI behaviour, not logic, and is not covered here.)
+ *  7. Tap retry for a FAILED word (2026-11-17 fix, option ②): the
+ *     retry re-marks FETCHING once per pending mark, never for
+ *     READY/FETCHING/EMPTY/out-of-range words, and a fresh mark
+ *     (replay) or a restart earns a fresh retry.
  */
 #include <assert.h>
 #include <stdbool.h>
@@ -345,6 +349,38 @@ static void test_cache(void)
     assert(muse_wordcards_cache_all_ready(&g));
 }
 
+static void test_retry_failed_audio(void)
+{
+    muse_wordcards_t g = playing_game();
+    assert(muse_wordcards_flip_to_back(&g, 0)); /* sets the mark */
+    muse_wordcards_cache_begin(&g);
+    muse_wordcards_cache_failed(&g, 0, g.set_gen);
+    /* First retry for this mark: re-marks FETCHING, bytes cleared. */
+    assert(muse_wordcards_retry_failed_audio(&g, 0));
+    assert(g.cache[0] == MUSE_WORDCARDS_CACHE_FETCHING);
+    assert(g.cache_bytes[0] == 0);
+    /* Same mark again: one retry only. */
+    assert(!muse_wordcards_retry_failed_audio(&g, 0));
+    assert(g.cache[0] == MUSE_WORDCARDS_CACHE_FETCHING);
+    /* Fail it again, then a fresh mark (replay) earns a fresh retry. */
+    muse_wordcards_cache_failed(&g, 0, g.set_gen);
+    assert(muse_wordcards_replay(&g, 0));
+    assert(muse_wordcards_retry_failed_audio(&g, 0));
+    assert(!muse_wordcards_retry_failed_audio(&g, 0));
+    /* Non-FAILED states never retry. */
+    muse_wordcards_cache_ready(&g, 0, g.set_gen, 100);
+    assert(!muse_wordcards_retry_failed_audio(&g, 0));
+    /* Out of range and empty slots never retry and never crash. */
+    assert(!muse_wordcards_retry_failed_audio(&g, -1));
+    assert(!muse_wordcards_retry_failed_audio(&g, MUSE_WORDCARDS_WORDS));
+    assert(!muse_wordcards_retry_failed_audio(&g, 7)); /* empty slot */
+    /* A restart clears the retry flag for the new round. */
+    muse_wordcards_cache_failed(&g, 1, g.set_gen);
+    muse_wordcards_restart(&g);
+    assert(muse_wordcards_flip_to_back(&g, 1));
+    assert(muse_wordcards_retry_failed_audio(&g, 1));
+}
+
 static void test_mp3_gate(void)
 {
     uint8_t good_sync[65];
@@ -376,6 +412,7 @@ int main(void)
     test_flip_counts_distinct();
     test_restart();
     test_cache();
+    test_retry_failed_audio();
     test_mp3_gate();
     printf("ok\n");
     return 0;

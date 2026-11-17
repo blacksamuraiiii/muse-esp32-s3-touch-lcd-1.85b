@@ -325,9 +325,12 @@ static void begin_game(bool restart)
  * shape). Pending audio is drained here and nowhere else, so a word
  * plays at most once per deal/replay: when READY it plays and the
  * mark is cleared; when still FETCHING the mark waits for the next
- * tick; when FAILED it is dropped silently (the question still shows,
- * nothing blocks). A play that could not start (no task) is dropped
- * the same way -- the user can tap the speaker again. */
+ * tick; when FAILED it either earns its one tap retry (2026-11-17
+ * fix, option ② -- the single deliberate exception to "the UI never
+ * fetches on a tap", same as the word cards) or is dropped silently
+ * (the question still shows, nothing blocks). A play that could not
+ * start (no task) is dropped the same way -- the user can tap the
+ * speaker again. */
 static void drain_pending_audio(void)
 {
     if (!muse_quiz_pending_audio(&s_game)) {
@@ -340,7 +343,19 @@ static void drain_pending_audio(void)
         muse_wordcards_audio_play_quiz(&s_game, s_game.q);
         muse_quiz_clear_pending_audio(&s_game);
     } else if (s_game.cache[s_game.q] == MUSE_WORDCARDS_CACHE_FAILED) {
-        muse_quiz_clear_pending_audio(&s_game);
+        /* One tap retry for a FAILED answer word; the mark stays
+         * while the single fetch runs, so the tick plays it when it
+         * turns READY. A fetch that could not even start puts the
+         * word back to FAILED and drops the mark instead of waiting
+         * forever. */
+        if (muse_quiz_retry_failed_audio(&s_game, s_game.q)) {
+            if (!muse_wordcards_audio_fetch_one_quiz(&s_game, s_game.q)) {
+                muse_quiz_cache_failed(&s_game, s_game.q, s_game.quiz_gen);
+                muse_quiz_clear_pending_audio(&s_game);
+            }
+        } else {
+            muse_quiz_clear_pending_audio(&s_game);
+        }
     }
 }
 

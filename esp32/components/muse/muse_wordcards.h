@@ -32,6 +32,11 @@
  * muse_wordcards_audio.c, which is ESP-IDF-only. A word whose fetch
  * failed simply stays silent -- the card still flips, nothing
  * blocks, and no word is retried more than once per set entry.
+ * One deliberate exception (2026-11-17 fix, option ②): tapping a
+ * FAILED word retries it once per tap -- see
+ * muse_wordcards_retry_failed_audio() and the UI's drain. The
+ * prefetch stays the only background fetch; the tap retry is its
+ * rescue, not a replacement.
  *
  * Word sets: 10 sets x 4 words (fruit / animal 1 / colour / body /
  * number / school / food / family / animal 2 / things, 40 words, per
@@ -117,6 +122,10 @@ typedef struct {
     size_t cache_bytes[MUSE_WORDCARDS_WORDS];
     uint32_t set_gen;                     /* bumped on every (re)start */
     int pending_audio;                    /* word waiting to play, or -1 */
+    /* The current pending mark already had its one tap retry (see
+     * muse_wordcards_retry_failed_audio). Cleared whenever a new
+     * pending mark is set and on every round reset. */
+    bool pending_audio_retried;
 } muse_wordcards_t;
 
 /* The sets table (9 sets x up to 8 words). Set 0 (fruit), 1 (animal, 8
@@ -184,6 +193,20 @@ int muse_wordcards_pending_audio(const muse_wordcards_t *g);
 /* Clear a pending audio request (played, or given up on after a
  * failed fetch). */
 void muse_wordcards_clear_pending_audio(muse_wordcards_t *g);
+
+/* One tap retry for a FAILED word (2026-11-17 fix, option ②): the
+ * single deliberate exception to "the UI never fetches on a tap".
+ * When the player taps a word whose prefetch failed, the UI calls
+ * this before kicking a single fetch for it. Only when `i` is a real
+ * word slot, its cache is FAILED, and the current pending mark has
+ * not had its retry yet: re-mark it FETCHING, consume the retry, and
+ * return true. Every other case returns false and changes nothing.
+ * The retry flag is cleared whenever a new pending mark is set
+ * (flip_to_back / replay) and on every round reset, so each tap gets
+ * at most one retry and the 50 ms drain can never spin a retry loop.
+ * A retry that fails again leaves the word FAILED; tapping the
+ * speaker sets a fresh mark and earns a fresh retry. */
+bool muse_wordcards_retry_failed_audio(muse_wordcards_t *g, int i);
 
 /* --- prefetch cache bookkeeping (the fetch itself lives in
  * muse_wordcards_audio.c) --- */

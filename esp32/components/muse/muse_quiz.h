@@ -46,6 +46,11 @@
  * muse_wordcards_audio.c, which is ESP-IDF-only. A word whose fetch
  * failed simply stays silent -- the question still shows, nothing
  * blocks, and no word is retried more than once per round.
+ * One deliberate exception (2026-11-17 fix, option ②): tapping the
+ * speaker for a FAILED answer word retries it once per tap -- see
+ * muse_quiz_retry_failed_audio() and the UI's drain. The prefetch
+ * stays the only background fetch; the tap retry is its rescue, not
+ * a replacement.
  */
 #pragma once
 
@@ -94,6 +99,10 @@ typedef struct {
     int last_pick;     /* option the player picked, or -1 (for the UI) */
     uint32_t elapsed_ms;
     bool audio_pending; /* current answer word waiting to play */
+    /* The current pending mark already had its one tap retry (see
+     * muse_quiz_retry_failed_audio). Cleared whenever a new pending
+     * mark is set and on every round reset. */
+    bool audio_pending_retried;
     /* Prefetch cache bookkeeping, one slot per question (the slot's
      * word is that question's answer). Same states as the word
      * cards, same generation rule. */
@@ -147,6 +156,18 @@ bool muse_quiz_pending_audio(const muse_quiz_t *g);
 /* Clear a pending audio request (played, or given up on after a
  * failed fetch). */
 void muse_quiz_clear_pending_audio(muse_quiz_t *g);
+
+/* One tap retry for a FAILED answer word (2026-11-17 fix, option ②):
+ * the same deliberate exception to "the UI never fetches on a tap"
+ * as the word cards (see muse_wordcards_retry_failed_audio). Only
+ * when `i` is a real question slot, its cache is FAILED, and the
+ * current pending mark has not had its retry yet: re-mark it
+ * FETCHING, consume the retry, and return true. Every other case
+ * returns false and changes nothing. The retry flag is cleared
+ * whenever a new pending mark is set (deal / next question /
+ * replay) and on every round reset, so each deal or replay gets at
+ * most one retry and the 50 ms drain can never spin a retry loop. */
+bool muse_quiz_retry_failed_audio(muse_quiz_t *g, int i);
 
 /* The current question's answer word (its English text is what the
  * speaker reads, its art is what the right option shows). NULL

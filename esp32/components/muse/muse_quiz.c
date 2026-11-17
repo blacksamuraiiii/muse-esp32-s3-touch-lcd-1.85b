@@ -56,6 +56,7 @@ void muse_quiz_init(muse_quiz_t *g)
     g->last_pick = -1;
     g->elapsed_ms = 0;
     g->audio_pending = false;
+    g->audio_pending_retried = false;
     g->quiz_gen = 0;
     for (int i = 0; i < MUSE_QUIZ_QUESTIONS; i++) {
         g->questions[i].answer = NULL;
@@ -126,6 +127,7 @@ static void reset_round(muse_quiz_t *g)
     g->last_pick = -1;
     g->elapsed_ms = 0;
     g->audio_pending = true; /* the first question reads itself */
+    g->audio_pending_retried = false;
     deal(g);
 }
 
@@ -173,6 +175,7 @@ void muse_quiz_tick(muse_quiz_t *g, uint32_t ms)
             } else {
                 g->q++;
                 g->audio_pending = true;
+                g->audio_pending_retried = false;
             }
         }
     }
@@ -208,6 +211,7 @@ bool muse_quiz_replay(muse_quiz_t *g)
         return false;
     }
     g->audio_pending = true;
+    g->audio_pending_retried = false;
     return true;
 }
 
@@ -219,6 +223,21 @@ bool muse_quiz_pending_audio(const muse_quiz_t *g)
 void muse_quiz_clear_pending_audio(muse_quiz_t *g)
 {
     g->audio_pending = false;
+}
+
+bool muse_quiz_retry_failed_audio(muse_quiz_t *g, int i)
+{
+    if (!g || i < 0 || i >= MUSE_QUIZ_QUESTIONS) {
+        return false;
+    }
+    if (g->cache[i] != MUSE_WORDCARDS_CACHE_FAILED ||
+        g->audio_pending_retried) {
+        return false;
+    }
+    g->cache[i] = MUSE_WORDCARDS_CACHE_FETCHING;
+    g->cache_bytes[i] = 0;
+    g->audio_pending_retried = true;
+    return true;
 }
 
 const muse_wordcards_word_t *muse_quiz_current_answer(
