@@ -329,6 +329,13 @@ static void fetch_task(void *arg)
     uint32_t gen = req->gen;
     free(req);
     const int words = list.count;
+    /* A tap retry narrows the list to one slot (2026-11-17 fix,
+     * option ②): `single` with an out-of-range slot falls back to
+     * the whole list rather than fetching nothing. */
+    const bool single = list.single && list.single_slot >= 0 &&
+                        list.single_slot < words;
+    const int lo = single ? list.single_slot : 0;
+    const int hi = single ? list.single_slot + 1 : words;
     if (words == 0) {
         fetch_task_exit();
         return;
@@ -375,11 +382,23 @@ static void fetch_task(void *arg)
     }
     if (s_play_task && !s_fetch_abort) {
         ESP_LOGW(TAG, "prefetch abandoned: playback still running");
+        if (single) {
+            /* The retried word would otherwise sit FETCHING with no
+             * task to resolve it: fail it so the drain drops the mark
+             * and a later tap can retry it. */
+            list.mark_failed(list.ctx, list.single_slot, gen);
+        }
         fetch_task_exit();
         return;
     }
-    list.mark_begin(list.ctx);
-    for (int i = 0; i < words; i++) {
+    /* A single-word retry re-marks only its own word FETCHING (the
+     * caller did that through the retry function); a whole-list
+     * mark_begin here would re-mark the other FAILED words FETCHING
+     * with no task to resolve them. */
+    if (!single) {
+        list.mark_begin(list.ctx);
+    }
+    for (int i = lo; i < hi; i++) {
         if (s_fetch_abort || gen != list.cur_gen(list.ctx)) {
             break;
         }
@@ -397,12 +416,25 @@ static void fetch_task(void *arg)
              * generation (cache_begin keeps them); only fail the ones
              * that are not READY. */
             list.mark_failed(list.ctx, i, gen);
-            for (int j = i + 1; j < words; j++) {
+            for (int j = i + 1; j < hi; j++) {
                 if (!list.is_ready(list.ctx, j)) {
                     list.mark_failed(list.ctx, j, gen);
                 }
             }
             break;
+        }
+    }
+    if (single) {
+        /* The single fetch superseded a whole-list prefetch: the words
+         * that prefetch left FETCHING (visited by neither task) must
+         * not wait on a fetch that will never come. Fail them so a
+         * later tap can retry them, or re-entry re-fetches the set;
+         * READY words keep their bytes. A stale generation ignores
+         * the marks itself. */
+        for (int i = 0; i < words; i++) {
+            if (!list.is_ready(list.ctx, i)) {
+                list.mark_failed(list.ctx, i, gen);
+            }
         }
     }
     /* Only a fetch that stopped mid-body leaves unread bytes on the socket --
@@ -510,25 +542,63 @@ static uint32_t quiz_cur_gen(void *ctx)
     return ((muse_quiz_t *)ctx)->quiz_gen;
 }
 
+static void wc_list_for(muse_wordcards_t *g, muse_wc_fetch_list_t *list)
+{
+    list->count = muse_wordcards_set_words(g->set);
+    for (int i = 0; i < list->count; i++) {
+        list->en[i] = MUSE_WORDCARDS_SETS_TABLE[g->set].words[i].en;
+    }
+    list->slots = s_slot;
+    list->lens = s_slot_len;
+    list->mark_begin = wc_mark_begin;
+    list->mark_ready = wc_mark_ready;
+    list->mark_failed = wc_mark_failed;
+    list->is_ready = wc_is_ready;
+    list->cur_gen = wc_cur_gen;
+    list->ctx = g;
+}
+
 void muse_wordcards_audio_prefetch(muse_wordcards_t *g)
 {
     if (!g) {
         return;
     }
     muse_wc_fetch_list_t list = {0};
-    list.count = muse_wordcards_set_words(g->set);
-    for (int i = 0; i < list.count; i++) {
-        list.en[i] = MUSE_WORDCARDS_SETS_TABLE[g->set].words[i].en;
-    }
-    list.slots = s_slot;
-    list.lens = s_slot_len;
-    list.mark_begin = wc_mark_begin;
-    list.mark_ready = wc_mark_ready;
-    list.mark_failed = wc_mark_failed;
-    list.is_ready = wc_is_ready;
-    list.cur_gen = wc_cur_gen;
-    list.ctx = g;
+    wc_list_for(g, &list);
     muse_wordcards_audio_prefetch_list(&list);
+}
+
+bool muse_wordcards_audio_fetch_one(muse_wordcards_t *g, int i)
+{
+    if (!g || i < 0 || i >= muse_wordcards_set_words(g->set)) {
+        return false;
+    }
+    muse_wc_fetch_list_t list = {0};
+    wc_list_for(g, &list);
+    list.single = true;
+    list.single_slot = i;
+    muse_wordcards_audio_prefetch_list(&list);
+    return s_fetch_task != NULL || s_fetch_wanted;
+}
+
+static void quiz_list_for(muse_quiz_t *g, muse_wc_fetch_list_t *list)
+{
+    /* One slot per question, in question order: slot i is question
+     * i's answer word. */
+    list->count = MUSE_QUIZ_QUESTIONS;
+    for (int i = 0; i < list->count; i++) {
+        list->en[i] = g->questions[i].answer
+                         ? g->questions[i].answer->en
+                         : "";
+    }
+    list->slots = s_quiz_slot;
+    list->lens = s_quiz_slot_len;
+    list->mark_begin = quiz_mark_begin;
+    list->mark_ready = quiz_mark_ready;
+    list->mark_failed = quiz_mark_failed;
+    list->is_ready = quiz_is_ready;
+    list->cur_gen = quiz_cur_gen;
+    list->ctx = g;
 }
 
 void muse_wordcards_audio_prefetch_quiz(muse_quiz_t *g)
@@ -537,23 +607,21 @@ void muse_wordcards_audio_prefetch_quiz(muse_quiz_t *g)
         return;
     }
     muse_wc_fetch_list_t list = {0};
-    /* One slot per question, in question order: slot i is question
-     * i's answer word. */
-    list.count = MUSE_QUIZ_QUESTIONS;
-    for (int i = 0; i < list.count; i++) {
-        list.en[i] = g->questions[i].answer
-                         ? g->questions[i].answer->en
-                         : "";
-    }
-    list.slots = s_quiz_slot;
-    list.lens = s_quiz_slot_len;
-    list.mark_begin = quiz_mark_begin;
-    list.mark_ready = quiz_mark_ready;
-    list.mark_failed = quiz_mark_failed;
-    list.is_ready = quiz_is_ready;
-    list.cur_gen = quiz_cur_gen;
-    list.ctx = g;
+    quiz_list_for(g, &list);
     muse_wordcards_audio_prefetch_list(&list);
+}
+
+bool muse_wordcards_audio_fetch_one_quiz(muse_quiz_t *g, int i)
+{
+    if (!g || i < 0 || i >= MUSE_QUIZ_QUESTIONS) {
+        return false;
+    }
+    muse_wc_fetch_list_t list = {0};
+    quiz_list_for(g, &list);
+    list.single = true;
+    list.single_slot = i;
+    muse_wordcards_audio_prefetch_list(&list);
+    return s_fetch_task != NULL || s_fetch_wanted;
 }
 
 void muse_wordcards_audio_prefetch_abort(void)

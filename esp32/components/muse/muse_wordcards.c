@@ -223,6 +223,7 @@ static void reset_round(muse_wordcards_t *g)
     }
     g->flipped_count = 0;
     g->pending_audio = -1;
+    g->pending_audio_retried = false;
 }
 
 void muse_wordcards_init(muse_wordcards_t *g)
@@ -301,6 +302,7 @@ bool muse_wordcards_flip_to_back(muse_wordcards_t *g, int i)
         g->flipped_count++;
     }
     g->pending_audio = i;
+    g->pending_audio_retried = false;
     return true;
 }
 
@@ -331,6 +333,7 @@ bool muse_wordcards_replay(muse_wordcards_t *g, int i)
         return false;
     }
     g->pending_audio = i;
+    g->pending_audio_retried = false;
     return true;
 }
 
@@ -342,6 +345,24 @@ int muse_wordcards_pending_audio(const muse_wordcards_t *g)
 void muse_wordcards_clear_pending_audio(muse_wordcards_t *g)
 {
     g->pending_audio = -1;
+}
+
+bool muse_wordcards_retry_failed_audio(muse_wordcards_t *g, int i)
+{
+    if (!g || i < 0 || i >= MUSE_WORDCARDS_WORDS) {
+        return false;
+    }
+    if (!word_slot(g, i)) {
+        return false;
+    }
+    if (g->cache[i] != MUSE_WORDCARDS_CACHE_FAILED ||
+        g->pending_audio_retried) {
+        return false;
+    }
+    g->cache[i] = MUSE_WORDCARDS_CACHE_FETCHING;
+    g->cache_bytes[i] = 0;
+    g->pending_audio_retried = true;
+    return true;
 }
 
 void muse_wordcards_cache_begin(muse_wordcards_t *g)

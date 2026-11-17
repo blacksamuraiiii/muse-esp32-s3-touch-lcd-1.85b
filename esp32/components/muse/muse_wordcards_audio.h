@@ -53,7 +53,13 @@
  * strings, so a list copied by value stays valid. The mark callbacks
  * are the caller's cache bookkeeping (word cards or quiz); they
  * ignore a stale generation themselves, exactly like the word-cards
- * marks always did. */
+ * marks always did. `single` + `single_slot` (2026-11-17 fix,
+ * option ②) narrow a list to one slot: a tap retry for a FAILED
+ * word. The fetch task then skips mark_begin (the caller already
+ * re-marked that word FETCHING), fetches only that slot, and fails
+ * any word the aborted prefetch left FETCHING so nothing waits on a
+ * fetch that will never come. `single` false (the `{0}` default)
+ * means the whole list. */
 typedef struct {
     int count; /* words, 1..MUSE_WORDCARDS_WORDS */
     const char *en[MUSE_WORDCARDS_WORDS];
@@ -65,6 +71,8 @@ typedef struct {
     bool (*is_ready)(void *ctx, int slot);
     uint32_t (*cur_gen)(void *ctx);
     void *ctx;
+    bool single;     /* true: fetch only single_slot, not the list */
+    int single_slot; /* the one slot to fetch when single is true */
 } muse_wc_fetch_list_t;
 
 /* Start prefetching the current set's 4 MP3s into PSRAM. Safe to
@@ -87,6 +95,30 @@ void muse_wordcards_audio_prefetch_list(const muse_wc_fetch_list_t *list);
  * starts when it exits. `g` is the UI's static quiz struct and must
  * stay alive while fetching. */
 void muse_wordcards_audio_prefetch_quiz(muse_quiz_t *g);
+
+/* Fetch one word only (2026-11-17 fix, option ②): the tap retry for
+ * a FAILED word. Builds the same list as the prefetch for `g`'s set
+ * (same slot pool, same mark callbacks, same generation) but with
+ * `single` set, so the fetch task fetches only slot `i` -- and fails
+ * any word an aborted prefetch left FETCHING, so nothing waits on a
+ * fetch that will never come. Same queueing as the prefetch: a fetch
+ * already running is asked to stop and this one starts when it
+ * exits (it never grabs the shared client lock itself -- the lock
+ * is only taken inside muse_tts_fetch_raw). Same RAM gate as the
+ * prefetch: the fetch task refuses below WC_MIN_INTERNAL_FOR_TLS
+ * and the word stays FAILED. Returns true when the fetch task is
+ * running or queued for the word, false when no task could start
+ * (the caller then puts the word back to FAILED and drops the mark
+ * instead of waiting forever). Only call for a word the logic layer
+ * just re-marked FETCHING through muse_wordcards_retry_failed_audio
+ * (or the quiz twin); fetching a READY word would re-download it. */
+bool muse_wordcards_audio_fetch_one(muse_wordcards_t *g, int i);
+
+/* Fetch one quiz answer word only: the quiz twin of the fetch above
+ * (same single-slot list, same queueing, same gate, same return
+ * contract). Only call for a slot the logic layer just re-marked
+ * FETCHING through muse_quiz_retry_failed_audio. */
+bool muse_wordcards_audio_fetch_one_quiz(muse_quiz_t *g, int i);
 
 /* Abort a prefetch in flight (leaving the tile / restarting). Marks
  * already fetched are kept; a fetch from the old generation is

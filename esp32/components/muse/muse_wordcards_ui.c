@@ -34,14 +34,18 @@
  * end. The 50 ms timer still runs, but only to drain the audio mark
  * and to keep the screen awake while a round is open.
  *
- * Pronunciation: the UI never fetches on a tap. The prefetch (started
- * on entering the page) fills the PSRAM cache in the background; the
- * 50 ms tick drains the logic's pending_audio mark -- when the word
- * is READY it plays at once, when it is still FETCHING the mark waits
- * for the next tick, when it FAILED the mark is dropped silently and
- * the card simply stays silent. Flipping a card back or leaving the
- * page drops a pending mark, so audio is never played for a card the
- * player is no longer looking at.
+ * Pronunciation: the UI never fetches on a tap -- with one deliberate
+ * exception (2026-11-17 fix, option ②): a word whose prefetch FAILED
+ * gets one single fetch when the player taps it (see
+ * muse_wordcards_retry_failed_audio and drain_pending_audio). The
+ * prefetch (started on entering the page) fills the PSRAM cache in
+ * the background; the 50 ms tick drains the logic's pending_audio
+ * mark -- when the word is READY it plays at once, when it is still
+ * FETCHING the mark waits for the next tick, when it FAILED the mark
+ * either earns its one tap retry or is dropped silently and the card
+ * simply stays silent. Flipping a card back or leaving the page drops
+ * a pending mark, so audio is never played for a card the player is
+ * no longer looking at.
  */
 #include "muse_wordcards_ui.h"
 
@@ -313,7 +317,8 @@ static void begin_game(void)
  * and nowhere else, so a word plays at
  * most once per flip/replay: when READY it plays and the mark is
  * cleared; when still FETCHING the mark waits for the next tick;
- * when FAILED it is dropped silently (the card stays silent). A play
+ * when FAILED it either earns its one tap retry (2026-11-17 fix,
+ * option ②) or is dropped silently (the card stays silent). A play
  * that could not start (no task) is dropped the same way -- the user
  * can tap the speaker again. */
 static void drain_pending_audio(void)
@@ -329,7 +334,21 @@ static void drain_pending_audio(void)
         muse_wordcards_audio_play(&s_game, p);
         muse_wordcards_clear_pending_audio(&s_game);
     } else if (s_game.cache[p] == MUSE_WORDCARDS_CACHE_FAILED) {
-        muse_wordcards_clear_pending_audio(&s_game);
+        /* One tap retry for a FAILED word: the single deliberate
+         * exception to "the UI never fetches on a tap". The retry is
+         * one-shot per mark (see muse_wordcards_retry_failed_audio),
+         * and the mark stays while the single fetch runs, so the tick
+         * plays the word when it turns READY. A fetch that could not
+         * even start puts the word back to FAILED and drops the mark
+         * instead of waiting forever. */
+        if (muse_wordcards_retry_failed_audio(&s_game, p)) {
+            if (!muse_wordcards_audio_fetch_one(&s_game, p)) {
+                muse_wordcards_cache_failed(&s_game, p, s_game.set_gen);
+                muse_wordcards_clear_pending_audio(&s_game);
+            }
+        } else {
+            muse_wordcards_clear_pending_audio(&s_game);
+        }
     }
 }
 

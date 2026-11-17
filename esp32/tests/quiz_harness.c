@@ -22,6 +22,10 @@
  *  5. Pending audio: set on deal and replay, cleared on demand.
  *  6. Cache bookkeeping: begin -> FETCHING, ready/failed marks, a
  *     mark from an older quiz generation is ignored, all-ready.
+ *  7. Tap retry for a FAILED answer word (2026-11-17 fix, option ②):
+ *     the retry re-marks FETCHING once per pending mark, never for
+ *     READY/FETCHING/out-of-range slots, and a fresh mark (replay)
+ *     or a new question earns a fresh retry.
  */
 #include <assert.h>
 #include <stdbool.h>
@@ -273,6 +277,42 @@ static void test_cache(void)
     assert(muse_quiz_cache_all_ready(&g));
 }
 
+static void test_retry_failed_audio(void)
+{
+    srand(11);
+    muse_quiz_t g;
+    muse_quiz_init(&g);
+    muse_quiz_start(&g);
+    assert(muse_quiz_pending_audio(&g)); /* first question reads itself */
+    muse_quiz_cache_begin(&g);
+    muse_quiz_cache_failed(&g, 0, g.quiz_gen);
+    /* First retry for this mark: re-marks FETCHING, bytes cleared. */
+    assert(muse_quiz_retry_failed_audio(&g, 0));
+    assert(g.cache[0] == MUSE_WORDCARDS_CACHE_FETCHING);
+    assert(g.cache_bytes[0] == 0);
+    /* Same mark again: one retry only. */
+    assert(!muse_quiz_retry_failed_audio(&g, 0));
+    assert(g.cache[0] == MUSE_WORDCARDS_CACHE_FETCHING);
+    /* Fail it again, then a fresh mark (replay) earns a fresh retry. */
+    muse_quiz_cache_failed(&g, 0, g.quiz_gen);
+    assert(muse_quiz_replay(&g));
+    assert(muse_quiz_retry_failed_audio(&g, 0));
+    assert(!muse_quiz_retry_failed_audio(&g, 0));
+    /* Non-FAILED states never retry. */
+    muse_quiz_cache_ready(&g, 0, g.quiz_gen, 100);
+    assert(!muse_quiz_retry_failed_audio(&g, 0));
+    /* Out of range never retries and never crashes. */
+    assert(!muse_quiz_retry_failed_audio(&g, -1));
+    assert(!muse_quiz_retry_failed_audio(&g, MUSE_QUIZ_QUESTIONS));
+    /* A new question clears the retry flag: answer q0, run the
+     * verdict out, and q1's mark is fresh. */
+    muse_quiz_cache_failed(&g, 1, g.quiz_gen);
+    assert(muse_quiz_answer(&g, g.questions[0].correct));
+    muse_quiz_tick(&g, MUSE_QUIZ_FEEDBACK_MS);
+    assert(g.q == 1 && muse_quiz_pending_audio(&g));
+    assert(muse_quiz_retry_failed_audio(&g, 1));
+}
+
 int main(void)
 {
     test_pool();
@@ -280,6 +320,7 @@ int main(void)
     test_answer_feedback();
     test_clock();
     test_cache();
+    test_retry_failed_audio();
     printf("ok\n");
     return 0;
 }
