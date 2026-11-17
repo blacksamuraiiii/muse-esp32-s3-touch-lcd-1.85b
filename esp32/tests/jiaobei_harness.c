@@ -8,10 +8,11 @@
  *     0 or 1), laughing 25% (2), yin 25% (3).
  *   - Faces: holy is left round + right flat, laughing both flat, yin
  *     both round (mockup v12).
- *   - The in-place flip: faces swap at the midpoint of a
- *     MUSE_JIAOBEI_FLIP_MS spin, the angle runs 0 -> 360 * turns and is
- *     0 again once the result has landed (a whole number of turns), and
- *     a tap mid-flip never starts a second toss.
+ *   - The in-place flip: faces swap at 5/12 of a MUSE_JIAOBEI_FLIP_MS spin
+ *     (the edge-on quarter turn nearest the middle, where the UI's
+ *     scale_y = |cos| flip cannot show the change), the angle runs
+ *     0 -> 360 * turns and is 0 again once the result has landed (a whole
+ *     number of turns), and a tap mid-flip never starts a second toss.
  *   - The consecutive-holy streak: holy +1, laughing / yin clear it,
  *     reset() starts it at 0. Re-entering the page restores it:
  *     muse_jiaobei_restore() rebuilds the settled board (result faces
@@ -99,7 +100,7 @@ int main(void)
     muse_jiaobei_tick(&g, MUSE_JIAOBEI_FLIP_MS / 4);
     assert(muse_jiaobei_flip_angle(&g) == 360u * MUSE_JIAOBEI_FLIP_TURNS / 4);
     assert(!g.face_swapped);
-    muse_jiaobei_tick(&g, MUSE_JIAOBEI_FLIP_MS / 4); /* the midpoint */
+    muse_jiaobei_tick(&g, MUSE_JIAOBEI_FLIP_MS / 4); /* past 5/12: swapped */
     assert(g.face_swapped);
     assert(g.left == MUSE_JIAOBEI_ROUND && g.right == MUSE_JIAOBEI_FLAT);
     assert(muse_jiaobei_flip_angle(&g) == 360u * MUSE_JIAOBEI_FLIP_TURNS / 2);
@@ -107,7 +108,9 @@ int main(void)
     muse_jiaobei_toss(&g, 3);
     assert(g.result == MUSE_JIAOBEI_SHENG);
     assert(g.streak == 1);
+    /* The face changed before the middle: it must be edge-on there. */
     muse_jiaobei_tick(&g, MUSE_JIAOBEI_FLIP_MS / 4);
+    assert(g.face_swapped);
     assert(muse_jiaobei_flip_angle(&g) ==
            360u * MUSE_JIAOBEI_FLIP_TURNS * 3u / 4u);
     muse_jiaobei_tick(&g, MUSE_JIAOBEI_FLIP_MS / 4); /* the result lands */

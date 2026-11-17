@@ -31,6 +31,7 @@
  */
 #include "muse_jiaobei_ui.h"
 
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
@@ -88,7 +89,7 @@ static lv_image_dsc_t s_cup_dsc[2][2];
 static uint16_t *s_cup_buf[2][2];
 static bool s_cup_painted[2][2];
 static muse_jiaobei_face_t s_shown_face[2];
-static uint32_t s_shown_angle[2];   /* tenths of a degree, as LVGL takes it */
+static uint32_t s_shown_sy[2];     /* last scale_y written, 1/256 */
 static uint32_t s_shake_fail;   /* consecutive bad/absent IMU reads */
 static lv_obj_t *s_face_label[2];
 static lv_obj_t *s_msg;
@@ -272,9 +273,18 @@ static void refresh_display(void)
      * angle is written only when it actually changes: rewriting a
      * transform every tick forces LVGL to redraw the whole tile, which
      * on a 50 ms timer is the stutter the word-card page was fixed for
-     * in 1.5.2d. lv_image_set_rotation() takes tenths of a degree, so
-     * the model's degrees are multiplied by 10 here. */
-    uint32_t angle = muse_jiaobei_flip_angle(&s_game) * 10u;
+     * in 1.5.2d. The flip is about the horizontal axis -- a tossed cup tips
+     * end over end, not a clock hand (user 2026-11-16) -- so the model's
+     * angle becomes scale_y = |cos|: full size at a whole turn, a line at
+     * every quarter turn. The cup is symmetric top to bottom, so the
+     * mirrored half of the rotation needs no separate tile. */
+    uint32_t sy = 256;
+    if (s_game.phase == MUSE_JIAOBEI_FLIPPING) {
+        float rad = (float)muse_jiaobei_flip_angle(&s_game) * 3.14159265f / 180.0f;
+        float c = cosf(rad);
+        uint32_t v = (uint32_t)(fabsf(c) * 256.0f);
+        sy = v < 1 ? 1 : v;   /* 0-high is degenerate in LVGL */
+    }
     for (int i = 0; i < 2; i++) {
         muse_jiaobei_face_t want = i == 0 ? s_game.left : s_game.right;
         int f = (int)want;
@@ -289,9 +299,9 @@ static void refresh_display(void)
             lv_image_set_src(s_cup_img[i], &s_cup_dsc[i][f]);
             s_shown_face[i] = want;
         }
-        if (angle != s_shown_angle[i]) {
-            lv_image_set_rotation(s_cup_img[i], (int32_t)angle);
-            s_shown_angle[i] = angle;
+        if (sy != s_shown_sy[i]) {
+            lv_image_set_scale_y(s_cup_img[i], sy);
+            s_shown_sy[i] = sy;
         }
     }
     /* Face labels: result state only. */
@@ -542,10 +552,10 @@ void muse_jiaobei_ui_build(lv_obj_t *page, lv_event_cb_t back_cb)
         lv_obj_set_pos(s_cup_img[i], MUSE_JIAOBEI_CUP_X0 + 100 * i,
                        MUSE_JIAOBEI_CUP_Y);
         lv_obj_set_size(s_cup_img[i], MUSE_JIAOBEI_CUP_PX, MUSE_JIAOBEI_CUP_PX);
-        /* The flip spins the cup about its centre with
-         * lv_image_set_rotation(), the image's own transform -- not the
-         * style transform. (The flat-cut tips the user reported twice were
-         * the paint geometry, not the transform: see paint_cup's note.) */
+        /* The flip squashes the cup vertically with lv_image_set_scale_y()
+         * about its centre -- the image's own transform, not the style
+         * transform. (The flat-cut tips the user reported twice were the
+         * paint geometry, not the transform: see paint_cup's note.) */
         lv_image_set_pivot(s_cup_img[i], MUSE_JIAOBEI_CUP_PX / 2,
                            MUSE_JIAOBEI_CUP_PX / 2);
         lv_obj_remove_flag(s_cup_img[i], LV_OBJ_FLAG_CLICKABLE);
@@ -554,7 +564,7 @@ void muse_jiaobei_ui_build(lv_obj_t *page, lv_event_cb_t back_cb)
         }
         /* Force the first paint-and-src on the first refresh. */
         s_shown_face[i] = (muse_jiaobei_face_t)-1;
-        s_shown_angle[i] = 0;
+        s_shown_sy[i] = 256;
     }
 
     /* 阴/阳 face labels under each cup (result state only): the flat

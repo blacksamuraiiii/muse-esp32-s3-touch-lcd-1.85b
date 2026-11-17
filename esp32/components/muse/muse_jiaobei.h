@@ -15,8 +15,9 @@
  * an in-place flip (FLIPPING) that spins the cups MUSE_JIAOBEI_FLIP_TURNS
  * times (user 2026-11-16, replacing the 300 ms squeeze); the faces swap at
  * the midpoint and the result lands at the end. The UI reads the flip
- * progress through muse_jiaobei_flip_angle() and turns both cups about
- * their centres -- the cups never change position.
+ * progress through muse_jiaobei_flip_angle() and flips both cups over their
+ * horizontal axis (user 2026-11-16: an in-plane spin read as a clock hand;
+ * a tossed cup tips end over end) -- the cups never change position.
  *
  * The consecutive-holy streak ("连续圣杯 xN") is session state with a
  * day: it counts consecutive holy results, clears on a laughing or yin
@@ -157,8 +158,9 @@ void muse_jiaobei_tick(muse_jiaobei_t *g, uint32_t ms);
 
 /* Spin for the flip, in degrees: 0 at rest, 0 .. 360*MUSE_JIAOBEI_FLIP_TURNS
  * while FLIPPING, and 0 from RESULT on (a whole number of turns, so the
- * image is back where it started and nothing jumps). The UI feeds
- * lv_image_set_rotation(), which takes tenths of a degree. */
+ * image is back where it started and nothing jumps). The UI turns this into
+ * a flip about the horizontal axis -- scale_y = |cos(angle)|, the way a
+ * tossed cup tips over and comes back -- not an in-plane spin. */
 uint32_t muse_jiaobei_flip_angle(const muse_jiaobei_t *g);
 
 /* FLIPPING -> the pre-toss state (muse_jiaobei_toss() saved it): the
