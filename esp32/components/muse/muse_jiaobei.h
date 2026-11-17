@@ -12,12 +12,13 @@
  *
  * The board never leaves the page: there is no start page and no OVER
  * settlement (user decision 2026-11-14). A tap in READY or RESULT starts
- * an in-place flip (FLIPPING) that spins the cups MUSE_JIAOBEI_FLIP_TURNS
- * times (user 2026-11-16, replacing the 300 ms squeeze); the faces swap at
- * the midpoint and the result lands at the end. The UI reads the flip
+ * an in-place flip (FLIPPING) that turns the cups MUSE_JIAOBEI_FLIP_TURNS
+ * time (1, user 2026-11-17, replacing the three-turn spin of 2026-11-16
+ * and the 300 ms squeeze before it); the faces swap at the first quarter
+ * turn and the result lands at the end. The UI reads the flip
  * progress through muse_jiaobei_flip_angle() and flips both cups over their
- * horizontal axis (user 2026-11-16: an in-plane spin read as a clock hand;
- * a tossed cup tips end over end) -- the cups never change position.
+ * vertical axis (user 2026-11-16: an in-plane spin read as a clock hand;
+ * a tossed cup tips side over side) -- the cups never change position.
  *
  * The consecutive-holy streak ("连续圣杯 xN") is session state with a
  * day: it counts consecutive holy results, clears on a laughing or yin
@@ -53,12 +54,13 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-/* Flip duration, ms. The cups spin MUSE_JIAOBEI_FLIP_TURNS times in place
- * and land showing the result; the faces swap at the halfway point, where
- * the spin is fastest and the swap cannot be seen (user 2026-11-16: "转三圈
- * 再落", the earlier 300 ms squeeze read as a blink). */
+/* Flip duration, ms. The cups turn MUSE_JIAOBEI_FLIP_TURNS time in place
+ * and land showing the result; the faces swap at the first quarter turn,
+ * where the cup is edge-on and the swap cannot be seen (user 2026-11-17:
+ * one turn, replacing "转三圈"; the earlier 300 ms squeeze read as a
+ * blink). */
 #define MUSE_JIAOBEI_FLIP_MS 1000u
-#define MUSE_JIAOBEI_FLIP_TURNS 3u
+#define MUSE_JIAOBEI_FLIP_TURNS 1u
 
 /* Shake-to-toss tuning (see the header note). Starting values only --
  * the right numbers depend on how hard the player shakes, so tune on
@@ -77,7 +79,7 @@
 
 typedef enum {
     MUSE_JIAOBEI_READY = 0, /* board shown, tap to toss */
-    MUSE_JIAOBEI_FLIPPING,  /* 300 ms in-place flip, then RESULT */
+    MUSE_JIAOBEI_FLIPPING,  /* MUSE_JIAOBEI_FLIP_MS in-place flip (1000 ms, 1 turn), then RESULT */
     MUSE_JIAOBEI_RESULT,    /* result held until the next toss */
 } muse_jiaobei_phase_t;
 
@@ -108,7 +110,7 @@ typedef struct {
     muse_jiaobei_face_t saved_left;
     muse_jiaobei_face_t saved_right;
     uint32_t saved_streak;
-    bool face_swapped; /* flip passed its midpoint (faces exchanged) */
+    bool face_swapped; /* flip passed its first quarter turn (faces exchanged) */
 } muse_jiaobei_t;
 
 /* Shake detector state (pure logic, fed by the UI's 50 ms tick). */
@@ -153,14 +155,14 @@ void muse_jiaobei_result_faces(muse_jiaobei_result_t result,
 void muse_jiaobei_toss(muse_jiaobei_t *g, uint32_t random);
 
 /* Advance the flip by `ms` (FLIPPING only). The faces swap at the
- * midpoint; at MUSE_JIAOBEI_FLIP_MS the phase becomes RESULT. */
+ * first quarter turn; at MUSE_JIAOBEI_FLIP_MS the phase becomes RESULT. */
 void muse_jiaobei_tick(muse_jiaobei_t *g, uint32_t ms);
 
 /* Spin for the flip, in degrees: 0 at rest, 0 .. 360*MUSE_JIAOBEI_FLIP_TURNS
  * while FLIPPING, and 0 from RESULT on (a whole number of turns, so the
  * image is back where it started and nothing jumps). The UI turns this into
- * a flip about the horizontal axis -- scale_y = |cos(angle)|, the way a
- * tossed cup tips over and comes back -- not an in-plane spin. */
+ * a flip about the vertical axis -- scale_x = |cos(angle)|, the way a
+ * tossed cup tips side over side and comes back -- not an in-plane spin. */
 uint32_t muse_jiaobei_flip_angle(const muse_jiaobei_t *g);
 
 /* FLIPPING -> the pre-toss state (muse_jiaobei_toss() saved it): the

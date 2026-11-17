@@ -109,8 +109,10 @@ esp_err_t muse_audio_sfx(muse_sfx_t sfx);
 
 /* The same sound, written by the caller: blocks for the sound's length.
  * Use it only where the *result* drives logic -- the low-battery gate
- * disarms only when the beep really went out -- or on a task that has
- * nothing else to do (the voice task's send-failure sound). Returns
+ * disarms only when the beep really went out. The voice task's
+ * send-failure sound does NOT use this: muse_voice.c plays it with the
+ * async muse_audio_sfx() (MUSE_SFX_BAD), so a held note's failure never
+ * blocks the voice task. Returns
  * ESP_OK when the sound was written out (muted counts: the speaker-off
  * setting silences it on purpose), ESP_FAIL when the codecs are closed,
  * ESP_ERR_NO_MEM when the render buffer could not be allocated, or

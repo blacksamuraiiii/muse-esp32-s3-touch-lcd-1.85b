@@ -20,9 +20,11 @@
  * tilt uses, only while the page is open (wake on show, sleep on
  * hide) -- never the tap / WoM interrupt engine. Both triggers go
  * through start_toss(): the UI gates on the snapshot first (coins
- * < 5: silent, no note, no sound -- user decision; 9 tosses used up:
+ * < MUSE_PET_JIAOBEI_COST (2): a note in the message row, no sound --
+ * 6d39a8e changed the old silent refusal into a note; 9 tosses used up:
  * the limit prompt), then sends PET_JIAOBEI_TOSS carrying the
- * already-decided result and starts the 300 ms flip at once. The
+ * already-decided result and starts the MUSE_JIAOBEI_FLIP_MS flip
+ * (1000 ms, 1 turn) at once. The
  * worker is the authority: a PET_POOR / PET_CAP that arrives after
  * the flip started cancels it back to the pre-toss board
  * (fee_refused / limit_reached, called from the feedback drain), and
@@ -57,9 +59,11 @@ static const char *TAG = "muse_jiaobei_ui";
 #define MUSE_JIAOBEI_CUP_Y 110
 #define MUSE_JIAOBEI_LIMIT_MS 2000u /* prompt auto-dismiss */
 /* Shake polling runs on the LVGL thread, and a wedged I2C bus blocks a
- * read for up to the driver's 1 s timeout. Three bad (or absurdly slow)
- * reads in a row and the page stops polling until it is entered again,
- * rather than freezing every 50 ms tick (2026-11-16 audit). */
+ * read for up to the driver's 1 s timeout. Three bad reads in a row, or
+ * a single read slower than MUSE_JIAOBEI_SHAKE_SLOW_MS, and the page
+ * stops polling until it is entered again, rather than freezing every
+ * 50 ms tick (2026-11-16 audit; the slow-read rule tightened 2026-11-17,
+ * review fix F2). */
 #define MUSE_JIAOBEI_SHAKE_FAIL_MAX 3
 #define MUSE_JIAOBEI_SHAKE_SLOW_MS 100u
 
@@ -80,10 +84,11 @@ static const char *TAG = "muse_jiaobei_ui";
  * -- the crescent opens the other way then, which a plain scale_x cannot
  * fake. Painting
  * is 2x2-supersampled float work over 100x100 px (~160 k samples), so
- * doing it inside a flip stalls the LVGL thread -- the tile is painted
- * * the first time a (face, mirror) pair is needed and only its descriptor
- * is swapped afterwards (2026-11-16, 1.5.3c audit). Eight tiles at 20 KB
- * each live in PSRAM.
+ * doing it inside a flip stalls the LVGL thread -- all eight tiles are
+ * painted once at build and only their descriptors are swapped
+ * afterwards; refresh_display() keeps a lazy paint as a fallback for a
+ * tile whose allocation failed at build (2026-11-17, review fix F4).
+ * Eight tiles at 20 KB each live in PSRAM.
  */
 static muse_jiaobei_t s_game;
 static muse_jiaobei_shake_t s_shake;
@@ -276,10 +281,11 @@ static void hide_limit(void)
 
 static void refresh_display(void)
 {
-    /* Cups: the tile for the face being shown is painted the first time
-     * it is needed and cached afterwards, so a flip only swaps the
-     * descriptor -- the 2x2-supersampled paint (~160 k float samples
-     * per tile) never runs inside a flip on the LVGL thread. The spin
+    /* Cups: all eight tiles are pre-painted at build, so a flip only
+     * swaps the descriptor -- the 2x2-supersampled paint (~160 k float
+     * samples per tile) never runs inside a flip on the LVGL thread.
+     * The paint below is the fallback for a tile whose allocation
+     * failed at build. The spin
      * angle is written only when it actually changes: rewriting a
      * transform every tick forces LVGL to redraw the whole tile, which
      * on a 50 ms timer is the stutter the word-card page was fixed for
@@ -472,8 +478,9 @@ static void on_tap(lv_event_t *e)
  * Skipped while the limit prompt is up (the prompt is modal: a shake
  * must not re-show it) and when the chip is absent (tap still works).
  * A failed read costs one tick; MUSE_JIAOBEI_SHAKE_FAIL_MAX bad reads
- * in a row turn polling off for the visit (the read runs on the LVGL
- * thread and a wedged I2C bus would otherwise block it every tick). */
+ * in a row, or one read slower than MUSE_JIAOBEI_SHAKE_SLOW_MS, turn
+ * polling off for the visit (the read runs on the LVGL thread and a
+ * wedged I2C bus would otherwise block it every tick). */
 static void update_shake(uint32_t elapsed_ms)
 {
     if (s_limit_since != 0 || s_shake_fail >= MUSE_JIAOBEI_SHAKE_FAIL_MAX ||
@@ -484,16 +491,22 @@ static void update_shake(uint32_t elapsed_ms)
     uint32_t t0 = lv_tick_get();
     esp_err_t err = muse_imu_read_accel(&ax, &ay, &az);
     uint32_t took = lv_tick_get() - t0;
-    if (err != ESP_OK || took > MUSE_JIAOBEI_SHAKE_SLOW_MS) {
-        /* This read blocks the LVGL thread for as long as the I2C
-         * transfer takes (1 s on a wedged bus), so a bus that has gone
-         * bad would freeze the page once per 50 ms tick. Three in a row
-         * and shake-to-toss is off for this visit; tapping still
-         * works. */
+    if (err != ESP_OK) {
+        /* A failed read is cheap (no I2C wait), so three in a row are
+         * tolerated before shake-to-toss is off for this visit;
+         * tapping still works. */
         if (++s_shake_fail == MUSE_JIAOBEI_SHAKE_FAIL_MAX) {
-            ESP_LOGW(TAG, "shake off: IMU read failed or took %u ms",
-                     (unsigned)took);
+            ESP_LOGW(TAG, "shake off: IMU read failed");
         }
+        return;
+    }
+    if (took > MUSE_JIAOBEI_SHAKE_SLOW_MS) {
+        /* A single slow read already blocked the LVGL thread for up to
+         * the driver's 1 s timeout, so one is enough: shake-to-toss is
+         * off for this visit at once, or a wedged bus would freeze the
+         * page once per 50 ms tick; tapping still works. */
+        s_shake_fail = MUSE_JIAOBEI_SHAKE_FAIL_MAX;
+        ESP_LOGW(TAG, "shake off: IMU read took %u ms", (unsigned)took);
         return;
     }
     s_shake_fail = 0;
@@ -516,6 +529,13 @@ static void on_limit_tap(lv_event_t *e)
 
 void muse_jiaobei_ui_build(lv_obj_t *page, lv_event_cb_t back_cb)
 {
+    /* This page is built once at boot: a second call returns here, before
+     * any allocation or LVGL object creation, so it neither rebuilds the
+     * objects nor re-allocates the 160 KB of cup tiles (the old buffers
+     * would leak and the descriptors would dangle). */
+    if (s_cup_buf[0][0][0] != NULL) {
+        return;
+    }
     /* Touch layer first: everything else sits on top of it, so a tap
      * anywhere on the page (except "<") tosses. */
     lv_obj_t *touch = lv_obj_create(page);
@@ -581,6 +601,24 @@ void muse_jiaobei_ui_build(lv_obj_t *page, lv_event_cb_t back_cb)
         /* Force the first paint-and-src on the first refresh. */
         s_shown_src[i] = 0xFF;
         s_shown_sx[i] = 0;
+    }
+
+    /* Pre-paint all eight tiles now (2 cups x 2 faces x 2 mirrors): the
+     * mirrored tiles are first needed mid-flip (~100 ms in), and painting
+     * one then would stall the LVGL thread for ~160 k float samples.
+     * Build runs once at boot, so the ~1.3 M samples land at startup,
+     * not in an interaction; refresh_display()'s lazy paint stays as a
+     * fallback for a tile whose allocation failed here. */
+    for (int i = 0; i < 2; i++) {
+        for (int f = 0; f < 2; f++) {
+            for (int m = 0; m < 2; m++) {
+                if (s_cup_buf[i][f][m] != NULL) {
+                    paint_cup(s_cup_buf[i][f][m], i, (muse_jiaobei_face_t)f,
+                              m != 0);
+                    s_cup_painted[i][f][m] = true;
+                }
+            }
+        }
     }
 
     /* 阴/阳 face labels under each cup (result state only): the flat

@@ -1669,8 +1669,24 @@ static bool console_command(char *line, bool whole)
         if (!strncmp(line, "pet.coins=", 10)) {
             /* Set the wallet outright (Test only, 2026-11-16: the user
              * needed the balance back at 100 after the prices changed to
-             * 2). Prints the snapshot so the result is visible. */
-            int32_t want = atoi(line + 10);
+             * 2). Prints the snapshot so the result is visible.
+             * strtol, not atoi: an out-of-range number used to overflow
+             * (undefined for atoi) and wrap; it is now clamped to the
+             * wallet 0..MUSE_PET_COINS_MAX (a negative still errors,
+             * as the model refuses it). No digits at all still
+             * prints "@pet coins error". */
+            char *end = NULL;
+            long v = strtol(line + 10, &end, 10);
+            if (end == line + 10 || v < 0) {
+                /* No digits, or a negative: the model refuses negatives,
+                 * so keep the error instead of silently clamping to 0. */
+                printf("@pet coins error\n");
+                fflush(stdout);
+                return true;
+            }
+            int32_t want = v > (long)MUSE_PET_COINS_MAX
+                               ? (int32_t)MUSE_PET_COINS_MAX
+                               : (int32_t)v;
             muse_pet_feedback_t fb;
             if (muse_pet_debug_set_coins(want) &&
                 pet_console_wait(PET_SET_COINS, &fb) && fb.result == PET_OK) {
