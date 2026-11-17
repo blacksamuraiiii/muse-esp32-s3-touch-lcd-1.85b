@@ -74,22 +74,25 @@ static const char *TAG = "muse_jiaobei_ui";
 #define MUSE_JIAOBEI_PROMPT_DIM_OPA 90
 
 /*
- * Cup tiles are painted once per face and cached: [cup][face], where
- * face is the muse_jiaobei_face_t value (FLAT 0 / ROUND 1). Painting
+ * Cup tiles are painted once per (cup, face, mirror) and cached: the flip
+ * is a turn about the VERTICAL centre line (user 2026-11-16: "不是上下翻转，
+ * 是左右翻转"), so the far half of every turn shows the cup's mirror image
+ * -- the crescent opens the other way then, which a plain scale_x cannot
+ * fake. Painting
  * is 2x2-supersampled float work over 100x100 px (~160 k samples), so
  * doing it inside a flip stalls the LVGL thread -- the tile is painted
- * the first time that face is needed and only its descriptor is
- * swapped afterwards (2026-11-16, 1.5.3c audit). Four tiles at 20 KB
+ * * the first time a (face, mirror) pair is needed and only its descriptor
+ * is swapped afterwards (2026-11-16, 1.5.3c audit). Eight tiles at 20 KB
  * each live in PSRAM.
  */
 static muse_jiaobei_t s_game;
 static muse_jiaobei_shake_t s_shake;
 static lv_obj_t *s_cup_img[2];
-static lv_image_dsc_t s_cup_dsc[2][2];
-static uint16_t *s_cup_buf[2][2];
-static bool s_cup_painted[2][2];
-static muse_jiaobei_face_t s_shown_face[2];
-static uint32_t s_shown_sy[2];     /* last scale_y written, 1/256 */
+static lv_image_dsc_t s_cup_dsc[2][2][2];
+static uint16_t *s_cup_buf[2][2][2];
+static bool s_cup_painted[2][2][2];
+static uint8_t s_shown_src[2];     /* face * 2 + mirror currently shown */
+static uint32_t s_shown_sx[2];     /* last scale_x written, 1/256 */
 static uint32_t s_shake_fail;   /* consecutive bad/absent IMU reads */
 static lv_obj_t *s_face_label[2];
 static lv_obj_t *s_msg;
@@ -142,7 +145,8 @@ static void seed_once(void)
  * the black page. The outline ring is solid and unshaded; the gradient,
  * the round-face band and the flat-face line apply to the base (fill)
  * region only, in mockup order. */
-static void paint_cup(uint16_t *buf, int side, muse_jiaobei_face_t face)
+static void paint_cup(uint16_t *buf, int side, muse_jiaobei_face_t face,
+                      bool mirror)
 {
     if (buf == NULL) {
         return;
@@ -171,6 +175,12 @@ static void paint_cup(uint16_t *buf, int side, muse_jiaobei_face_t face)
             for (int sy = 0; sy < 2; sy++) {
                 for (int sx = 0; sx < 2; sx++) {
                     float px = (float)x + (sx == 0 ? 0.25f : 0.75f);
+                    /* A flip about the vertical axis shows the cup's mirror
+                     * image for the far half of every turn: sample it
+                     * mirrored instead of painting a second geometry. */
+                    if (mirror) {
+                        px = (float)MUSE_JIAOBEI_CUP_PX - px;
+                    }
                     float py = (float)y + (sy == 0 ? 0.25f : 0.75f);
                     float dxo = px - ox;
                     float dxi = px - bx;
@@ -273,35 +283,38 @@ static void refresh_display(void)
      * angle is written only when it actually changes: rewriting a
      * transform every tick forces LVGL to redraw the whole tile, which
      * on a 50 ms timer is the stutter the word-card page was fixed for
-     * in 1.5.2d. The flip is about the horizontal axis -- a tossed cup tips
-     * end over end, not a clock hand (user 2026-11-16) -- so the model's
-     * angle becomes scale_y = |cos|: full size at a whole turn, a line at
-     * every quarter turn. The cup is symmetric top to bottom, so the
-     * mirrored half of the rotation needs no separate tile. */
-    uint32_t sy = 256;
+     * in 1.5.2d. The flip is a turn about the VERTICAL centre line, so the
+     * model's angle becomes scale_x = |cos| (full size at a whole turn, a
+     * line at every quarter turn) and a negative cos means we are looking
+     * at the cup's back: the mirrored tile carries that, because the
+     * crescent opens the other way and a scale alone cannot show it. */
+    uint32_t sx = 256;
+    int mirror = 0;
     if (s_game.phase == MUSE_JIAOBEI_FLIPPING) {
         float rad = (float)muse_jiaobei_flip_angle(&s_game) * 3.14159265f / 180.0f;
         float c = cosf(rad);
         uint32_t v = (uint32_t)(fabsf(c) * 256.0f);
-        sy = v < 1 ? 1 : v;   /* 0-high is degenerate in LVGL */
+        sx = v < 1 ? 1 : v;   /* 0-wide is degenerate in LVGL */
+        mirror = c < 0.0f ? 1 : 0;
     }
     for (int i = 0; i < 2; i++) {
         muse_jiaobei_face_t want = i == 0 ? s_game.left : s_game.right;
         int f = (int)want;
-        if (s_cup_buf[i][f] == NULL) {
+        uint8_t src = (uint8_t)(f * 2 + mirror);
+        if (s_cup_buf[i][f][mirror] == NULL) {
             continue; /* allocation failed at build: message rows only */
         }
-        if (!s_cup_painted[i][f]) {
-            paint_cup(s_cup_buf[i][f], i, want);
-            s_cup_painted[i][f] = true;
+        if (!s_cup_painted[i][f][mirror]) {
+            paint_cup(s_cup_buf[i][f][mirror], i, want, mirror != 0);
+            s_cup_painted[i][f][mirror] = true;
         }
-        if (want != s_shown_face[i]) {
-            lv_image_set_src(s_cup_img[i], &s_cup_dsc[i][f]);
-            s_shown_face[i] = want;
+        if (src != s_shown_src[i]) {
+            lv_image_set_src(s_cup_img[i], &s_cup_dsc[i][f][mirror]);
+            s_shown_src[i] = src;
         }
-        if (sy != s_shown_sy[i]) {
-            lv_image_set_scale_y(s_cup_img[i], sy);
-            s_shown_sy[i] = sy;
+        if (sx != s_shown_sx[i]) {
+            lv_image_set_scale_x(s_cup_img[i], sx);
+            s_shown_sx[i] = sx;
         }
     }
     /* Face labels: result state only. */
@@ -527,35 +540,38 @@ void muse_jiaobei_ui_build(lv_obj_t *page, lv_event_cb_t back_cb)
     for (int i = 0; i < 2; i++) {
         bool any = false;
         for (int f = 0; f < 2; f++) {
-            s_cup_buf[i][f] = (uint16_t *)heap_caps_malloc(
+            for (int m = 0; m < 2; m++) {
+            s_cup_buf[i][f][m] = (uint16_t *)heap_caps_malloc(
                 (size_t)MUSE_JIAOBEI_CUP_PX * MUSE_JIAOBEI_CUP_PX * sizeof(uint16_t),
                 MALLOC_CAP_SPIRAM);
-            if (s_cup_buf[i][f] == NULL) {
-                ESP_LOGE(TAG, "cup %d face %d PSRAM alloc failed", i, f);
+            if (s_cup_buf[i][f][m] == NULL) {
+                ESP_LOGE(TAG, "cup %d face %d mirror %d PSRAM alloc failed", i, f, m);
             } else {
                 any = true;
             }
-            s_cup_painted[i][f] = false;
-            s_cup_dsc[i][f].header.magic = LV_IMAGE_HEADER_MAGIC;
-            s_cup_dsc[i][f].header.cf = LV_COLOR_FORMAT_RGB565;
-            s_cup_dsc[i][f].header.flags = 0;
-            s_cup_dsc[i][f].header.w = MUSE_JIAOBEI_CUP_PX;
-            s_cup_dsc[i][f].header.h = MUSE_JIAOBEI_CUP_PX;
-            s_cup_dsc[i][f].header.stride = MUSE_JIAOBEI_CUP_PX * 2;
-            s_cup_dsc[i][f].header.reserved_2 = 0;
-            s_cup_dsc[i][f].data_size =
+            s_cup_painted[i][f][m] = false;
+            lv_image_dsc_t *d = &s_cup_dsc[i][f][m];
+            d->header.magic = LV_IMAGE_HEADER_MAGIC;
+            d->header.cf = LV_COLOR_FORMAT_RGB565;
+            d->header.flags = 0;
+            d->header.w = MUSE_JIAOBEI_CUP_PX;
+            d->header.h = MUSE_JIAOBEI_CUP_PX;
+            d->header.stride = MUSE_JIAOBEI_CUP_PX * 2;
+            d->header.reserved_2 = 0;
+            d->data_size =
                 (size_t)MUSE_JIAOBEI_CUP_PX * MUSE_JIAOBEI_CUP_PX * sizeof(uint16_t);
-            s_cup_dsc[i][f].data = (const uint8_t *)s_cup_buf[i][f];
-            s_cup_dsc[i][f].reserved = NULL;
+            d->data = (const uint8_t *)s_cup_buf[i][f][m];
+            d->reserved = NULL;
+            }
         }
         s_cup_img[i] = lv_image_create(page);
         lv_obj_set_pos(s_cup_img[i], MUSE_JIAOBEI_CUP_X0 + 100 * i,
                        MUSE_JIAOBEI_CUP_Y);
         lv_obj_set_size(s_cup_img[i], MUSE_JIAOBEI_CUP_PX, MUSE_JIAOBEI_CUP_PX);
-        /* The flip squashes the cup vertically with lv_image_set_scale_y()
-         * about its centre -- the image's own transform, not the style
-         * transform. (The flat-cut tips the user reported twice were the
-         * paint geometry, not the transform: see paint_cup's note.) */
+        /* The flip narrows the cup with lv_image_set_scale_x() about its
+         * centre -- the image's own transform, not the style transform.
+         * (The flat-cut tips the user reported twice were the paint
+         * geometry, not the transform: see paint_cup's note.) */
         lv_image_set_pivot(s_cup_img[i], MUSE_JIAOBEI_CUP_PX / 2,
                            MUSE_JIAOBEI_CUP_PX / 2);
         lv_obj_remove_flag(s_cup_img[i], LV_OBJ_FLAG_CLICKABLE);
@@ -563,8 +579,8 @@ void muse_jiaobei_ui_build(lv_obj_t *page, lv_event_cb_t back_cb)
             lv_obj_add_flag(s_cup_img[i], LV_OBJ_FLAG_HIDDEN);
         }
         /* Force the first paint-and-src on the first refresh. */
-        s_shown_face[i] = (muse_jiaobei_face_t)-1;
-        s_shown_sy[i] = 256;
+        s_shown_src[i] = 0xFF;
+        s_shown_sx[i] = 0;
     }
 
     /* 阴/阳 face labels under each cup (result state only): the flat
