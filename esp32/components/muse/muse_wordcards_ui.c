@@ -6,14 +6,19 @@
  * shared title slot (y=38), a 2x2 grid of 116x116 cards at (60,60)
  * with an 8 px gap, and nothing under the cards (the old HUD line is
  * gone with the clock, user 2026-11-11).
- * The category page (mockup v2, user decision 2026-11-10) is the
- * level above: title "英语单词", rows at the minigame list's
- * geometry (330 wide, top 84, 58 high, 10 gap, radius 18, CARD
- * fill) with the set icon (36 px) + 12 px gap + set title (Noto 16)
- * centred as one group, no count text, and the hint "限时免费" as the
- * last item of the scrolling column (user 2026-11-11: it used to sit
- * at y=232, which the third row took over once a fourth set shipped,
- * so it scrolls in below the list instead of being pinned).
+ * The category page (mockup v6, user decision 2026-11-17) is the
+ * level above: title "英语单词", the feed page's horizontal strip
+ * (100x100 cards, 22 px end pads, 8 px gaps, snap per card,
+ * scrollbar off, no elastic) with one column per offered set --
+ * the set icon (80 px, first word's picture recoloured with its own
+ * colour) in the card, the set title split into two lines under it
+ * (Chinese Noto 16, English Montserrat 14), no count text -- and
+ * the hint "限时免费" pinned at y=84, the coin line at y=302 like
+ * every other interaction page. The first three cards sit centred;
+ * the fourth shows a sliver at the right edge, inviting a swipe.
+ * (v5's four fixed 80x80 cards in one row were drawn and then
+ * replaced the same day: the user asked for the feed strip idiom
+ * instead, so all four keep the 100 px card size.)
  * A card's front is only its picture
  * (the A8 game-icons master, recoloured per word at runtime,
  * scaled to 72 px from the 128 px master). Its back is three centred
@@ -133,27 +138,35 @@ static lv_timer_t *s_timer;
  * owner callback a set row calls. */
 static lv_obj_t *s_sets_page;
 static muse_wordcards_open_set_cb_t s_open_set_cb;
+/* Category page's coin line, rewritten by muse_interact_ui.c's
+ * refresh_status() through muse_wordcards_ui_set_coins() (display
+ * only: the game stays free). */
+static lv_obj_t *s_sets_coins;
 
-/* Category-page geometry: the minigame list's own numbers
- * (build_minigame in muse_interact_ui.c) -- 330 wide, top 84, rows
- * 58 high with a 10 px gap, radius 18, CARD fill (muse_card). The
- * rows live in a scrolling column, like the minigame list: with four
- * sets the fixed positions put the last row under the round screen's
- * bottom curve, so the list scrolls (110 px bottom pad, scrollbar
- * off) instead. The hint "限时免费" (user 2026-11-11, replaced the old
- * "免费 · 每类限时 2 分钟") is the column's last item: with four rows
- * its old pinned slot at y=232 is under the third row, so it scrolls
- * into view below the list instead of being fixed. */
-#define MUSE_WORDCARDS_SETS_W 330
-#define MUSE_WORDCARDS_SETS_TOP 84
-#define MUSE_WORDCARDS_SETS_ROW_H 58
-#define MUSE_WORDCARDS_SETS_GAP 10
+/* Category-page geometry (mockup v6, user decision 2026-11-17): the
+ * feed page's horizontal strip, not a fixed row -- four 100x100
+ * cards in one scrolling row (22 px end pads, 8 px gaps, snap per
+ * card, scrollbar off, no elastic). The first three cards sit
+ * centred like the old 3-card row; the fourth shows a sliver at the
+ * right edge, inviting a swipe. Names go under each card in two
+ * lines (Chinese Noto 16 at page y=228, English Montserrat 14 at
+ * page y=249); the coin line ends the page at y=302, like every
+ * other interaction page. */
+#define MUSE_WORDCARDS_SETS_CARD 100
+#define MUSE_WORDCARDS_SETS_STRIP_Y 120
+#define MUSE_WORDCARDS_SETS_STRIP_H 146
+#define MUSE_WORDCARDS_SETS_ITEM_H 146
 #define MUSE_WORDCARDS_SETS_RADIUS 18
-#define MUSE_WORDCARDS_SETS_PAD_BOTTOM 110
-/* Set icon on a category row: 36 px, 12 px before the title. */
-#define MUSE_WORDCARDS_SETS_ICON_PX 36
+/* Set icon inside a category card: 80 px, centred (10 px pad). */
+#define MUSE_WORDCARDS_SETS_ICON_PX 80
 #define MUSE_WORDCARDS_SETS_ICON_SCALE \
     (256 * MUSE_WORDCARDS_SETS_ICON_PX / MUSE_WORDCARDS_ART_PX)
+/* Names under a card, relative to the item top (page y = 228/249):
+ * Chinese (Noto 16, DIM) then English (Montserrat 14, DIM). The
+ * item is 146 tall: 100 card + 8 gap + 20 Chinese line + 1 +
+ * 17 English line. */
+#define MUSE_WORDCARDS_SETS_NAME_ZH_Y 108
+#define MUSE_WORDCARDS_SETS_NAME_EN_Y 129
 
 /* --- small helpers, same shapes as the OX棋 page ------------------ */
 
@@ -537,6 +550,16 @@ static void on_set_row(lv_event_t *e)
     }
 }
 
+/* Snap clamp for the category strip (same as the feed page's
+ * on_feed_strip_scroll_end: the snap pass itself does not clamp,
+ * so re-issue the current position through scroll_to_x(), which
+ * pulls it back to the last reachable snap). */
+static void on_wordcards_sets_strip_scroll_end(lv_event_t *e)
+{
+    lv_obj_t *strip = lv_event_get_target(e);
+    lv_obj_scroll_to_x(strip, lv_obj_get_scroll_x(strip), LV_ANIM_ON);
+}
+
 void muse_wordcards_ui_build_sets(lv_obj_t *page, lv_event_cb_t back_cb,
                                   muse_wordcards_open_set_cb_t open_cb)
 {
@@ -544,38 +567,58 @@ void muse_wordcards_ui_build_sets(lv_obj_t *page, lv_event_cb_t back_cb,
     s_open_set_cb = open_cb;
     muse_back_button(page, back_cb);
     muse_page_title(page, "英语单词", 44);
-    /* Scrolling column, the minigame list's pattern (build_minigame
-     * in muse_interact_ui.c): flex column, vertical scroll only,
-     * scrollbar off, 10 px gaps, 110 px bottom pad so the last row
-     * can be scrolled clear of the bottom curve. One row per offered
-     * set, in table order: muse_card (the minigame list's row) with
-     * a flex row inside -- icon + title centred as one group
-     * (mockup v2: icon 36 px, 12 px gap, Noto 16 title, no count
-     * text). */
-    lv_obj_t *list = lv_obj_create(page);
-    lv_obj_remove_style_all(list);
-    lv_obj_set_size(list, MUSE_WORDCARDS_SETS_W,
-                    360 - MUSE_WORDCARDS_SETS_TOP);
-    lv_obj_align(list, LV_ALIGN_TOP_MID, 0, MUSE_WORDCARDS_SETS_TOP);
-    lv_obj_set_flex_flow(list, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_flex_align(list, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
-                          LV_FLEX_ALIGN_CENTER);
-    lv_obj_set_style_pad_row(list, MUSE_WORDCARDS_SETS_GAP, 0);
-    lv_obj_set_style_pad_bottom(list, MUSE_WORDCARDS_SETS_PAD_BOTTOM, 0);
-    lv_obj_set_scroll_dir(list, LV_DIR_VER);
-    lv_obj_set_scrollbar_mode(list, LV_SCROLLBAR_MODE_OFF);
+    /* Slogan in the fixed top slot (y = 84, DIM), like the 学习 page's
+     * motto: it used to be the scrolling column's last item
+     * ("限时免费"), because the third row took its old y=232 slot --
+     * with the cards in one row there is no column to scroll, so it
+     * is pinned here. */
+    lv_obj_t *hint = label(page, muse_font_cjk(), MUSE_THEME_DIM);
+    lv_label_set_text(hint, "限时免费");
+    lv_obj_align(hint, LV_ALIGN_TOP_MID, 0, 84);
+    /* Horizontal strip, the feed page's idiom (mockup v6): one row
+     * with all four sets, swipe left/right to choose. A single
+     * horizontal scroller (flex row, snap per card, scrollbar off)
+     * holding four columns (100px card + two name lines below, so
+     * the names scroll with their card). 22px pads on both ends so
+     * the first three sit centred like the old 3-card row, and the
+     * fourth shows a sliver at the right edge. Hard edge while
+     * dragging: with the default elastic flag the strip can be
+     * pulled past the last card and shows empty space. */
+    lv_obj_t *strip = lv_obj_create(page);
+    lv_obj_remove_style_all(strip);
+    lv_obj_set_size(strip, 360, MUSE_WORDCARDS_SETS_STRIP_H);
+    lv_obj_align(strip, LV_ALIGN_TOP_MID, 0, MUSE_WORDCARDS_SETS_STRIP_Y);
+    lv_obj_set_flex_flow(strip, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(strip, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START,
+                          LV_FLEX_ALIGN_START);
+    lv_obj_set_style_pad_left(strip, 22, 0);
+    lv_obj_set_style_pad_right(strip, 22, 0);
+    lv_obj_set_style_pad_column(strip, 8, 0);
+    lv_obj_set_scroll_dir(strip, LV_DIR_HOR);
+    lv_obj_set_scrollbar_mode(strip, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_set_scroll_snap_x(strip, LV_SCROLL_SNAP_START);
+    lv_obj_remove_flag(strip, LV_OBJ_FLAG_SCROLL_ELASTIC);
+    /* ...and the snap pass itself does not clamp (see the callback). */
+    lv_obj_add_event_cb(strip, on_wordcards_sets_strip_scroll_end,
+                        LV_EVENT_SCROLL_END, NULL);
     for (int s = 0; s < MUSE_WORDCARDS_SETS; s++) {
         if (!muse_wordcards_set_has_art(s)) {
             continue;
         }
         const muse_wordcards_set_t *set = &MUSE_WORDCARDS_SETS_TABLE[s];
-        lv_obj_t *card = muse_card(list, lv_pct(100),
-                                   MUSE_WORDCARDS_SETS_ROW_H,
+        /* One column per offered set, in table order: the card on
+         * top, the two name lines under it. The column is a plain
+         * container (no flex): the card and the names sit at fixed
+         * offsets, so the English line lands 1 px under the Chinese
+         * line (page y=228/249) instead of a flex row gap apart. */
+        lv_obj_t *item = lv_obj_create(strip);
+        lv_obj_remove_style_all(item);
+        lv_obj_set_size(item, MUSE_WORDCARDS_SETS_CARD,
+                        MUSE_WORDCARDS_SETS_ITEM_H);
+        lv_obj_remove_flag(item, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_t *card = muse_card(item, MUSE_WORDCARDS_SETS_CARD,
+                                   MUSE_WORDCARDS_SETS_CARD,
                                    MUSE_WORDCARDS_SETS_RADIUS);
-        lv_obj_set_flex_flow(card, LV_FLEX_FLOW_ROW);
-        lv_obj_set_flex_align(card, LV_FLEX_ALIGN_CENTER,
-                              LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-        lv_obj_set_style_pad_column(card, 12, LV_PART_MAIN);
         /* First word's picture, recoloured with its own colour. */
         lv_obj_t *img = lv_image_create(card);
         lv_image_set_src(img,
@@ -583,6 +626,7 @@ void muse_wordcards_ui_build_sets(lv_obj_t *page, lv_event_cb_t back_cb,
         lv_image_set_scale(img, MUSE_WORDCARDS_SETS_ICON_SCALE);
         lv_obj_set_size(img, MUSE_WORDCARDS_SETS_ICON_PX,
                         MUSE_WORDCARDS_SETS_ICON_PX);
+        lv_obj_center(img);
         lv_obj_set_style_image_recolor(img,
                                        lv_color_hex(set->words[0].color),
                                        LV_PART_MAIN);
@@ -590,17 +634,55 @@ void muse_wordcards_ui_build_sets(lv_obj_t *page, lv_event_cb_t back_cb,
                                            LV_PART_MAIN);
         lv_obj_remove_flag(img, LV_OBJ_FLAG_SCROLLABLE);
         lv_obj_remove_flag(img, LV_OBJ_FLAG_CLICKABLE);
-        lv_obj_t *t = label(card, muse_font_btn(), MUSE_THEME_TEXT);
-        lv_label_set_text(t, set->title);
+        /* The set title carries both names ("水果 · Fruit"): split
+         * it for the two lines under the card. A title without the
+         * separator shows whole on the Chinese line. */
+        char zh[16];
+        const char *en = "";
+        const char *sep = strstr(set->title, " · ");
+        if (sep) {
+            size_t n = (size_t)(sep - set->title);
+            if (n >= sizeof(zh)) {
+                n = sizeof(zh) - 1;
+            }
+            memcpy(zh, set->title, n);
+            zh[n] = '\0';
+            en = sep + strlen(" · ");
+        } else {
+            snprintf(zh, sizeof(zh), "%s", set->title);
+        }
+        lv_obj_t *zh_lbl = label(item, muse_font_cjk(), MUSE_THEME_DIM);
+        lv_label_set_text(zh_lbl, zh);
+        lv_obj_align(zh_lbl, LV_ALIGN_TOP_MID, 0,
+                     MUSE_WORDCARDS_SETS_NAME_ZH_Y);
+        lv_obj_t *en_lbl = label(item, &lv_font_montserrat_14,
+                                 MUSE_THEME_DIM);
+        lv_label_set_text(en_lbl, en);
+        lv_obj_align(en_lbl, LV_ALIGN_TOP_MID, 0,
+                     MUSE_WORDCARDS_SETS_NAME_EN_Y);
         lv_obj_add_event_cb(card, on_set_row, LV_EVENT_CLICKED,
                             (void *)(intptr_t)s);
     }
-    /* The price line, as the column's last item (user 2026-11-11):
-     * "限时免费" only, because there is no time limit any more, and it
-     * cannot be pinned (a fixed y=232 slot is under the third row).
-     * Scrolling the list to the bottom brings it into view. */
-    lv_obj_t *hint = label(list, muse_font_cjk(), MUSE_THEME_DIM);
-    lv_label_set_text(hint, "限时免费");
+    /* Coin line: the page's last row, same slot as the other pages'
+     * (y = 302), so every interaction page ends the same way
+     * (2026-11-17, user request "跟别的页面保持统一"). A live status,
+     * not a static label: muse_interact_ui.c's refresh_status()
+     * rewrites it through muse_wordcards_ui_set_coins(). */
+    s_sets_coins = label(page, muse_font_cjk(), MUSE_THEME_TEXT);
+    lv_label_set_text(s_sets_coins, "金币 --/100");
+    lv_obj_align(s_sets_coins, LV_ALIGN_TOP_MID, 0, 302);
+}
+
+/* Rewrite the category page's coin line from the snapshot (called
+ * by muse_interact_ui.c's refresh_status(), like s_learn_coins).
+ * No-op before the page is built. The coin line is display only:
+ * the game stays free, nothing here moves coins. */
+void muse_wordcards_ui_set_coins(const char *text)
+{
+    if (!s_sets_coins || !text) {
+        return;
+    }
+    set_label(s_sets_coins, text);
 }
 
 void muse_wordcards_ui_build(lv_obj_t *page, lv_event_cb_t back_cb)

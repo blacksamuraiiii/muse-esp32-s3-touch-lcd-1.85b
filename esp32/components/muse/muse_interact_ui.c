@@ -30,16 +30,24 @@
  *     2026-11-12, 学习全部免费): no entry fee, no dimming. Back
  *     lands on the main page; the three games' own back arrows land
  *     here, not on the mini-game list.
- *   - Mini-game list page: title "小游戏" with a back arrow, and a
- *     VERTICALLY SCROLLING column like the settings page's list
- *     (2026-11-01, user request): six 330x58 cards in a flex column,
- *     10px gaps, with the coin line as the column's last item. The
- *     rows keep the main list's 58px height -- the earlier 48px
- *     "compressed" pitch is gone -- and the column scrolls instead,
- *     with a 110px bottom pad so the last row can clear the bottom
- *     curve of the bezel. All six games cost 10 coins per start (user
- *     decision 2026-10-31, retuned 2026-11-08); the rows only dim when
- *     poor, they are never disabled.
+ *   - Mini-game list page (mockup v1, user decision 2026-11-17):
+ *     title "小游戏" with a back arrow, rule line "每局 10 金币"
+ *     at y = 84 (DIM), and the feed page's horizontal strip at
+ *     y = 120: six 100x100 cards in one scrolling row (22 px end
+ *     pads, 8 px gaps, snap per card, scrollbar off, no elastic),
+ *     the game name under each card (Noto 16, DIM, y = 228), coin
+ *     line pinned at y = 302 (TEXT, refreshed by refresh_status()).
+ *     The first three cards sit centred like the old 3-card row;
+ *     the rest scroll in. Each card shows the game itself (B scheme,
+ *     mockup v3, user decision 2026-11-17 -- no game-icons glyphs):
+ *     石头剪刀布 one paper hand, 贪吃蛇 a straight LVGL-drawn mini
+ *     snake, 打地鼠 the mole head, 金币雨 the gold coin, 毛毛跳跃
+ *     the flying MaoMao, OX棋 an LVGL-drawn mini board. All six games
+ *     cost 10 coins per start (user decision 2026-10-31, retuned
+ *     2026-11-08); the names only dim when poor, they are never
+ *     disabled. (Before this: six 330x58 rows in a vertical column,
+ *     coin line as the column's last item -- the minigame list was
+ *     the last vertical list left.)
  *   - Subpages are groups inside the interaction tile, all with the same
  *     title/back pattern (title centred y = 52, "<" at centre x = 68).
  *     Since 2026-11-01 every subpage also ends with the same coin line
@@ -139,13 +147,13 @@
 #include "muse_quiz_ui.h"
 #include "muse_main_grid_art.h"
 #include "muse_learn_art.h"     /* 学习子页 three-card icons (mockup v6) */
+#include "muse_whackamole_art.h" /* 打地鼠卡: 鼹鼠头 (donor art, personal use) */
+#include "muse_goldrain_art.h"   /* 金币雨卡: 抱发财麻将毛毛 (user upload) */
+#include "muse_doodle_art.h"     /* 毛毛跳跃卡: 飞天毛毛 (user upload) */
 
 /* --- colours: muse_theme.h (see file header for the DANGER note) --- */
 
 /* --- layout --- */
-#define IC_LIST_W 330
-#define IC_LIST_TOP 84
-#define IC_ROW_H 58
 /* Main-page 2x2 grid card (1.5.3a A flow): 140x95, icon 56 px at the
  * top, title under it. The far corners sit 176.1 px from the centre,
  * inside the circle (mockup v3). */
@@ -160,11 +168,6 @@
 #define IC_GRID_X1 185
 #define IC_GRID_Y0 80
 #define IC_GRID_Y1 185
-/* Mini-game / 学习 scrolling columns (2026-11-01, user request): the
- * settings page's pattern instead of a compressed fixed pitch. 58px
- * rows, 10px gaps, 110px bottom pad. */
-#define IC_MG_ROW_SPACE 10
-#define IC_MG_LIST_PAD_BOTTOM 110
 #define IC_RADIUS 18
 #define IC_FEED_CARD 100
 #define IC_FEED_ICON 80
@@ -567,6 +570,7 @@ static void refresh_status(void)
         set_label(s_fortune_coins, "金币 --/100");
         set_label(s_fortune_sub_coins, "金币 --/100");
         set_label(s_learn_coins, "金币 --/100");
+        muse_wordcards_ui_set_coins("金币 --/100");
         return;
     }
     char buf[64];
@@ -577,6 +581,7 @@ static void refresh_status(void)
     set_label(s_fortune_coins, buf);
     set_label(s_fortune_sub_coins, buf);
     set_label(s_learn_coins, buf);
+    muse_wordcards_ui_set_coins(buf);
 
     /* Mini-game rows: snake, whack-a-mole, goldrain, doodle and
      * OX棋 cost 10 coins per start, so they dim together when
@@ -625,22 +630,6 @@ static void grid_card(lv_obj_t *parent, int x, int y,
     lv_obj_t *l = label(b, muse_font_btn(), MUSE_THEME_TEXT, title);
     lv_obj_align(l, LV_ALIGN_TOP_MID, 0, 70);
     lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, NULL);
-}
-
-/* One row of the mini-game menu's scrolling column: same card look and the
- * same IC_ROW_H as the main list, but sized to the column and placed by
- * flex (no set_pos), exactly like the settings page's list rows. */
-static lv_obj_t *list_row(lv_obj_t *parent, const char *text,
-                          lv_event_cb_t cb, lv_obj_t **lbl_out)
-{
-    lv_obj_t *b = muse_card(parent, lv_pct(100), IC_ROW_H, IC_RADIUS);
-    lv_obj_t *l = label(b, muse_font_btn(), MUSE_THEME_TEXT, text);
-    lv_obj_center(l);
-    lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, NULL);
-    if (lbl_out) {
-        *lbl_out = l;
-    }
-    return b;
 }
 
 /* --- global pet caption (subtitle) --- */
@@ -749,6 +738,14 @@ static void draw_food_cb(lv_event_t *e)
  * which goes through lv_obj_scroll_by_bounded() and pulls it back to the
  * last reachable snap. The follow-up pass has diff == 0 and returns. */
 static void on_feed_strip_scroll_end(lv_event_t *e)
+{
+    lv_obj_t *strip = lv_event_get_target(e);
+    lv_obj_scroll_to_x(strip, lv_obj_get_scroll_x(strip), LV_ANIM_ON);
+}
+
+/* Same snap clamp for the minigame strip (same mechanism as the feed
+ * page's on_feed_strip_scroll_end above). */
+static void on_minigame_strip_scroll_end(lv_event_t *e)
 {
     lv_obj_t *strip = lv_event_get_target(e);
     lv_obj_scroll_to_x(strip, lv_obj_get_scroll_x(strip), LV_ANIM_ON);
@@ -1597,28 +1594,284 @@ static void build_learn(void)
     lv_obj_align(s_learn_coins, LV_ALIGN_TOP_MID, 0, 302);
 }
 
+/* --- minigame card icons: the B scheme (mockup v3, user 2026-11-17) ---
+ * Each card shows the game itself, not a generic game-icons glyph:
+ *   paper hand  -- the RPS game's own muse_interact_hand_paper
+ *                  (game-icons john-redman/paper, CC BY 3.0, white on
+ *                  transparent, fingers already up), one hand only,
+ *                  centred in the 80 px slot (the ink reads ~64 px);
+ *   mini snake  -- LVGL-drawn, the snake page's idiom scaled to the
+ *                  slot (see mg_icon_snake);
+ *   mole head   -- the whack-a-mole game's muse_whackamole_mole
+ *                  (Elecrow/Horion donor art, user-approved personal
+ *                  use -- same context as the game page itself);
+ *   mahjong   -- the gold-rain game's muse_goldrain_sprite (61x66
+ *                  catcher, Buttercup holding the 发财 mahjong tile,
+ *                  user upload);
+ *   MaoMao      -- the doodle game's muse_doodle_sprite (53x66
+ *                  flying pose, user upload);
+ *   mini board  -- LVGL-drawn, the tictactoe page's idiom (see
+ *                  mg_icon_board).
+ * The four image assets are already linked (their game pages use
+ * them), so this adds no new art module and no new flash block --
+ * and the two drawn icons are plain LVGL objects for the same
+ * reason. Nothing here is recoloured: the images are shown as-is. */
+
+/* Card icon kinds, in strip order. */
+typedef enum {
+    MUSE_MG_ICON_PAPER = 0,
+    MUSE_MG_ICON_SNAKE,
+    MUSE_MG_ICON_MOLE,
+    MUSE_MG_ICON_MAHJONG,
+    MUSE_MG_ICON_SPRITE,
+    MUSE_MG_ICON_BOARD,
+    MUSE_MG_ICON_COUNT,
+} muse_mg_icon_kind_t;
+
+/* Icon slot inside a card: 80 px, centred (10 px pad). */
+#define MUSE_MG_ICON_SLOT 80
+
+/* Fit an image master into the 80 px slot, centred, keeping aspect:
+ * scale by the limiting side (the learn/wordcards scale idiom), then
+ * size the lv_image to the fitted box. */
+static void mg_icon_image(lv_obj_t *card, const lv_image_dsc_t *src,
+                          int src_w, int src_h)
+{
+    int big = src_w > src_h ? src_w : src_h;
+    int scale = 256 * MUSE_MG_ICON_SLOT / big;
+    lv_obj_t *img = lv_image_create(card);
+    lv_image_set_src(img, src);
+    lv_image_set_scale(img, scale);
+    lv_obj_set_size(img, (src_w * MUSE_MG_ICON_SLOT + big / 2) / big,
+                    (src_h * MUSE_MG_ICON_SLOT + big / 2) / big);
+    lv_obj_center(img);
+    lv_obj_remove_flag(img, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_remove_flag(img, LV_OBJ_FLAG_CLICKABLE);
+}
+
+/* Transparent 80x80 slot, centred in the card: the drawn icons'
+ * coordinate space (mockup v3's 80x80 layers). */
+static lv_obj_t *mg_slot(lv_obj_t *card)
+{
+    lv_obj_t *slot = lv_obj_create(card);
+    lv_obj_remove_style_all(slot);
+    lv_obj_set_size(slot, MUSE_MG_ICON_SLOT, MUSE_MG_ICON_SLOT);
+    lv_obj_center(slot);
+    lv_obj_set_style_bg_opa(slot, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(slot, 0, 0);
+    lv_obj_remove_flag(slot, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_remove_flag(slot, LV_OBJ_FLAG_CLICKABLE);
+    return slot;
+}
+
+/* Mini snake (mockup v3): the snake page's drawing idiom, scaled to
+ * the 80 px slot -- four 14x14 rounded squares (radius 3, OK green,
+ * no border) on a 16 px pitch, in a straight row; the head is the
+ * last segment, its two white 3x3 eyes facing right; one DANGER red
+ * food dot at the top right. Straight, not an S-curve, and square
+ * segments, not round ones (user 2026-11-17: "不是毛毛虫, 画直一些").
+ * The game page's own numbers are one size up (muse_snake_ui.c:
+ * 18 px segments on a 20 px pitch -- SN_CELL 20, 1 px inset -- radius
+ * 5, 6 px eyes at (+13,+5)/(+13,+13) for RIGHT, 14 px food at a 3 px
+ * inset); the card scales the same idiom down to the slot. */
+static void mg_icon_snake(lv_obj_t *card)
+{
+    lv_obj_t *slot = mg_slot(card);
+    static const lv_point_t segs[4] = {
+        { 8, 40 }, { 24, 40 }, { 40, 40 }, { 56, 40 },
+    };
+    for (int i = 0; i < 4; i++) {
+        lv_obj_t *seg = lv_obj_create(slot);
+        lv_obj_set_size(seg, 14, 14);
+        lv_obj_set_pos(seg, segs[i].x, segs[i].y);
+        lv_obj_set_style_bg_opa(seg, LV_OPA_COVER, 0);
+        lv_obj_set_style_bg_color(seg, lv_color_hex(MUSE_THEME_OK), 0);
+        lv_obj_set_style_border_width(seg, 0, 0);
+        lv_obj_set_style_radius(seg, 3, 0);
+        lv_obj_remove_flag(seg, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+    }
+    /* Eyes on the head (rightmost segment), facing right: two white
+     * 3x3 dots at the head's right edge -- the game's (+13,+5) /
+     * (+13,+13) for RIGHT, scaled to the 14 px segment. */
+    static const lv_point_t eyes[2] = { { 65, 43 }, { 65, 48 } };
+    for (int i = 0; i < 2; i++) {
+        lv_obj_t *eye = lv_obj_create(slot);
+        lv_obj_set_size(eye, 3, 3);
+        lv_obj_set_pos(eye, eyes[i].x, eyes[i].y);
+        lv_obj_set_style_bg_opa(eye, LV_OPA_COVER, 0);
+        lv_obj_set_style_bg_color(eye, lv_color_hex(MUSE_THEME_TEXT), 0);
+        lv_obj_set_style_border_width(eye, 0, 0);
+        lv_obj_set_style_radius(eye, 1, 0);
+        lv_obj_remove_flag(eye, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+    }
+    /* Food: DANGER red dot, top right (the game's 14 px round food,
+     * 10 px here). */
+    lv_obj_t *food = lv_obj_create(slot);
+    lv_obj_set_size(food, 10, 10);
+    lv_obj_set_pos(food, 66, 12);
+    lv_obj_set_style_bg_opa(food, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_color(food, lv_color_hex(MUSE_THEME_DANGER), 0);
+    lv_obj_set_style_border_width(food, 0, 0);
+    lv_obj_set_style_radius(food, LV_RADIUS_CIRCLE, 0);
+    lv_obj_remove_flag(food, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+}
+
+/* Mini 3x3 board (mockup v3, same as v2): DIM grid lines, a DANGER
+ * red X in the top-left cell, an OK green O ring in the bottom-right
+ * -- the game's own mark colours (muse_tictactoe_ui.c: X is two
+ * lv_line strokes, O is a bordered ring). Grid: 20 px cells from
+ * (10,10); the X spans its cell minus 5 px pads on 3 px strokes;
+ * the O is a 10 px ring on a 3 px border. LVGL keeps the line point
+ * array pointer (it does not copy it), so each line needs its own
+ * static storage -- six lines, one pool, reset per build so the
+ * builder stays idempotent. */
+#define IC_MG_MINI_LINES 6
+static lv_point_precise_t s_mg_mini_line_pts[IC_MG_MINI_LINES][2];
+static int s_mg_mini_line_used;
+
+static void mg_line(lv_obj_t *parent, int x1, int y1, int x2, int y2,
+                    int width, uint32_t color)
+{
+    if (s_mg_mini_line_used >= IC_MG_MINI_LINES) {
+        return;
+    }
+    lv_point_precise_t *pts = s_mg_mini_line_pts[s_mg_mini_line_used++];
+    pts[0].x = x1;
+    pts[0].y = y1;
+    pts[1].x = x2;
+    pts[1].y = y2;
+    lv_obj_t *o = lv_line_create(parent);
+    lv_line_set_points(o, pts, 2);
+    lv_obj_set_style_line_width(o, width, 0);
+    lv_obj_set_style_line_color(o, lv_color_hex(color), 0);
+    lv_obj_remove_flag(o, LV_OBJ_FLAG_CLICKABLE);
+}
+
+static void mg_icon_board(lv_obj_t *card)
+{
+    lv_obj_t *slot = mg_slot(card);
+    s_mg_mini_line_used = 0;
+    /* Grid: 20 px cells from (10,10), 2 px DIM lines. */
+    mg_line(slot, 30, 10, 30, 70, 2, MUSE_THEME_DIM);
+    mg_line(slot, 50, 10, 50, 70, 2, MUSE_THEME_DIM);
+    mg_line(slot, 10, 30, 70, 30, 2, MUSE_THEME_DIM);
+    mg_line(slot, 10, 50, 70, 50, 2, MUSE_THEME_DIM);
+    /* X in the top-left cell: two 3 px DANGER strokes. */
+    mg_line(slot, 15, 15, 25, 25, 3, MUSE_THEME_DANGER);
+    mg_line(slot, 25, 15, 15, 25, 3, MUSE_THEME_DANGER);
+    /* O in the bottom-right cell: 10 px ring, 3 px OK border. */
+    lv_obj_t *ring = lv_obj_create(slot);
+    lv_obj_set_size(ring, 10, 10);
+    lv_obj_set_pos(ring, 55, 55);
+    lv_obj_set_style_bg_opa(ring, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(ring, 3, 0);
+    lv_obj_set_style_border_color(ring, lv_color_hex(MUSE_THEME_OK), 0);
+    lv_obj_set_style_radius(ring, LV_RADIUS_CIRCLE, 0);
+    lv_obj_remove_flag(ring, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+}
+
+/* Build one card's icon from its kind. Image kinds show their asset
+ * as-is (no recolour); drawn kinds are plain LVGL objects. */
+static void minigame_icon(lv_obj_t *card, muse_mg_icon_kind_t kind)
+{
+    switch (kind) {
+    case MUSE_MG_ICON_PAPER:
+        /* One paper hand, 128x128 master, fingers up, white on
+         * transparent -- as-is. */
+        mg_icon_image(card, &muse_interact_hand_paper, 128, 128);
+        break;
+    case MUSE_MG_ICON_SNAKE:
+        mg_icon_snake(card);
+        break;
+    case MUSE_MG_ICON_MOLE:
+        mg_icon_image(card, &muse_whackamole_mole, 56, 47);
+        break;
+    case MUSE_MG_ICON_MAHJONG:
+        /* 61x66 catcher, Buttercup holding the 发财 mahjong tile --
+         * as-is, no recolour. */
+        mg_icon_image(card, &muse_goldrain_sprite, 61, 66);
+        break;
+    case MUSE_MG_ICON_SPRITE:
+        mg_icon_image(card, &muse_doodle_sprite, 53, 66);
+        break;
+    case MUSE_MG_ICON_BOARD:
+        mg_icon_board(card);
+        break;
+    case MUSE_MG_ICON_COUNT:
+        break;
+    }
+}
+
+/* One card of the minigame list's strip (mockup v3, 2026-11-17): the
+ * feed page's item-column pattern -- a 100x128 column holding a
+ * 100x100 card (icon 80 px, centred) and the name 8 px below it, so
+ * the name sits at y = 228 when the strip starts at y = 120. The
+ * image is not clickable: the card takes the click.
+ * `name_lbl_out` returns the name label so refresh_status() can dim
+ * it when the balance is under the entry fee (the old rows dimmed
+ * the same way). */
+static void minigame_card(lv_obj_t *strip, muse_mg_icon_kind_t kind,
+                          const char *name, lv_event_cb_t cb,
+                          lv_obj_t **name_lbl_out)
+{
+    lv_obj_t *item = lv_obj_create(strip);
+    lv_obj_remove_style_all(item);
+    lv_obj_set_size(item, IC_FEED_CARD, 128);
+    lv_obj_set_flex_flow(item, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(item, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
+                          LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_row(item, 8, 0);
+    lv_obj_remove_flag(item, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_t *card = muse_card(item, IC_FEED_CARD, IC_FEED_CARD, IC_RADIUS);
+    minigame_icon(card, kind);
+    lv_obj_add_event_cb(card, cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *l = label(item, muse_font_cjk(), MUSE_THEME_DIM, name);
+    if (name_lbl_out) {
+        *name_lbl_out = l;
+    }
+}
+
 static void build_minigame(void)
 {
     page_header(s_minigame_page, "小游戏", on_back);
-    /* Scrolling column, the settings page's pattern (muse_settings_ui.c
-     * page()): flex column, vertical scroll only, scrollbar off, 10px
-     * gaps, 110px bottom pad so the last row can be scrolled clear of the
-     * bottom curve. Full 58px rows -- no compressed pitch (2026-11-01,
-     * user request). The menu itself never charges: each game page gates
-     * its own fee. */
-    lv_obj_t *list = lv_obj_create(s_minigame_page);
-    lv_obj_remove_style_all(list);
-    lv_obj_set_size(list, IC_LIST_W, 360 - IC_LIST_TOP);
-    lv_obj_align(list, LV_ALIGN_TOP_MID, 0, IC_LIST_TOP);
-    lv_obj_set_flex_flow(list, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_flex_align(list, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
-                          LV_FLEX_ALIGN_CENTER);
-    lv_obj_set_style_pad_row(list, IC_MG_ROW_SPACE, 0);
-    lv_obj_set_style_pad_bottom(list, IC_MG_LIST_PAD_BOTTOM, 0);
-    lv_obj_set_scroll_dir(list, LV_DIR_VER);
-    lv_obj_set_scrollbar_mode(list, LV_SCROLLBAR_MODE_OFF);
+    /* Rule line in the TOP slot (y = 84, DIM), the feed page's rule
+     * line slot: every game costs 10 coins per start (user decision
+     * 2026-10-31, retuned 2026-11-08), so one line covers all six.
+     * The menu itself never charges: each game page gates its own
+     * fee. */
+    lv_obj_t *hint = label(s_minigame_page, muse_font_cjk(), MUSE_THEME_DIM,
+                           "每局 10 金币");
+    lv_obj_align(hint, LV_ALIGN_TOP_MID, 0, 84);
+    /* Scrollable strip, the feed page's idiom (mockup v1, user
+     * decision 2026-11-17): ONE row with all six games, swipe
+     * left/right to choose -- NOT a vertical list. A single horizontal
+     * scroller (flex row, snap per card, scrollbar off) holding six
+     * game columns (100px card + name below, so the name scrolls with
+     * its card). 22px pads on both ends so the first three sit centred
+     * like the old 3-card row, and the last three sit centred when
+     * scrolled to the end. The strip is 128px tall (100 card + 8 gap +
+     * ~20 name). Hard edge while dragging: with the default elastic
+     * flag the strip can be pulled past the last card and shows empty
+     * space. */
+    lv_obj_t *strip = lv_obj_create(s_minigame_page);
+    lv_obj_remove_style_all(strip);
+    lv_obj_set_size(strip, 360, 128);
+    lv_obj_align(strip, LV_ALIGN_TOP_MID, 0, 120);
+    lv_obj_set_flex_flow(strip, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(strip, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START,
+                          LV_FLEX_ALIGN_START);
+    lv_obj_set_style_pad_left(strip, 22, 0);
+    lv_obj_set_style_pad_right(strip, 22, 0);
+    lv_obj_set_style_pad_column(strip, 8, 0);
+    lv_obj_set_scroll_dir(strip, LV_DIR_HOR);
+    lv_obj_set_scrollbar_mode(strip, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_set_scroll_snap_x(strip, LV_SCROLL_SNAP_START);
+    lv_obj_remove_flag(strip, LV_OBJ_FLAG_SCROLL_ELASTIC);
+    /* ...and the snap pass itself does not clamp (see the callback). */
+    lv_obj_add_event_cb(strip, on_minigame_strip_scroll_end,
+                        LV_EVENT_SCROLL_END, NULL);
 
-    /* List order (user 2026-11-08): 石头剪刀布, 贪吃蛇, 打地鼠,
+    /* Card order (user 2026-11-08): 石头剪刀布, 贪吃蛇, 打地鼠,
      * 金币雨, 毛毛跳跃, OX棋 last. The three learning games moved
      * to the 学习 page in the 1.5.3a A flow (数学练习 / 英语单词 /
      * 英语口语, renamed the same day from 加减练习 / 单词练习).
@@ -1628,24 +1881,37 @@ static void build_minigame(void)
      * the 360px round screen is too small to read its 6x6 grid or
      * tap its cells comfortably. The game code stays in the tree
      * (muse_sudoku_ui.c, IC_PAGE_SUDOKU, muse_sudoku_ui_build);
-     * to restore it, uncomment the row below, the on_open_sudoku
-     * handler, the s_mg_sudoku_lbl dimming line in refresh_status()
-     * (plus its sudoku_paid lookup), and re-add *s_mg_sudoku_lbl
-     * to the label declaration near the top of this file. */
-    list_row(list, "石头剪刀布", on_open_game, &s_mg_rps_lbl);
+     * to restore it, add a minigame_card() call below (in the order
+     * it belongs), the on_open_sudoku handler, the s_mg_sudoku_lbl
+     * dimming line in refresh_status() (plus its sudoku_paid lookup),
+     * and re-add *s_mg_sudoku_lbl to the label declaration near the
+     * top of this file. */
+    minigame_card(strip, MUSE_MG_ICON_PAPER, "石头剪刀布",
+                  on_open_game, &s_mg_rps_lbl);
     /* ARCHIVED 2026-11-08: 数独 -- screen too small, grid unreadable
      * and hard to tap. See the restore note in the comment above. */
-    /* list_row(list, "数独", on_open_sudoku, &s_mg_sudoku_lbl); */
-    list_row(list, "贪吃蛇", on_open_snake, &s_mg_snake_lbl);
-    list_row(list, "打地鼠", on_open_whackamole, &s_mg_whack_lbl);
-    list_row(list, "金币雨", on_open_goldrain, &s_mg_goldrain_lbl);
-    list_row(list, "毛毛跳跃", on_open_doodle, &s_mg_doodle_lbl);
-    list_row(list, "OX棋", on_open_tictactoe, &s_mg_tictactoe_lbl);
+    /* minigame_card(strip, <icon kind>, "数独",
+     *               on_open_sudoku, &s_mg_sudoku_lbl); */
+    minigame_card(strip, MUSE_MG_ICON_SNAKE, "贪吃蛇",
+                  on_open_snake, &s_mg_snake_lbl);
+    minigame_card(strip, MUSE_MG_ICON_MOLE, "打地鼠",
+                  on_open_whackamole, &s_mg_whack_lbl);
+    minigame_card(strip, MUSE_MG_ICON_MAHJONG, "金币雨",
+                  on_open_goldrain, &s_mg_goldrain_lbl);
+    minigame_card(strip, MUSE_MG_ICON_SPRITE, "毛毛跳跃",
+                  on_open_doodle, &s_mg_doodle_lbl);
+    minigame_card(strip, MUSE_MG_ICON_BOARD, "OX棋",
+                  on_open_tictactoe, &s_mg_tictactoe_lbl);
 
-    /* Coin line: the column's last item, so it scrolls with the list
-     * instead of sitting in a fixed slot the scroller would run under.
-     * refresh_status() keeps rewriting it like the main page's. */
-    s_minigame_coins = label(list, muse_font_cjk(), MUSE_THEME_TEXT, "金币 --/100");
+    /* Coin line: the page's last row, same slot as the other pages'
+     * (y = 302), so every interaction page ends the same way
+     * (2026-11-01, user request "统一页面内容"). It used to be the
+     * scrolling column's last item, so it scrolled away; with the
+     * strip it is pinned here. A live status, not a static label:
+     * refresh_status() rewrites it from the snapshot. */
+    s_minigame_coins = label(s_minigame_page, muse_font_cjk(),
+                             MUSE_THEME_TEXT, "金币 --/100");
+    lv_obj_align(s_minigame_coins, LV_ALIGN_TOP_MID, 0, 302);
 }
 
 static void build_feed(void)

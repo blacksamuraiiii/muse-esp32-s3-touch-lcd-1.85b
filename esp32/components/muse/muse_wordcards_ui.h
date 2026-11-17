@@ -6,11 +6,13 @@
  * + animal, 8 cards; phase 2 2026-11-11 adds things; the same day the two
  * animal sets merged into one 8-word group over two swiped pages): the
  * 学习 page's "英语单词" row opens the category page
- * (muse_wordcards_ui_build_sets: one row per offered set -- "水果 ·
- * Fruit", "动物 · Animal", "食物 · Food", "物品 · Things" --
- * icon + title centred as one group, no count text, hint "限时免费"
- * as the list's last item), and a
- * category row opens that set's 2x2 card page (muse_wordcards_ui_build).
+ * (muse_wordcards_ui_build_sets: the feed page's horizontal strip --
+ * one 100x100 card per offered set, "水果 · Fruit", "动物 · Animal",
+ * "食物 · Food", "物品 · Things", first word's picture recoloured
+ * with its own colour in the card, the title split into two lines
+ * under it, no count text; hint "限时免费" pinned at y=84, coin line
+ * at y=302 like every other interaction page), and a
+ * category card opens that set's 2x2 card page (muse_wordcards_ui_build).
  * Back goes one level up at a time: card page -> category page ->
  * 学习 page. Entering a set always starts it fresh (START, all
  * cards front-up, prefetch of that set's 4 MP3s); leaving a set
@@ -27,7 +29,10 @@
  * (muse_wordcards_audio.c) and only move the cache bookkeeping.
  * No coins move here: the game is a free learning mode (user decision
  * 2026-11-10), so there is no entry fee, no PET_FEE and no payout --
- * nothing in this module touches the economy.
+ * nothing in this module touches the economy. The category page does
+ * show the live balance at y=302 (display only, like the 学习 page's
+ * coin line, rewritten by the owner's refresh_status() through
+ * muse_wordcards_ui_set_coins()).
  *
  * Controls (user decision 2026-11-10, mockup v4; pause dropped the same
  * day, the 120 ms squash dropped 2026-11-11 because it needed a 63.5 KB
@@ -58,11 +63,17 @@ typedef void (*muse_wordcards_open_set_cb_t)(int set);
 
 /* Build the category page inside `page` (a 360x360 group created by
  * muse_interact_ui.c). `back_cb` is the back-arrow handler (back to
- * the 学习 page); `open_cb` runs when a set row is tapped.
- * One row per offered set, in table order. Safe to call once, in
+ * the 学习 page); `open_cb` runs when a set card is tapped.
+ * One card per offered set, in table order. Safe to call once, in
  * the LVGL task. */
 void muse_wordcards_ui_build_sets(lv_obj_t *page, lv_event_cb_t back_cb,
                                   muse_wordcards_open_set_cb_t open_cb);
+
+/* Rewrite the category page's coin line (display only, like the
+ * 学习 page's coin line): the owner (muse_interact_ui.c) calls this
+ * from refresh_status() with the snapshot's balance text. No-op
+ * before the page is built. Safe in the LVGL task. */
+void muse_wordcards_ui_set_coins(const char *text);
 
 /* Switch the card page to set `set` for a fresh round (START, all
  * cards front-up, cache cleared): the card pictures and back texts

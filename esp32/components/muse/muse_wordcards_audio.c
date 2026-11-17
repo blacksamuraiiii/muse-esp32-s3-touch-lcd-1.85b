@@ -322,6 +322,23 @@ static void fetch_task_exit(void)
     vTaskDelete(NULL);
 }
 
+/* Fail every word of `list` that is not READY yet: the single-fetch
+ * tail (below) and the playback-abandon exit share it. A word left
+ * FETCHING with no task to resolve it can never be retried by a tap
+ * (the retry functions only accept FAILED), so the tail exists to
+ * make sure a superseded prefetch leaves nothing dangling -- READY
+ * words keep their bytes, and a stale generation ignores the marks
+ * itself. */
+static void fail_unready_words(const muse_wc_fetch_list_t *list,
+                               uint32_t gen)
+{
+    for (int i = 0; i < list->count; i++) {
+        if (!list->is_ready(list->ctx, i)) {
+            list->mark_failed(list->ctx, i, gen);
+        }
+    }
+}
+
 static void fetch_task(void *arg)
 {
     fetch_req_t *req = (fetch_req_t *)arg;
@@ -372,9 +389,11 @@ static void fetch_task(void *arg)
      * rather than overwrite audio being decoded. A word is not "~1 s":
      * the 32 KB slot cap is ~5.5 s at ~48 kbps, so wait out a whole
      * word (WC_PLAY_MAX_WAIT_MS). If it is still running after that,
-     * give up this round instead of writing over the slot -- the
-     * marks below are left untouched, so READY words keep their
-     * bytes and the rest are retried on the next entry. */
+     * give up this round instead of writing over the slot. In single
+     * mode the tail below fails the words a superseded prefetch left
+     * FETCHING, so a later tap can retry them (S1, 2026-11-17); in
+     * whole-list mode the marks are left untouched, so READY words
+     * keep their bytes and the rest are retried on the next entry. */
     for (int i = 0; i < (int)(WC_PLAY_MAX_WAIT_MS / 100) &&
                     s_play_task && !s_fetch_abort;
          i++) {
@@ -383,10 +402,11 @@ static void fetch_task(void *arg)
     if (s_play_task && !s_fetch_abort) {
         ESP_LOGW(TAG, "prefetch abandoned: playback still running");
         if (single) {
-            /* The retried word would otherwise sit FETCHING with no
-             * task to resolve it: fail it so the drain drops the mark
-             * and a later tap can retry it. */
-            list.mark_failed(list.ctx, list.single_slot, gen);
+            /* S1 (2026-11-17): the same tail as the normal exit
+             * below. Failing only the retried slot left the other
+             * words a superseded prefetch had marked FETCHING
+             * dangling, with no task to resolve them. */
+            fail_unready_words(&list, gen);
         }
         fetch_task_exit();
         return;
@@ -431,11 +451,7 @@ static void fetch_task(void *arg)
          * later tap can retry them, or re-entry re-fetches the set;
          * READY words keep their bytes. A stale generation ignores
          * the marks itself. */
-        for (int i = 0; i < words; i++) {
-            if (!list.is_ready(list.ctx, i)) {
-                list.mark_failed(list.ctx, i, gen);
-            }
-        }
+        fail_unready_words(&list, gen);
     }
     /* Only a fetch that stopped mid-body leaves unread bytes on the socket --
      * the reply path must not inherit those. A clean batch leaves the
@@ -473,14 +489,24 @@ void muse_wordcards_audio_prefetch_list(const muse_wc_fetch_list_t *list)
     }
     if (s_fetch_task) {
         /* A fetch for the old generation is still running (a restart
-         * during a slow fetch): ask it to stop and remember to start
-         * this one when it exits -- fetch_task_exit() picks it up.
-         * The old task may have exited between the check and the
-         * flag, so check again: if it is already gone, start now
-         * instead of waiting for an exit that already happened. */
+         * during a slow fetch): remember to start this one when it
+         * exits -- fetch_task_exit() picks it up. The old task may
+         * have exited between the check and the flag, so check again:
+         * if it is already gone, start now instead of waiting for an
+         * exit that already happened. */
         s_fetch_wanted_list = *list;
         s_fetch_wanted = true;
-        s_fetch_abort = true;
+        if (!list->single) {
+            /* Whole-list prefetch supersedes the running fetch: ask
+             * it to stop. A tap retry (single) only queues behind
+             * the running fetch (S2, 2026-11-17): aborting for it
+             * released the shared TLS client on exit, so the next
+             * single fetch paid a fresh cold handshake -- rapid taps
+             * degenerated into ~8 s of serial cold fetches with the
+             * middle taps silent. Queued, the running fetch finishes
+             * warm and the single starts on the warm connection. */
+            s_fetch_abort = true;
+        }
         if (!s_fetch_task && s_fetch_wanted) {
             s_fetch_wanted = false;
             start_fetch(list);

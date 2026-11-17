@@ -84,13 +84,16 @@ typedef struct {
 void muse_wordcards_audio_prefetch(muse_wordcards_t *g);
 
 /* Start prefetching one word list into PSRAM (the word cards' set or
- * the quiz's round -- see muse_wc_fetch_list_t). Same queueing as
- * the set prefetch: a fetch already running is asked to stop and
- * this one starts when it exits. The list is copied by value. */
+ * the quiz's round -- see muse_wc_fetch_list_t). Queueing: a
+ * whole-list fetch already running is asked to stop and this one
+ * starts when it exits; a single (tap-retry) fetch only queues
+ * behind the running one (S2, 2026-11-17) -- aborting for it
+ * released the shared TLS client on exit, so the next single paid a
+ * fresh cold handshake. The list is copied by value. */
 void muse_wordcards_audio_prefetch_list(const muse_wc_fetch_list_t *list);
 
 /* Start prefetching the current round's 5 answer words into PSRAM
- * (the quiz's own slot pool). Same queueing as the word-cards
+ * (the quiz's own slot pool). Whole-list queueing, as the word-cards
  * prefetch: a fetch already running is asked to stop and this one
  * starts when it exits. `g` is the UI's static quiz struct and must
  * stay alive while fetching. */
@@ -101,12 +104,12 @@ void muse_wordcards_audio_prefetch_quiz(muse_quiz_t *g);
  * (same slot pool, same mark callbacks, same generation) but with
  * `single` set, so the fetch task fetches only slot `i` -- and fails
  * any word an aborted prefetch left FETCHING, so nothing waits on a
- * fetch that will never come. Same queueing as the prefetch: a fetch
- * already running is asked to stop and this one starts when it
- * exits (it never grabs the shared client lock itself -- the lock
- * is only taken inside muse_tts_fetch_raw). Same RAM gate as the
- * prefetch: the fetch task refuses below WC_MIN_INTERNAL_FOR_TLS
- * and the word stays FAILED. Returns true when the fetch task is
+ * fetch that will never come. Queueing: a tap retry never aborts the
+ * running fetch -- it only queues behind it and starts when it exits
+ * (S2, 2026-11-17), on the warm connection (it never grabs the
+ * shared client lock itself -- the lock is only taken inside
+ * muse_tts_fetch_raw). Same RAM gate as the prefetch: the fetch task
+ * refuses below WC_MIN_INTERNAL_FOR_TLS and the word stays FAILED. Returns true when the fetch task is
  * running or queued for the word, false when no task could start
  * (the caller then puts the word back to FAILED and drops the mark
  * instead of waiting forever). Only call for a word the logic layer
