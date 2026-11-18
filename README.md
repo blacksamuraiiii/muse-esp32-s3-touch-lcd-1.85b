@@ -42,6 +42,18 @@
 
 只保留正式版与最新测试版；逐条改动见各版本的 Release 说明与 git 历史。
 
+### v1.5.4a（2026-11-18，测试版）
+
+**四条开发分支合入：内存优化第一批、连接恢复、闹钟 v1、打砖块。**
+
+- **内存优化（R1+R2+R4）**：音频播放任务与三个 setup 任务（Muse VM 查找、凭据刷新、扫描刷新）的栈改走 PSRAM（新增 `main/helper_task.h`，板级开关 `CONFIG_HOMEHUB_SETUP_TASKS_IN_PSRAM`，前提是本板代码与 rodata 已在 PSRAM）；LCD 分带 chunk 4 行 → 2 行，并同步修正 `ptest_lcd` 黑清循环步长（原来按 8 行读 2 行的缓冲，越界）。
+- **连接恢复（上游 `481743f`）**：半开连接 150 s 无入站即重连；隧道 keepalive 65 s 超时按「未答复的 ping 之后有没有入站」分流（重连 vs 只重开隧道），并补一个 WS ping 给活连接自证的机会；隧道外发/DMA 门控卡住 30 s 拆会话；本地标死隧道流后重开前先发 Reset（治服务端的 "duplicate id" 死循环）；静默断开时打一次 TCP 探针（1.1.1.1 / 8.8.8.8:443）。新增连接历史环：`device.health` 带最新 40 条 `connectivity_events`，`bug.report` 带全部 128 条且超 32 KiB 时从最旧事件丢起；`bug.report` 顶层 `tunnel` 对象移进 `device_health`。
+- **闹钟 v1**：Alarm 子页的 Hour/Minute 合并成 Time 一行，点进双滚轮设时页（离页一次性写 NVS + 重 arm，分钟不再只能 ±10）；响闹改全屏响闹页（大字时间 + 只留「停止」，无小睡、无试响），响闹音单列 `MUSE_SFX_ALARM`（4000 Hz 双声蜂鸣、每 250 ms 一遍，换音色只改 `muse_audio.h` 一处），自动停 60 s → 30 s；SNTP 校时成功后重 arm，修「校时跳过目标当天漏响」。
+- **打砖块（第七个小游戏）**：24 块砖 6×4、球速 120 px/s、挡板 260 px/s 上限（按 vx 220 最坏情形推导）、**一条命：接不住直接结束**（用户 2026-11-18 定，无复活）、倾斜主控 + 手指拖动备用 + 长按暂停、砖碎 +1 分、结算只写实得（`min(分, 20)`）、入场费 10。
+- **实机看过后按用户口径改的五处**：打砖块游戏页去掉场地外框、列表图标去掉外框并放大、闹钟滚轮去掉外框、生命 3 → 1、响闹页「停止」按钮立刻生效（不再等 6 秒面板宽限，BOOT 与触摸的宽限不变）。
+
+状态：编译通过（`exit=0`，bin 4,132,864 B，4 MB app 槽余 60 KB）；已刷入开发板并确认启动（`App version: 1.5.4a`、`UI up 360x360`、Wi-Fi 与中继已通、隧道流已开、内部最大块 7–10 KB、无 panic）；台架实测 `>alarm` / `>alarm.test` / `>alarm.stop` 通过。host harness 与 main 基线逐条对比：改动涉及的模块（`test_breakout_logic`、`test_link_events`、`test_link_bug_report`、`test_sfx`、`test_link_wifi_scan_contract`、`test_goldrain_logic`、`test_doodle_logic`）全过；`test_link_transport_contract` / `test_link_diagnostic_log` / `test_link_epaper_status` / `test_link_noise_session` / `test_link_ota` 的失败在 main 上与合入后完全一致，属既有（零新增）。实机手感与观感验收待做（打砖块倾斜方向与手感、一条命的节奏、滚轮页与响闹页版面、响闹「停止」按钮、内网与中继的断网自愈）。
+
 ### v1.5.3（2026-11-17，正式版）
 
 **单词分类页与小游戏页改横向卡片 + 词卡取词两处修补（评审 S1/S2）**，含 1.5.3d 全部内容（掷筊翻面一圈、1.5.3c 评审修补、词卡「重启后首次点按静默」修复）。

@@ -3,10 +3,12 @@
  * muse_breakout.h -- 打砖块 logic (no LVGL, no ESP-IDF).
  *
  * A 240x240 field at (60,60), 6x4 = 24 bricks (+1 point each), a
- * 72x10 paddle on the bottom edge, one ball, 3 lives. The round ends
- * when all 24 bricks are broken or the 3 lives run out; the score is
- * converted exactly once, at OVER, by muse_pet_round_coins() (1 point
- * per coin, 20 coins per round ceiling) -- never here.
+ * 72x10 paddle on the bottom edge, one ball, ONE life: a missed ball
+ * ends the round at once (user, 2026-11-18: no revive -- the earlier
+ * three-lives rule let the first misses continue automatically). The
+ * round ends when all 24 bricks are broken or the ball is missed; the
+ * score is converted exactly once, at OVER, by muse_pet_round_coins()
+ * (1 point per coin, 20 coins per round ceiling) -- never here.
  *
  * Ball speed is 120 px/s (MUSE_BREAKOUT_BALL_SPEED, user decision
  * 2026-11-18: the mockup's ~160 px/s was too fast for a 7-year-old).
@@ -84,8 +86,10 @@
 #define MUSE_BREAKOUT_BRICK_PITCH_Y 22
 #define MUSE_BREAKOUT_BRICK_COUNT \
     (MUSE_BREAKOUT_BRICK_COLS * MUSE_BREAKOUT_BRICK_ROWS)
-/* Lives per round. */
-#define MUSE_BREAKOUT_LIVES 3u
+/* Lives per round: 1, i.e. a miss is game over (user, 2026-11-18).
+ * The engine still counts them down, so raising this back to 3 restores
+ * the revive behaviour without touching tick(). */
+#define MUSE_BREAKOUT_LIVES 1u
 /* Tilt calibration (金币雨's, 1.5.1 real-board verified): sign, gain
  * in px per m/s^2, dead zone in m/s^2, low-pass smoothing. */
 #define MUSE_BREAKOUT_TILT_SIGN -1.0f

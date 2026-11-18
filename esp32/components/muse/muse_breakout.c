@@ -3,7 +3,7 @@
  * muse_breakout.c -- 打砖块 logic, see muse_breakout.h.
  *
  * One ball at a constant 120 px/s, 24 bricks in 6x4, a 72x10 paddle,
- * 3 lives. Per 50 ms tick the ball moves v * 0.05 (6 px at serve
+ * one life (a miss ends the round). Per 50 ms tick the ball moves v * 0.05 (6 px at serve
  * speed, 11 px at the vx cap of 220) -- less than a brick's 16 px
  * thickness plus the ball's 10 px diameter, so a plain AABB overlap
  * check per tick cannot tunnel through a brick and no sweep test is

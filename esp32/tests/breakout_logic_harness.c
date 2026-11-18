@@ -243,25 +243,22 @@ int main(void)
     muse_breakout_resume(&b); /* no-op from PLAYING */
     assert(b.phase == MUSE_BREAKOUT_PLAYING);
 
-    /* Lost life: the ball drops out, lives 3 -> 2, ball and paddle
-     * reset, score kept. */
+    /* Missed ball: one life per round, so this is OVER at once (user,
+     * 2026-11-18: no revive). The engine still counts lives down, so
+     * raising MUSE_BREAKOUT_LIVES restores the re-serve behaviour. */
     muse_breakout_restart(&b);
     break_brick(&b, 0, 0);
     assert(b.score == 1);
     place_ball(&b, 100.0f, 295.0f, 0.0f, MUSE_BREAKOUT_BALL_SPEED);
     muse_breakout_tick(&b, MUSE_BREAKOUT_TICK_MS);
     assert(b.event == MUSE_BREAKOUT_EV_LOST);
-    assert(b.lives == 2);
-    assert(b.phase == MUSE_BREAKOUT_PLAYING);
-    assert(b.score == 1); /* score kept across the re-serve */
-    assert(fabsf(b.ball_x - MUSE_BREAKOUT_SERVE_X) < 0.01f);
-    assert(fabsf(b.ball_y - MUSE_BREAKOUT_SERVE_Y) < 0.01f);
-    assert(fabsf(b.paddle_cx - 180.0f) < 0.01f);
-    assert(b.ball_vy < 0.0f); /* fresh serve, upward */
+    assert(b.lives == 0);
+    assert(b.phase == MUSE_BREAKOUT_OVER);
+    assert(b.score == 1); /* kept for the settlement */
 
-    /* Three lives lost -> OVER. */
+    /* Losing every life -> OVER (one life: a single miss). */
     muse_breakout_restart(&b);
-    for (int life = 3; life > 0; life--) {
+    for (int life = (int)MUSE_BREAKOUT_LIVES; life > 0; life--) {
         assert(b.lives == (uint32_t)life);
         place_ball(&b, 100.0f, 295.0f, 0.0f, MUSE_BREAKOUT_BALL_SPEED);
         muse_breakout_tick(&b, MUSE_BREAKOUT_TICK_MS);

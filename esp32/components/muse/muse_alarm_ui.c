@@ -26,6 +26,10 @@
 #include "muse_input.h"
 #include "muse_settings.h"
 
+#include "esp_log.h"
+
+static const char *TAG = "muse_alarm_ui";
+
 /* ------------------------------------------------------------ time picker page */
 
 /* Same big digits as the maths question line: Montserrat 28 scaled 439/256
@@ -88,7 +92,12 @@ static lv_obj_t *make_roller(lv_obj_t *page, int x, int value, int count)
      * card-coloured band (the mockup's slot). */
     lv_obj_set_style_text_font(r, &lv_font_montserrat_20, LV_PART_MAIN);
     lv_obj_set_style_text_color(r, lv_color_hex(MUSE_THEME_DIM), LV_PART_MAIN);
+    /* No frame around the wheels (user, 2026-11-18): the theme's default
+     * border made each wheel look boxed in; only the selected row band
+     * stays visible. */
     lv_obj_set_style_bg_opa(r, LV_OPA_TRANSP, LV_PART_MAIN);
+    lv_obj_set_style_border_width(r, 0, LV_PART_MAIN);
+    lv_obj_set_style_border_width(r, 0, LV_PART_SELECTED);
     lv_obj_set_style_text_font(r, &lv_font_montserrat_28, LV_PART_SELECTED);
     lv_obj_set_style_text_color(r, lv_color_hex(MUSE_THEME_TEXT), LV_PART_SELECTED);
     lv_obj_set_style_bg_opa(r, LV_OPA_COVER, LV_PART_SELECTED);
@@ -185,12 +194,24 @@ static const char *ring_days_cn(int days)
     }
 }
 
+/* Does a finger reach the ring overlay at all? Logged so a "the button does
+ * nothing" report can be told apart from "the click never arrives". */
+static void on_ring_pressed(lv_event_t *e)
+{
+    lv_indev_t *indev = lv_indev_active();
+    lv_point_t p = { 0, 0 };
+    if (indev) {
+        lv_indev_get_point(indev, &p);
+    }
+    ESP_LOGI(TAG, "ring page: pressed at %d,%d", (int)p.x, (int)p.y);
+}
+
 static void on_ring_stop(lv_event_t *e)
 {
     (void)e;
-    /* The tick hides the page once the ring really ends; during the 6 s
-     * grace this is a no-op and the button stays drawn. */
-    muse_input_alarm_stop();
+    /* The tick hides the page once the ring really ends. */
+    const bool stopped = muse_input_alarm_stop();
+    ESP_LOGI(TAG, "ring page: stop tapped, stopped=%d", (int)stopped);
 }
 
 static void build_ring(void)
@@ -207,6 +228,7 @@ static void build_ring(void)
     lv_obj_add_flag(s_ring, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_remove_flag(s_ring, LV_OBJ_FLAG_GESTURE_BUBBLE);
     lv_obj_add_flag(s_ring, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_event_cb(s_ring, on_ring_pressed, LV_EVENT_PRESSED, NULL);
 
     /* The set time, big: Montserrat 28 scaled up (see ALARM_TIME_SCALE).
      * Box top h/2-76 puts the drawn glyphs' centre at about h/2-62, the

@@ -1820,26 +1820,19 @@ static void mg_rect(lv_obj_t *parent, int x, int y, int w, int h,
 static void mg_icon_breakout(lv_obj_t *card)
 {
     lv_obj_t *slot = mg_slot(card);
-    /* Field frame: 60x60 from (10,10), 2 px DIM border, transparent
-     * inside (the game's field is border-only, black inside). */
-    lv_obj_t *frame = lv_obj_create(slot);
-    lv_obj_set_size(frame, 60, 60);
-    lv_obj_set_pos(frame, 10, 10);
-    lv_obj_set_style_bg_opa(frame, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(frame, 2, 0);
-    lv_obj_set_style_border_color(frame, lv_color_hex(MUSE_THEME_DIM), 0);
-    lv_obj_set_style_radius(frame, 3, 0);
-    lv_obj_remove_flag(frame, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
-    /* Two rows of mini bricks, 14x6 on an 18 px pitch from x = 14. */
-    static const int bx[3] = { 14, 32, 50 };
+    /* No frame (user, 2026-11-18: it looked boxed in and small), so the
+     * pieces fill the whole 80 px slot: two rows of three 18x8 bricks on a
+     * 23 px pitch from x = 8, a white ball, the ACCENT paddle below. Same
+     * DANGER-over-GOLD row colours as the page. */
+    static const int bx[3] = { 8, 31, 54 };
     for (int i = 0; i < 3; i++) {
-        mg_rect(slot, bx[i], 16, 14, 6, 1, MUSE_THEME_DANGER);
-        mg_rect(slot, bx[i], 25, 14, 6, 1, MUSE_THEME_GOLD);
+        mg_rect(slot, bx[i], 12, 18, 8, 2, MUSE_THEME_DANGER);
+        mg_rect(slot, bx[i], 24, 18, 8, 2, MUSE_THEME_GOLD);
     }
-    /* Ball: white 6x6 dot between the bricks and the paddle. */
-    mg_rect(slot, 37, 45, 6, 6, 3, MUSE_THEME_TEXT);
-    /* Paddle: ACCENT 22x5, centred, near the field bottom. */
-    mg_rect(slot, 29, 62, 22, 5, 2, MUSE_THEME_ACCENT);
+    /* Ball: white 8x8 dot between the bricks and the paddle. */
+    mg_rect(slot, 36, 44, 8, 8, 4, MUSE_THEME_TEXT);
+    /* Paddle: ACCENT 32x7, centred, near the slot's bottom edge. */
+    mg_rect(slot, 24, 63, 32, 7, 3, MUSE_THEME_ACCENT);
 }
 
 /* Build one card's icon from its kind. Image kinds show their asset

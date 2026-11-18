@@ -637,11 +637,11 @@ void muse_breakout_ui_build(lv_obj_t *page, lv_event_cb_t back_cb)
     lv_obj_set_size(field, MUSE_BREAKOUT_FIELD_SIZE,
                     MUSE_BREAKOUT_FIELD_SIZE);
     lv_obj_set_pos(field, MUSE_BREAKOUT_FIELD_X, MUSE_BREAKOUT_FIELD_Y);
+    /* No frame around the play area (user, 2026-11-18: the 2 px border made
+     * the field look small): the bricks, paddle and ball sit straight on the
+     * page background, which also reads as the same field the mockup has. */
     lv_obj_set_style_bg_opa(field, LV_OPA_TRANSP, LV_PART_MAIN);
-    lv_obj_set_style_border_width(field, 2, LV_PART_MAIN);
-    lv_obj_set_style_border_color(field, lv_color_hex(MUSE_THEME_DIM),
-                                  LV_PART_MAIN);
-    lv_obj_set_style_radius(field, 6, LV_PART_MAIN);
+    lv_obj_set_style_border_width(field, 0, LV_PART_MAIN);
     lv_obj_remove_flag(field, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_remove_flag(field, LV_OBJ_FLAG_CLICKABLE);
 

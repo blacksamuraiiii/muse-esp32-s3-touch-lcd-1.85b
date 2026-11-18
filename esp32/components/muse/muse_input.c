@@ -400,18 +400,16 @@ bool muse_input_alarm_ringing(void)
     return s_alarm_ringing;
 }
 
-/* The ring page's Stop button: same stop as any key, with the same 6 s
- * panel-settling grace (a phantom touch on wake-up must not end the ring
- * before the user has seen it). The input task's own key path checks the
- * grace itself, so this is only for the LVGL button -- which is why the
- * button stays drawn during the grace instead of hiding. False when
- * there is no ring, or while the grace still runs. */
+/* The ring page's Stop button. Unlike the any-key path it does NOT wait out
+ * the 6 s panel-settling grace: the phantom press the grace exists for is a
+ * spurious talk-button edge on wake-up, while this stops only when a finger
+ * hits a 160x48 target in the middle of the screen (user report 2026-11-18:
+ * "tapping Stop does nothing, only BOOT works"). A phantom landing exactly
+ * on that button is vanishingly rare, and a Stop button that ignores its
+ * first taps for six seconds reads as broken. False when there is no ring. */
 bool muse_input_alarm_stop(void)
 {
     if (!s_alarm_ringing) {
-        return false;
-    }
-    if (esp_timer_get_time() - s_alarm_ring_us < ALARM_TOUCH_GRACE_US) {
         return false;
     }
     alarm_stop("button");
