@@ -33,7 +33,7 @@
  *   - Mini-game list page (mockup v1, user decision 2026-11-17):
  *     title "小游戏" with a back arrow, rule line "每局 10 金币"
  *     at y = 84 (DIM), and the feed page's horizontal strip at
- *     y = 120: six 100x100 cards in one scrolling row (22 px end
+ *     y = 120: seven 100x100 cards in one scrolling row (22 px end
  *     pads, 8 px gaps, snap per card, scrollbar off, no elastic),
  *     the game name under each card (Noto 16, DIM, y = 228), coin
  *     line pinned at y = 302 (TEXT, refreshed by refresh_status()).
@@ -42,7 +42,8 @@
  *     mockup v3, user decision 2026-11-17 -- no game-icons glyphs):
  *     石头剪刀布 one paper hand, 贪吃蛇 a straight LVGL-drawn mini
  *     snake, 打地鼠 the mole head, 金币雨 the gold coin, 毛毛跳跃
- *     the flying MaoMao, OX棋 an LVGL-drawn mini board. All six games
+ *     the flying MaoMao, OX棋 an LVGL-drawn mini board, 打砖块 an
+ *     LVGL-drawn mini field. All seven games
  *     cost 10 coins per start (user decision 2026-10-31, retuned
  *     2026-11-08); the names only dim when poor, they are never
  *     disabled. (Before this: six 330x58 rows in a vertical column,
@@ -140,6 +141,7 @@
 #include "muse_whackamole_ui.h"
 #include "muse_goldrain_ui.h"
 #include "muse_doodle_ui.h"
+#include "muse_breakout_ui.h"
 #include "muse_mathpractice_ui.h"
 #include "muse_tictactoe_ui.h"
 #include "muse_widgets.h" /* the shared back arrow / card / title (1.5g) */
@@ -227,6 +229,7 @@ enum {
     IC_PAGE_WHACKAMOLE,
     IC_PAGE_GOLDRAIN,
     IC_PAGE_DOODLE,
+    IC_PAGE_BREAKOUT,
     IC_PAGE_MATHPRACTICE,
     IC_PAGE_TICTACTOE,
     IC_PAGE_WORDCARDS,
@@ -246,11 +249,11 @@ static lv_obj_t *s_tile;
 static lv_obj_t *s_main_page, *s_feed_page, *s_game_page, *s_fortune_page,
     *s_fortune_sub_page, *s_jiaobei_page, *s_sudoku_page;
 static lv_obj_t *s_minigame_page, *s_snake_page, *s_whackamole_page,
-    *s_goldrain_page, *s_doodle_page, *s_mathpractice_page, *s_tictactoe_page,
+    *s_goldrain_page, *s_doodle_page, *s_breakout_page, *s_mathpractice_page, *s_tictactoe_page,
     *s_wordcards_page, *s_wordcards_sets_page, *s_quiz_page, *s_learn_page;
 static lv_obj_t *s_minigame_coins;
 static lv_obj_t *s_mg_rps_lbl, *s_mg_snake_lbl, *s_mg_whack_lbl,
-    *s_mg_goldrain_lbl, *s_mg_doodle_lbl,
+    *s_mg_goldrain_lbl, *s_mg_doodle_lbl, *s_mg_breakout_lbl,
     *s_mg_tictactoe_lbl;
 /* s_mg_sudoku_lbl was here: removed 2026-11-08 with the archived 数独
  * row (see build_minigame). Re-add it when restoring 数独. */
@@ -375,10 +378,10 @@ static void show_page(int page)
      * not done here -- 2026-11-17 review fix.) Check 18/18 after any
      * change, from esp32/components/muse:
      *   grep -o "s_[a-z_]*_page" muse_interact_ui.c | sort -u | wc -l
-     *     (= 18 distinct page objects)
+     *     (= 19 distinct page objects)
      *   sed -n '/^static void show_page/,/^    lv_obj_t \*show/p' \
      *       muse_interact_ui.c | grep -c "^    lv_obj_add_flag"
-     *     (= 18 hide lines in this list -- one add_flag per page object;
+     *     (= 19 hide lines in this list -- one add_flag per page object;
      *     the lv_obj_remove_flag below is the one show, not a hide, so
      *     it is not counted). */
     lv_obj_add_flag(s_fortune_sub_page, LV_OBJ_FLAG_HIDDEN);
@@ -389,6 +392,7 @@ static void show_page(int page)
     lv_obj_add_flag(s_whackamole_page, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(s_goldrain_page, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(s_doodle_page, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(s_breakout_page, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(s_mathpractice_page, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(s_tictactoe_page, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(s_wordcards_page, LV_OBJ_FLAG_HIDDEN);
@@ -407,6 +411,7 @@ static void show_page(int page)
     if (page == IC_PAGE_WHACKAMOLE) show = s_whackamole_page;
     if (page == IC_PAGE_GOLDRAIN) show = s_goldrain_page;
     if (page == IC_PAGE_DOODLE) show = s_doodle_page;
+    if (page == IC_PAGE_BREAKOUT) show = s_breakout_page;
     if (page == IC_PAGE_MATHPRACTICE) show = s_mathpractice_page;
     if (page == IC_PAGE_TICTACTOE) show = s_tictactoe_page;
     if (page == IC_PAGE_WORDCARDS) show = s_wordcards_page;
@@ -425,8 +430,8 @@ static void show_page(int page)
 bool muse_interact_ui_swipe_locked(void)
 {
     /* Any interaction subpage: 喂食, 今日运势, 学习, 小游戏 (the minigame
-     * list) and the six game boards (石头剪刀布 / 贪吃蛇 / 打地鼠 /
-     * 金币雨 / 毛毛跳跃 / OX棋) plus the three learning games
+     * list) and the seven game boards (石头剪刀布 / 贪吃蛇 / 打地鼠 /
+     * 金币雨 / 毛毛跳跃 / OX棋 / 打砖块) plus the three learning games
      * (数学练习 / 英语单词 / 英语口语, reached through the 学习 page)
      * and the word-cards category page. Only the
      * main page swipes, right to the face. A subpage leaves through its
@@ -446,8 +451,9 @@ static void on_back(lv_event_t *e)
      * main page, and from the main page to the face. The word-cards
      * card page is one level deeper: it lands on the category page,
      * which lands on the 学习 page. A subpage back that skipped a level
-     * would break the "left < = one level up" rule. The six menu
-     * games (game, snake, whack-a-mole, goldrain, doodle, tictactoe)
+     * would break the "left < = one level up" rule. The seven menu
+     * games (game, snake, whack-a-mole, goldrain, doodle, tictactoe,
+     * breakout)
      * all land on the menu; the three learning games (mathpractice,
      * wordcards, quiz) land on the 学习 page; feed is a main-page
      * card, so it still lands on the main page. Fortune is one level
@@ -455,7 +461,8 @@ static void on_back(lv_event_t *e)
      * the fortune subpage, the jiaobei board lands there too, and the
      * subpage itself lands on the main page. Leaving a game page
      * pauses a running game through its hide hook (snake keeps its
-     * board, whack-a-mole, goldrain, doodle, mathpractice, tictactoe
+     * board, whack-a-mole, goldrain, doodle, breakout, mathpractice,
+     * tictactoe
      * and wordcards resume from their pause overlays; quiz has no
      * pause overlay, it replays the current question on show), so
      * none plays on off-screen; the other subpages keep their own
@@ -481,6 +488,9 @@ static void on_back(lv_event_t *e)
     }
     if (s_page == IC_PAGE_DOODLE) {
         muse_doodle_ui_hide();
+    }
+    if (s_page == IC_PAGE_BREAKOUT) {
+        muse_breakout_ui_hide();
     }
     if (s_page == IC_PAGE_MATHPRACTICE) {
         muse_mathpractice_ui_hide();
@@ -509,6 +519,7 @@ static void on_back(lv_event_t *e)
                s_page == IC_PAGE_SNAKE || s_page == IC_PAGE_WHACKAMOLE ||
                s_page == IC_PAGE_GOLDRAIN ||
                s_page == IC_PAGE_DOODLE ||
+               s_page == IC_PAGE_BREAKOUT ||
                s_page == IC_PAGE_TICTACTOE) {
         show_page(IC_PAGE_MINIGAME);
     } else if (s_page == IC_PAGE_MATHPRACTICE ||
@@ -583,7 +594,8 @@ static void refresh_status(void)
     set_label(s_learn_coins, buf);
     muse_wordcards_ui_set_coins(buf);
 
-    /* Mini-game rows: snake, whack-a-mole, goldrain, doodle and
+    /* Mini-game rows: snake, whack-a-mole, goldrain, doodle,
+     * breakout and
      * OX棋 cost 10 coins per start, so they dim together when
      * nothing can be started. (数独 used to cost 5 once per
      * calendar day -- a day's ticket already paid meant it stayed
@@ -606,6 +618,7 @@ static void refresh_status(void)
     lv_obj_set_style_text_color(s_mg_whack_lbl, lv_color_hex(mg_color), 0);
     lv_obj_set_style_text_color(s_mg_goldrain_lbl, lv_color_hex(mg_color), 0);
     lv_obj_set_style_text_color(s_mg_doodle_lbl, lv_color_hex(mg_color), 0);
+    lv_obj_set_style_text_color(s_mg_breakout_lbl, lv_color_hex(mg_color), 0);
     lv_obj_set_style_text_color(s_mg_tictactoe_lbl, lv_color_hex(mg_color), 0);
 }
 
@@ -1245,8 +1258,8 @@ static void drain_feedback(void)
                 /* Snapshot was stale: the 10 coins were never deducted,
                  * so there is nothing to refund -- cancel the game
                  * (which was only a start of a never-settled game).
-                 * Snake, whack-a-mole, goldrain, doodle and
-                 * tictactoe share PET_FEE; all five expose a cancel
+                 * Snake, whack-a-mole, goldrain, doodle, breakout and
+                 * tictactoe share PET_FEE; all six expose a cancel
                  * hook, so route by the visible page so a refusal for
                  * one game never touches another's overlay. */
                 if (s_page == IC_PAGE_WHACKAMOLE) {
@@ -1257,6 +1270,8 @@ static void drain_feedback(void)
                     muse_snake_ui_fee_refused();
                 } else if (s_page == IC_PAGE_GOLDRAIN) {
                     muse_goldrain_ui_fee_refused();
+                } else if (s_page == IC_PAGE_BREAKOUT) {
+                    muse_breakout_ui_fee_refused();
                 } else if (s_page == IC_PAGE_TICTACTOE) {
                     muse_tictactoe_ui_fee_refused();
                 }
@@ -1270,6 +1285,8 @@ static void drain_feedback(void)
                     muse_snake_ui_fee_refused();
                 } else if (s_page == IC_PAGE_GOLDRAIN) {
                     muse_goldrain_ui_fee_refused();
+                } else if (s_page == IC_PAGE_BREAKOUT) {
+                    muse_breakout_ui_fee_refused();
                 } else if (s_page == IC_PAGE_TICTACTOE) {
                     muse_tictactoe_ui_fee_refused();
                 }
@@ -1400,6 +1417,13 @@ static void on_open_doodle(lv_event_t *e)
     (void)e;
     show_page(IC_PAGE_DOODLE);
     muse_doodle_ui_show();
+}
+
+static void on_open_breakout(lv_event_t *e)
+{
+    (void)e;
+    show_page(IC_PAGE_BREAKOUT);
+    muse_breakout_ui_show();
 }
 
 static void on_open_mathpractice(lv_event_t *e)
@@ -1611,7 +1635,10 @@ static void build_learn(void)
  *   MaoMao      -- the doodle game's muse_doodle_sprite (53x66
  *                  flying pose, user upload);
  *   mini board  -- LVGL-drawn, the tictactoe page's idiom (see
- *                  mg_icon_board).
+ *                  mg_icon_board);
+ *   mini field  -- LVGL-drawn, the breakout page's idiom scaled to
+ *                  the slot (see mg_icon_breakout): a field frame,
+ *                  two rows of mini bricks, the paddle and the ball.
  * The four image assets are already linked (their game pages use
  * them), so this adds no new art module and no new flash block --
  * and the two drawn icons are plain LVGL objects for the same
@@ -1625,6 +1652,7 @@ typedef enum {
     MUSE_MG_ICON_MAHJONG,
     MUSE_MG_ICON_SPRITE,
     MUSE_MG_ICON_BOARD,
+    MUSE_MG_ICON_BREAKOUT,
     MUSE_MG_ICON_COUNT,
 } muse_mg_icon_kind_t;
 
@@ -1770,6 +1798,50 @@ static void mg_icon_board(lv_obj_t *card)
     lv_obj_remove_flag(ring, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
 }
 
+/* Mini field (mockup v3, same as v2 for the board): the breakout
+ * page's idiom scaled to the 80 px slot -- a 60x60 DIM field frame
+ * from (10,10), two rows of three 14x6 mini bricks (DANGER red on
+ * top, GOLD yellow below, the game's row colours), an ACCENT paddle
+ * (22x5) near the bottom and a white ball dot between them. Plain
+ * LVGL objects, no new art module, no new flash block. */
+static void mg_rect(lv_obj_t *parent, int x, int y, int w, int h,
+                    int radius, uint32_t color)
+{
+    lv_obj_t *o = lv_obj_create(parent);
+    lv_obj_set_size(o, w, h);
+    lv_obj_set_pos(o, x, y);
+    lv_obj_set_style_bg_opa(o, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_color(o, lv_color_hex(color), 0);
+    lv_obj_set_style_border_width(o, 0, 0);
+    lv_obj_set_style_radius(o, radius, 0);
+    lv_obj_remove_flag(o, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+}
+
+static void mg_icon_breakout(lv_obj_t *card)
+{
+    lv_obj_t *slot = mg_slot(card);
+    /* Field frame: 60x60 from (10,10), 2 px DIM border, transparent
+     * inside (the game's field is border-only, black inside). */
+    lv_obj_t *frame = lv_obj_create(slot);
+    lv_obj_set_size(frame, 60, 60);
+    lv_obj_set_pos(frame, 10, 10);
+    lv_obj_set_style_bg_opa(frame, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(frame, 2, 0);
+    lv_obj_set_style_border_color(frame, lv_color_hex(MUSE_THEME_DIM), 0);
+    lv_obj_set_style_radius(frame, 3, 0);
+    lv_obj_remove_flag(frame, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+    /* Two rows of mini bricks, 14x6 on an 18 px pitch from x = 14. */
+    static const int bx[3] = { 14, 32, 50 };
+    for (int i = 0; i < 3; i++) {
+        mg_rect(slot, bx[i], 16, 14, 6, 1, MUSE_THEME_DANGER);
+        mg_rect(slot, bx[i], 25, 14, 6, 1, MUSE_THEME_GOLD);
+    }
+    /* Ball: white 6x6 dot between the bricks and the paddle. */
+    mg_rect(slot, 37, 45, 6, 6, 3, MUSE_THEME_TEXT);
+    /* Paddle: ACCENT 22x5, centred, near the field bottom. */
+    mg_rect(slot, 29, 62, 22, 5, 2, MUSE_THEME_ACCENT);
+}
+
 /* Build one card's icon from its kind. Image kinds show their asset
  * as-is (no recolour); drawn kinds are plain LVGL objects. */
 static void minigame_icon(lv_obj_t *card, muse_mg_icon_kind_t kind)
@@ -1796,6 +1868,9 @@ static void minigame_icon(lv_obj_t *card, muse_mg_icon_kind_t kind)
         break;
     case MUSE_MG_ICON_BOARD:
         mg_icon_board(card);
+        break;
+    case MUSE_MG_ICON_BREAKOUT:
+        mg_icon_breakout(card);
         break;
     case MUSE_MG_ICON_COUNT:
         break;
@@ -1836,16 +1911,16 @@ static void build_minigame(void)
     page_header(s_minigame_page, "小游戏", on_back);
     /* Rule line in the TOP slot (y = 84, DIM), the feed page's rule
      * line slot: every game costs 10 coins per start (user decision
-     * 2026-10-31, retuned 2026-11-08), so one line covers all six.
+     * 2026-10-31, retuned 2026-11-08), so one line covers all seven.
      * The menu itself never charges: each game page gates its own
      * fee. */
     lv_obj_t *hint = label(s_minigame_page, muse_font_cjk(), MUSE_THEME_DIM,
                            "每局 10 金币");
     lv_obj_align(hint, LV_ALIGN_TOP_MID, 0, 84);
     /* Scrollable strip, the feed page's idiom (mockup v1, user
-     * decision 2026-11-17): ONE row with all six games, swipe
+     * decision 2026-11-17): ONE row with all seven games, swipe
      * left/right to choose -- NOT a vertical list. A single horizontal
-     * scroller (flex row, snap per card, scrollbar off) holding six
+     * scroller (flex row, snap per card, scrollbar off) holding seven
      * game columns (100px card + name below, so the name scrolls with
      * its card). 22px pads on both ends so the first three sit centred
      * like the old 3-card row, and the last three sit centred when
@@ -1872,7 +1947,8 @@ static void build_minigame(void)
                         LV_EVENT_SCROLL_END, NULL);
 
     /* Card order (user 2026-11-08): 石头剪刀布, 贪吃蛇, 打地鼠,
-     * 金币雨, 毛毛跳跃, OX棋 last. The three learning games moved
+     * 金币雨, 毛毛跳跃, OX棋, 打砖块 last (added 2026-11-18, after
+     * OX棋 so the existing six keep their order). The three learning games moved
      * to the 学习 page in the 1.5.3a A flow (数学练习 / 英语单词 /
      * 英语口语, renamed the same day from 加减练习 / 单词练习).
      * 凑十法练习 was fused into
@@ -1902,6 +1978,8 @@ static void build_minigame(void)
                   on_open_doodle, &s_mg_doodle_lbl);
     minigame_card(strip, MUSE_MG_ICON_BOARD, "OX棋",
                   on_open_tictactoe, &s_mg_tictactoe_lbl);
+    minigame_card(strip, MUSE_MG_ICON_BREAKOUT, "打砖块",
+                  on_open_breakout, &s_mg_breakout_lbl);
 
     /* Coin line: the page's last row, same slot as the other pages'
      * (y = 302), so every interaction page ends the same way
@@ -2261,6 +2339,7 @@ void muse_interact_ui_build(lv_obj_t *tile)
     s_whackamole_page = page_group(tile);
     s_goldrain_page = page_group(tile);
     s_doodle_page = page_group(tile);
+    s_breakout_page = page_group(tile);
     s_mathpractice_page = page_group(tile);
     s_tictactoe_page = page_group(tile);
     s_wordcards_page = page_group(tile);
@@ -2280,6 +2359,7 @@ void muse_interact_ui_build(lv_obj_t *tile)
     muse_whackamole_ui_build(s_whackamole_page, on_back);
     muse_goldrain_ui_build(s_goldrain_page, on_back);
     muse_doodle_ui_build(s_doodle_page, on_back);
+    muse_breakout_ui_build(s_breakout_page, on_back);
     muse_mathpractice_ui_build(s_mathpractice_page, on_back);
     muse_tictactoe_ui_build(s_tictactoe_page, on_back);
     muse_wordcards_ui_build(s_wordcards_page, on_back);
@@ -2307,15 +2387,16 @@ void muse_interact_ui_on_hidden(void)
      * page pauses the same way (a running game never plays on while
      * the tile is hidden); its board and paid state stay in RAM. */
     muse_sudoku_ui_hide();
-    /* The four timed games pause the same way: their boards and paid
+    /* The five timed games pause the same way: their boards and paid
      * state stay in RAM, and a running game never plays on while the
-     * tile is hidden. Whack-a-mole, goldrain and doodle resume from their
-     * pause overlays on the next visit, snake from wherever its tick left
-     * it. */
+     * tile is hidden. Whack-a-mole, goldrain, doodle and breakout resume
+     * from their pause overlays on the next visit, snake from wherever
+     * its tick left it. */
     muse_snake_ui_hide();
     muse_whackamole_ui_hide();
     muse_goldrain_ui_hide();
     muse_doodle_ui_hide();
+    muse_breakout_ui_hide();
     muse_mathpractice_ui_hide();
     muse_tictactoe_ui_hide();
     muse_wordcards_ui_hide();
