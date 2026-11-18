@@ -110,6 +110,7 @@ if(CONFIG_MUSE_ENABLED)
         "muse_interact_hand_paper.c"
         "muse_interact_hand_scissors.c"
         "muse_settings_ui.c"
+        "muse_alarm_ui.c"
         "muse_text.c"
         "muse_tts.c"
         "muse_sentence.c"

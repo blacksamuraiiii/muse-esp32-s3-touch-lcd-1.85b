@@ -326,6 +326,17 @@ void muse_settings_set_alarm_min(int min)
     notify(MUSE_SETTING_ALARM);
 }
 
+/* Both at once, for the time picker page: one notification, so leaving the
+ * page re-arms once instead of once per field. */
+void muse_settings_set_alarm_time(int hour, int min)
+{
+    s.alarm_h = (uint8_t)clampi(hour, 0, 23);
+    s.alarm_m = (uint8_t)clampi(min, 0, 59);
+    save_u8("alarm_h", s.alarm_h);
+    save_u8("alarm_m", s.alarm_m);
+    notify(MUSE_SETTING_ALARM);
+}
+
 /* The repeat mask: bit0 = Sunday .. bit6 = Saturday, 0 = once, 0x7F = daily.
  * Notifies like the other alarm setters, even though only the arm changes. */
 void muse_settings_set_alarm_days(int days)

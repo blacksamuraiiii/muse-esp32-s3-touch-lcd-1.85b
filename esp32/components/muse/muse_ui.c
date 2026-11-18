@@ -41,6 +41,7 @@
 #include "muse_console.h"
 #include "muse_link.h"
 #include "muse_mem.h"
+#include "muse_alarm_ui.h"
 #include "muse_interact_ui.h"
 #include "muse_menu.h"
 #include "muse_pet.h"
@@ -1883,6 +1884,10 @@ static void frame_tick(lv_timer_t *timer)
         was_interact = is_interact;
         muse_interact_ui_tick(is_interact);
     }
+    /* The alarm ring overlay lives on the top layer and must show on any
+     * tile, so its tick runs every frame, before the early returns below
+     * (video / menu / image cover the face, the ring covers them). */
+    muse_alarm_ui_tick();
 #if LV_USE_SNAPSHOT
     if (s_bench_page >= 0) {
         bool settings = s_bench_page != 0;

@@ -27,6 +27,7 @@
 #include "esp_mac.h"
 #include "esp_timer.h"
 
+#include "muse_alarm_ui.h"
 #include "muse_audio.h"
 #include "muse_battery.h"
 #include "muse_ble.h"
@@ -60,7 +61,7 @@ static int s_text_scale = 466;
 static lv_obj_t *s_tile;
 static lv_obj_t *s_current;
 static lv_obj_t *s_home, *s_wifi, *s_hatch, *s_speech, *s_ble, *s_sound, *s_sleep, *s_battery, *s_power,
-    *s_text, *s_alarm;
+    *s_text, *s_alarm, *s_alarm_time;
 
 /*
  * Only home is kept. A sub-page is built when it opens and deleted on the way
@@ -80,7 +81,7 @@ static lv_obj_t *s_home_camera;
 #endif
 
 /* Alarm page. */
-static lv_obj_t *s_alarm_sw, *s_alarm_hour_val, *s_alarm_min_val, *s_alarm_days_val, *s_alarm_hint;
+static lv_obj_t *s_alarm_sw, *s_alarm_time_val, *s_alarm_days_val, *s_alarm_hint;
 
 /* Wi-Fi page. */
 static lv_obj_t *s_wifi_sw, *s_wifi_status, *s_wifi_saved, *s_wifi_scan_btn, *s_wifi_scan_lbl, *s_wifi_list;
@@ -379,7 +380,7 @@ static lv_obj_t *info_row(lv_obj_t *list, const char *text)
 static void drop(lv_obj_t *p)
 {
     lv_obj_t **const pages[] = { &s_wifi, &s_hatch, &s_speech, &s_ble, &s_sound, &s_sleep, &s_battery,
-                                  &s_power, &s_update, &s_text, &s_alarm };
+                                  &s_power, &s_update, &s_text, &s_alarm, &s_alarm_time };
     for (size_t i = 0; i < sizeof(pages) / sizeof(pages[0]); i++) {
         if (*pages[i] == p) {
             *pages[i] = NULL;
@@ -1536,18 +1537,24 @@ static void on_alarm_sw(lv_event_t *e)
     muse_settings_set_alarm_on(lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED));
 }
 
-static void on_alarm_hour(lv_event_t *e)
+/* Leaving the time picker: the picker already saved the rollers, so this
+ * only navigates back and drops the page (a fresh build reads the saved
+ * time next time). */
+static void on_alarm_time_back(lv_event_t *e)
 {
-    muse_settings_set_alarm_hour((muse_settings_alarm_hour() + tap_direction(e) + 24) % 24);
+    (void)e;
+    show(s_alarm);
+    drop(s_alarm_time);
 }
 
-static void on_alarm_min(lv_event_t *e)
+static void on_alarm_time(lv_event_t *e)
 {
-    /* Ten minutes a tap, and 55 + 10 is 0: a plain modulo would land on 5 and
-     * send the row backwards past the hour (docs/20261023-待办.md §2.3). */
-    const int m = muse_settings_alarm_min();
-    muse_settings_set_alarm_min(tap_direction(e) > 0 ? (m + 10 >= 60 ? 0 : m + 10)
-                                                     : (m - 10 < 0 ? 50 : m - 10));
+    (void)e;
+    if (!s_alarm_time) {
+        s_alarm_time = muse_alarm_ui_build_time_page(s_tile, on_alarm_time_back);
+    }
+    show(s_alarm_time);
+    muse_settings_ui_tick(true);   /* fill it in now, not at the next tick */
 }
 
 /* What the DAYS row steps through (docs/20261023-待办.md §2.1, four periods as
@@ -1583,13 +1590,12 @@ static void build_alarm_page(lv_obj_t *tile)
     lv_obj_t *list;
     s_alarm = page(tile, "ALARM", true, &list);
     s_alarm_sw = switch_row(list, "Alarm", muse_settings_alarm_on(), on_alarm_sw);
-    row(list, NULL, "Hour", &s_alarm_hour_val, on_alarm_hour, NULL);
-    row(list, NULL, "Minute", &s_alarm_min_val, on_alarm_min, NULL);
+    row(list, NULL, "Time", &s_alarm_time_val, on_alarm_time, NULL);
     row(list, NULL, "Days", &s_alarm_days_val, on_alarm_days, NULL);
     s_alarm_hint = note(list, "");
-    note(list, "Tap the left half of a row to go down, the right to go up. The clock chip keeps the "
-               "time and knows the weekday, so Days picks once, every day, workdays or weekends, and "
-               "the alarm rings with the screen off.");
+    note(list, "Tap Time to pick the time. Days steps once, every day, workdays or weekends. Tap its "
+               "left half to go down, the right to go up. The alarm rings 30 s, any key stops it, and "
+               "the clock chip keeps the time so it rings with the screen off.");
 }
 
 static void tick_alarm(void)
@@ -1597,8 +1603,7 @@ static void tick_alarm(void)
     if (s_alarm_sw == NULL) {
         return;
     }
-    set_val(s_alarm_hour_val, "%02d", muse_settings_alarm_hour());
-    set_val(s_alarm_min_val, "%02d", muse_settings_alarm_min());
+    set_val(s_alarm_time_val, "%02d:%02d", muse_settings_alarm_hour(), muse_settings_alarm_min());
     const int di = days_index(muse_settings_alarm_days());
     set_text(s_alarm_days_val, di < 0 ? "Custom" : DAY_LABELS[di]);
     const bool on = muse_settings_alarm_on();

@@ -37,6 +37,7 @@
 #include "third_party/pcf85063a/pcf85063a.h"
 #include "sdkconfig.h"
 
+#include "muse_input.h"
 #include "muse_wifi.h"
 
 static const char *TAG = "muse_rtc";
@@ -372,7 +373,15 @@ static void time_task(void *arg)
              * its own schedule and this runs each time, so drift never builds
              * up past one poll interval. */
             if (muse_rtc_present()) {
-                (void)muse_rtc_push();
+                if (muse_rtc_push() == ESP_OK) {
+                    /* The clock just jumped, so the chip's arm is for the old
+                     * time: re-arm from the new one, or a jump past the
+                     * target would lose that day's ring (alarm-plan §1.5).
+                     * Only on a real sync, never on the 5 s poll; while a
+                     * ring is in progress muse_input_alarm_sync() returns
+                     * on its own. */
+                    muse_input_alarm_sync();
+                }
             }
         }
         vTaskDelay(pdMS_TO_TICKS(5000));
