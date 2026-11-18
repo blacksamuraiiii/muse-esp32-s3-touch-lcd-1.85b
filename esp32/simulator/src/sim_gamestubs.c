@@ -1,8 +1,9 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 /*
- * sim_gamestubs.c -- no-op stand-ins for the five interaction mini-game
+ * sim_gamestubs.c -- no-op stand-ins for the six interaction mini-game
  * pages (石头剪刀布 uses muse_interact's own page; sudoku / snake /
- * whack-a-mole / goldrain coins / doodle live in their own modules).
+ * whack-a-mole / goldrain coins / doodle / breakout live in their own
+ * modules).
  *
  * The simulator compiles muse_interact_ui.c, which drives these pages' APIs,
  * but the games are render-heavy boards outside this simulator's purpose
@@ -17,6 +18,7 @@
 #include "../../components/muse/muse_whackamole_ui.h"
 #include "../../components/muse/muse_goldrain_ui.h"
 #include "../../components/muse/muse_doodle_ui.h"
+#include "../../components/muse/muse_breakout_ui.h"
 #include "../../components/muse/muse_sudoku_ui.h"
 
 #define STUB0(name) \
@@ -57,6 +59,15 @@ void muse_doodle_ui_build(lv_obj_t *page, lv_event_cb_t back_cb)
 void muse_doodle_ui_show(void) {}
 STUB0(muse_doodle_ui_hide)
 STUB0(muse_doodle_ui_fee_refused)
+
+void muse_breakout_ui_build(lv_obj_t *page, lv_event_cb_t back_cb)
+{
+    (void)page;
+    (void)back_cb;
+}
+void muse_breakout_ui_show(void) {}
+STUB0(muse_breakout_ui_hide)
+STUB0(muse_breakout_ui_fee_refused)
 
 void muse_sudoku_ui_build(lv_obj_t *page, lv_event_cb_t back_cb)
 {

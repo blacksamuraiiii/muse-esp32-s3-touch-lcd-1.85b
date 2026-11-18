@@ -56,6 +56,8 @@ if(CONFIG_MUSE_ENABLED)
         "muse_whackamole_ui.c"
         "muse_goldrain.c"
         "muse_goldrain_ui.c"
+        "muse_breakout.c"
+        "muse_breakout_ui.c"
         "muse_goldrain_coin.c"
         "muse_goldrain_sprite.c"
         "muse_imu.c"  # QMI8658 tilt for 金币雨 (waveshare/qmi8658)
