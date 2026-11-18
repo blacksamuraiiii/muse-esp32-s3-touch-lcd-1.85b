@@ -43,8 +43,13 @@ static lv_event_cb_t s_back_cb;   /* settings page: navigate back to Alarm */
 static void on_page_back(lv_event_t *e)
 {
     /* Every exit saves first (the rollers only change the display), then
-     * hands navigation back to the settings page. */
+     * hands navigation back to the settings page. The roller pointers are
+     * cleared right after: the settings page drops (deletes) this page on
+     * the way out, so a second exit event would otherwise save through a
+     * freed roller. */
     muse_alarm_ui_time_page_save();
+    s_hour_roller = NULL;
+    s_min_roller = NULL;
     if (s_back_cb) {
         s_back_cb(e);
     }

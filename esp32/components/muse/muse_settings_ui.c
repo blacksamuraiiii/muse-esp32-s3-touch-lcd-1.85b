@@ -1603,7 +1603,13 @@ static void tick_alarm(void)
     if (s_alarm_sw == NULL) {
         return;
     }
-    set_val(s_alarm_time_val, "%02d:%02d", muse_settings_alarm_hour(), muse_settings_alarm_min());
+    {
+        /* One value per set_val(), so the HH:MM row formats locally. */
+        char hm[16];
+        snprintf(hm, sizeof(hm), "%02d:%02d",
+                 muse_settings_alarm_hour(), muse_settings_alarm_min());
+        set_text(s_alarm_time_val, hm);
+    }
     const int di = days_index(muse_settings_alarm_days());
     set_text(s_alarm_days_val, di < 0 ? "Custom" : DAY_LABELS[di]);
     const bool on = muse_settings_alarm_on();
