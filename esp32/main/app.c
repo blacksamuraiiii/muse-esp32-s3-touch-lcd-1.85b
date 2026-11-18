@@ -54,6 +54,7 @@
 #include "ble_commands.h"
 #endif
 #include "ble_server.h"
+#include "helper_task.h"
 #include "factory_test.h"
 #include "vm_api.h"
 #include "vm_connect.h"
@@ -1168,7 +1169,7 @@ static void vm_auth_refresh_task(void *arg) {
             ESP_LOGI(TAG, "skipping VM credential refresh; another operation is active");
             finish_vm_auth_refresh_task();
             stack_monitor_record(NULL);
-            vTaskDelete(NULL);
+            helper_task_delete(NULL);
             return;
         }
     }
@@ -1187,7 +1188,7 @@ static void vm_auth_refresh_task(void *arg) {
     }
     finish_vm_auth_refresh_task();
     stack_monitor_record(NULL);
-    vTaskDelete(NULL);
+    helper_task_delete(NULL);
 }
 
 static void schedule_vm_auth_refresh(void) {
@@ -1207,7 +1208,7 @@ static void schedule_vm_auth_refresh(void) {
     s_last_vm_auth_refresh_attempt_us = now;
     auth_lock_give();
 
-    if (xTaskCreate(vm_auth_refresh_task, "vm_auth_rfsh", 8192, NULL, 4, NULL) != pdPASS) {
+    if (helper_task_create(vm_auth_refresh_task, "vm_auth_rfsh", 8192, NULL, 4, NULL) != pdPASS) {
         auth_lock_take();
         s_vm_auth_refresh_pending = false;
         auth_lock_give();
@@ -1392,7 +1393,7 @@ static void scan_refresh_task(void *arg) {
     }
     heap_snapshot("after wifi_scan");
     stack_monitor_record(NULL);
-    vTaskDelete(NULL);
+    helper_task_delete(NULL);
 }
 
 static bool schedule_scan_refresh(bool reply_requested, bool *joined) {
@@ -1410,7 +1411,7 @@ static bool schedule_scan_refresh(bool reply_requested, bool *joined) {
         return true;
     }
 
-    if (xTaskCreate(scan_refresh_task, "scan_rfsh", 4096, NULL, 4, NULL)
+    if (helper_task_create(scan_refresh_task, "scan_rfsh", 4096, NULL, 4, NULL)
         != pdPASS) {
         atomic_store_explicit(&s_scan_refresh_flags, 0, memory_order_release);
         ESP_LOGE(TAG, "failed to start wifi scan task");
@@ -2526,8 +2527,10 @@ static const vm_info_t *find_vm_by_id(const vm_info_t *vms, int count, const cha
     return NULL;
 }
 
-// Runs on an internal-RAM stack: the caller's may be in PSRAM, and this reads
-// and (on token refresh) writes NVS.
+// Reads and (on token refresh) writes NVS, so its stack is in internal RAM
+// (the caller's may be in PSRAM) unless code and rodata run from PSRAM and the
+// board puts setup task stacks there (helper_task.h): with live calls on,
+// this board has no 8 KB internal block left once Wi-Fi and Link are up.
 static void hatch_vm_task(void *arg) {
     hatch_vm_request_t *req = arg;
     if (config_is_provisioned() && operation_gate_take(pdMS_TO_TICKS(15000), "Muse VM lookup")) {
@@ -2556,7 +2559,7 @@ static void hatch_vm_task(void *arg) {
     }
     xTaskNotifyGive(req->waiter);
     stack_monitor_record(NULL);
-    vTaskDelete(NULL);
+    helper_task_delete(NULL);
 }
 
 bool app_hatch_vm_credentials(const char *want_vm, char *vm_id, size_t id_cap,
@@ -2566,7 +2569,7 @@ bool app_hatch_vm_credentials(const char *want_vm, char *vm_id, size_t id_cap,
         .vm_name = vm_name, .name_cap = name_cap,
         .waiter = xTaskGetCurrentTaskHandle(),
     };
-    if (xTaskCreate(hatch_vm_task, "muse_vm", 8192, &req, 4, NULL) != pdPASS) {
+    if (helper_task_create(hatch_vm_task, "muse_vm", 8192, &req, 4, NULL) != pdPASS) {
         ESP_LOGW(TAG, "muse_vm task create failed: internal free %u largest %u",
                  (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
                  (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));

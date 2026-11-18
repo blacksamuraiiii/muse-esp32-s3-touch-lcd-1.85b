@@ -212,9 +212,9 @@ const muse_ptest_state_t *muse_ptest_board_matrix(const char *name, size_t *coun
 /* Two of these live in internal DMA RAM for the whole boot, and they are
  * allocated before audio init asks for its I2S rings (17.3 KB): at 8 rows a
  * pair cost 11.5 KB and left the pool with an 84-byte largest block, so the
- * Muse VM lookup could not get its 8 KB internal stack. 4 rows halves it to
- * 5.8 KB. The cost is twice as many SPI transactions per band, each ~0.3 ms. */
-#define LCD_CHUNK_BYTES (LCD_H_RES * 4 * 2)
+ * Muse VM lookup could not get its 8 KB internal stack. 2 rows quarters it to
+ * 2.9 KB. The cost is four times as many SPI transactions per band, each ~0.3 ms. */
+#define LCD_CHUNK_BYTES (LCD_H_RES * 2 * 2)
 
 #define TP_ADDR 0x15           /* CST816S, 7-bit */
 #define TP_RST GPIO_NUM_1
@@ -2296,9 +2296,12 @@ static esp_err_t ptest_lcd(int percent)
         uint8_t *black = heap_caps_calloc(1, LCD_CHUNK_BYTES, MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
         ESP_RETURN_ON_FALSE(black, ESP_ERR_NO_MEM, TAG, "black stripe");
         esp_err_t e = ESP_OK;
-        for (int y = 0; y < LCD_V_RES; y += 8) {
+        /* One strip per chunk: draw_bitmap reads the whole strip, so the
+         * strip height must not exceed the black buffer (LCD_CHUNK_BYTES,
+         * 2 rows since 1.5.4). */
+        for (int y = 0; y < LCD_V_RES; y += 2) {
             e = esp_lcd_panel_draw_bitmap(s_ptest_panel, 0, y, LCD_H_RES,
-                                          y + 8 < LCD_V_RES ? y + 8 : LCD_V_RES, black);
+                                          y + 2 < LCD_V_RES ? y + 2 : LCD_V_RES, black);
             if (e) { break; }
         }
         /* A draw error may mean a DMA buffer is still in flight. Keep it
