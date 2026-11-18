@@ -69,7 +69,7 @@ float muse_audio_level(const int16_t *mono, size_t frames);
  * buffer could not be allocated. */
 esp_err_t muse_audio_chirp(int rising);
 
-/* Game + daily sound effects (sfx-plan-v4): eleven short sounds, all
+/* Game + daily sound effects (sfx-plan-v4): twelve short sounds, all
  * synthesized on the fly from a note table with the muse_audio_chirp
  * recipe (16 kHz, sine + 0.3x 3rd harmonic, 10% attack then (1-x)^2
  * decay). No audio files, so retuning is a data change.
@@ -87,10 +87,39 @@ typedef enum {
     MUSE_SFX_LOW_BATT, /* low battery: two 262 Hz beeps, 120 ms each, 80 ms gap, 320 ms */
     MUSE_SFX_TOSS,   /* 掷圣杯: two wooden-cup knocks, 130 ms */
     MUSE_SFX_LAUGH,  /* laughing cup: two light notes 660 -> 880 Hz, 160 ms */
+    MUSE_SFX_ALARM,  /* the alarm ring tone: its own entry, see below */
     MUSE_SFX_START,  /* start / play again: reuses muse_audio_chirp(1) */
 } muse_sfx_t;
 
-/* Longest table sound (WIN, 330 ms) in samples: the playback buffer size. */
+/* ------------------------------------------------------- the alarm ring tone
+ * 换音色只改这里 (alarm v1, user 2026-11-18): the ring tone is one entry
+ * in the table below (MUSE_SFX_ALARM) plus one repeat interval
+ * (MUSE_ALARM_RING_MS). The input task's ring loop only calls
+ * muse_audio_sfx(MUSE_SFX_ALARM) every MUSE_ALARM_RING_MS -- it never
+ * names a note -- so retuning the tone touches nothing else.
+ *
+ * To change the tone, edit exactly these fields:
+ *   1. the three ALARM rows in notes[] below: f0/f1 (Hz, f0 == f1 for a
+ *      pure tone, f0 != f1 for a glide), ms (note length), amp (peak
+ *      amplitude, 7000 is the usual level; BAD's 18000 is the loudest
+ *      the small speaker takes without clipping), noise (1: a white-noise
+ *      knock, f0/f1 unused -- see TOSS). A silent gap between notes is a
+ *      row with amp 0 (see EAT / LOW_BATT / LAUGH).
+ *   2. MUSE_ALARM_RING_MS below: how often the whole tone repeats
+ *      while the alarm rings (250 ms now: 195 ms of sound + 55 ms of
+ *      trailing silence, which matches the 55 ms gap between the two
+ *      beeps -- a continuous beep stream). Shorter = more urgent.
+ *   3. only if the new tone is longer than 330 ms in total, raise
+ *      MUSE_SFX_MAX_SAMPLES below (it sizes the playback buffer).
+ * Do NOT retune WIN for the alarm: the games play WIN, and changing it
+ * would change every game's win sound. The final tone (user 2026-11-18,
+ * picked from web samples: DeadSounds "Electronic clock signal, alarm
+ * clock (beep, beep)") is two 4000 Hz beeps, 70 ms each, 55 ms apart,
+ * amp 7000, repeated every MUSE_ALARM_RING_MS (250 ms) -- a continuous
+ * ~8 beeps/s stream, the same rhythm as the reference clip. */
+#define MUSE_ALARM_RING_MS 250   /* repeat the ring tone every 250 ms */
+
+/* Longest table sound (WIN, 330 ms; ALARM is now 195 ms) in samples: the playback buffer size. */
 #define MUSE_SFX_MAX_SAMPLES (MUSE_AUDIO_RATE * 330 / 1000)
 
 /* Play one sound effect without blocking the caller (2026-11-16,
@@ -153,7 +182,11 @@ static inline size_t muse_audio_sfx_render(muse_sfx_t sfx, int16_t *out, size_t 
      * 180 Hz thud, the two knocks 70 ms apart, 130 ms in all. The noise
      * is a fixed-seed LCG, reseeded per note, so the render is a pure
      * function of the table (same short-buffer prefix property as the
-     * tones). LAUGH is two light notes 660 -> 880 Hz with a 20 ms gap. */
+     * tones). LAUGH is two light notes 660 -> 880 Hz with a 20 ms gap.
+     * ALARM is the alarm ring tone, its own entry so retuning it never
+     * touches the games' WIN (final tone, user 2026-11-18: two 4000 Hz
+     * beeps, 70 ms each, 55 ms apart -- see the "换音色只改这里" block
+     * above the enum). */
     static const muse_sfx_note_t notes[] = {
         /* GOOD  */ {880.0f, 880.0f, 60, 7000, 0}, {1318.0f, 1318.0f, 60, 7000, 0},
         /* BAD   */ {300.0f, 150.0f, 120, 18000, 0},
@@ -173,6 +206,8 @@ static inline size_t muse_audio_sfx_render(muse_sfx_t sfx, int16_t *out, size_t 
                     {0.0f, 0.0f, 5, 3000, 1}, {180.0f, 180.0f, 55, 9000, 0},
         /* LAUGH */ {660.0f, 660.0f, 70, 7000, 0}, {660.0f, 660.0f, 20, 0, 0},
                     {880.0f, 880.0f, 70, 7000, 0},
+        /* ALARM */ {4000.0f, 4000.0f, 70, 7000, 0}, {4000.0f, 4000.0f, 55, 0, 0},
+                    {4000.0f, 4000.0f, 70, 7000, 0},
     };
     static const muse_sfx_def_t defs[] = {
         [MUSE_SFX_GOOD] = {0, 2},
@@ -186,6 +221,7 @@ static inline size_t muse_audio_sfx_render(muse_sfx_t sfx, int16_t *out, size_t 
         [MUSE_SFX_LOW_BATT] = {15, 3},
         [MUSE_SFX_TOSS] = {18, 5},
         [MUSE_SFX_LAUGH] = {23, 3},
+        [MUSE_SFX_ALARM] = {26, 3},
     };
     if (sfx < 0 || sfx >= MUSE_SFX_START || out == NULL) {
         return 0;

@@ -99,6 +99,8 @@ void muse_settings_set_sleep_s(int secs);
 void muse_settings_set_alarm_on(bool on);
 void muse_settings_set_alarm_hour(int hour);
 void muse_settings_set_alarm_min(int min);
+/* Both at once (the time picker page): one notification, one re-arm. */
+void muse_settings_set_alarm_time(int hour, int min);
 void muse_settings_set_alarm_days(int days);
 void muse_settings_set_wifi_on(bool on);
 void muse_settings_set_ble_on(bool on);

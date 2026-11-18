@@ -59,12 +59,13 @@ int main(void)
 {
     /* Lengths at 16 kHz: GOOD/BAD/DRAW 120 ms, PLACE 45 ms, WIN 330 ms,
      * EAT 140 ms, PET 80 ms, FORTUNE 180 ms, LOW_BATT 320 ms,
-     * TOSS 130 ms, LAUGH 160 ms. */
+     * TOSS 130 ms, LAUGH 160 ms, ALARM 195 ms (two 4000 Hz beeps). */
     check_sound(MUSE_SFX_GOOD, "good", 1920);
     check_sound(MUSE_SFX_BAD, "bad", 1920);
     check_sound(MUSE_SFX_DRAW, "draw", 1920);
     check_sound(MUSE_SFX_PLACE, "place", 720);
     check_sound(MUSE_SFX_WIN, "win", 5280);
+    check_sound(MUSE_SFX_ALARM, "alarm", 3120);
     check_sound(MUSE_SFX_EAT, "eat", 2240);
     check_sound(MUSE_SFX_PET, "pet", 1280);
     check_sound(MUSE_SFX_FORTUNE, "fortune", 2880);

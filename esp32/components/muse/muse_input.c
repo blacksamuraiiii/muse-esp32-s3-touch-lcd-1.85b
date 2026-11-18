@@ -240,8 +240,8 @@ static void set_asleep(bool asleep, const char *why)
  * re-arming lives only here, which is what keeps a fired alarm from ringing
  * twice.
  */
-#define ALARM_RING_US (60LL * 1000 * 1000)   /* 60 s, then it gives up */
-#define ALARM_CHIRP_US (2LL * 1000 * 1000)   /* one chirp every 2 s */
+#define ALARM_RING_US (30LL * 1000 * 1000)   /* 30 s, then it gives up (v1) */
+#define ALARM_SFX_US ((int64_t)MUSE_ALARM_RING_MS * 1000)   /* one ring-tone repeat per interval */
 #define ALARM_TOUCH_GRACE_US (6LL * 1000 * 1000)   /* panel settles: see input_task */
 #define ALARM_QUIET_US (2LL * 1000 * 1000)         /* after a stop: the same press */
 #define ALARM_CHECK_US (500LL * 1000)              /* how often the chip's AF is read */
@@ -253,7 +253,7 @@ static void set_asleep(bool asleep, const char *why)
 
 static bool s_alarm_ringing;
 static int64_t s_alarm_ring_us;
-static int64_t s_alarm_chirp_us;
+static int64_t s_alarm_sfx_us;
 static int64_t s_alarm_quiet_us;   /* talk edges ignored until this moment */
 static int64_t s_alarm_check_us;   /* last time the chip's flag was read */
 static time_t s_alarm_target;   /* local epoch the current arm is for; 0 unknown */
@@ -358,7 +358,7 @@ static void alarm_start(const char *why)
     }
     s_alarm_ringing = true;
     s_alarm_ring_us = esp_timer_get_time();
-    s_alarm_chirp_us = s_alarm_ring_us;
+    s_alarm_sfx_us = s_alarm_ring_us;
     ESP_LOGI(TAG, "alarm ringing (%s)", why);
 #if CONFIG_MUSE_TELEMETRY
     muse_telemetry_event("alarm.fire", why);
@@ -400,8 +400,26 @@ bool muse_input_alarm_ringing(void)
     return s_alarm_ringing;
 }
 
+/* The ring page's Stop button: same stop as any key, with the same 6 s
+ * panel-settling grace (a phantom touch on wake-up must not end the ring
+ * before the user has seen it). The input task's own key path checks the
+ * grace itself, so this is only for the LVGL button -- which is why the
+ * button stays drawn during the grace instead of hiding. False when
+ * there is no ring, or while the grace still runs. */
+bool muse_input_alarm_stop(void)
+{
+    if (!s_alarm_ringing) {
+        return false;
+    }
+    if (esp_timer_get_time() - s_alarm_ring_us < ALARM_TOUCH_GRACE_US) {
+        return false;
+    }
+    alarm_stop("button");
+    return true;
+}
+
 /* Every poll: start the ring when the chip's flag says it fired or the clock
- * reached the arm; chirp on a timer while ringing; give up after a minute. */
+ * reached the arm; repeat the ring tone on a timer while ringing; give up after 30 s. */
 static void alarm_poll(void)
 {
     if (!s_alarm_ringing) {
@@ -429,13 +447,17 @@ static void alarm_poll(void)
     }
     int64_t now = esp_timer_get_time();
     if (now - s_alarm_ring_us >= ALARM_RING_US) {
-        alarm_stop("60 s");
+        alarm_stop("30 s");
         return;
     }
-    if (now >= s_alarm_chirp_us) {
-        muse_voice_request_chirp();
+    if (now >= s_alarm_sfx_us) {
+        /* The ring tone, on its own SFX entry (muse_audio.h, "换音色只改这里"):
+         * retuning the tone never touches this loop. The async queue drops
+         * the repeat if the codecs are not up yet, so a cold-boot ring only
+         * loses its first arpeggio at most. */
+        muse_audio_sfx(MUSE_SFX_ALARM);
         muse_state_poke();   /* and auto-sleep does not walk over the ring */
-        s_alarm_chirp_us = now + ALARM_CHIRP_US;
+        s_alarm_sfx_us = now + ALARM_SFX_US;
     }
 }
 

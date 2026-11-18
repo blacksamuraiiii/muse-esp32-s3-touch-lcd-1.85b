@@ -81,6 +81,10 @@ void muse_input_request_power_off(void);
  */
 void muse_input_alarm_sync(void);
 bool muse_input_alarm_ringing(void);
+/* Stop a ring from the ring page's Stop button: same stop as any key, with
+ * the same 6 s panel-settling grace. False when there is no ring, or while
+ * the grace still runs. */
+bool muse_input_alarm_stop(void);
 
 /* Bench only: keep the device awake so a battery sweep is not cut short by the
  * idle power-off. No effect on user-facing behaviour when unset. */
