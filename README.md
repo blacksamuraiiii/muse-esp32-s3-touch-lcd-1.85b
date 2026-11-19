@@ -6,7 +6,7 @@
 > 板级文档见 [`esp32/README.md`](esp32/README.md) 与 `esp32/AGENTS.md`。
 > 内容以**面向 Windows 用户**的分步操作为主（上游文档只写了 macOS / Linux）。
 >
-> 正式版 **1.5.3**，测试版 **1.5.4a**（当前开发版，`esp32/version.txt`）；发布件见
+> 正式版 **1.5.3**，测试版 **1.5.4b**（当前开发版，`esp32/version.txt`）；发布件见
 > [Releases](https://github.com/blacksamuraiiii/muse-esp32-s3-touch-lcd-1.85b/releases)。
 >
 > **风险提示**：本项目由「黑客为黑客」而写，纯属好玩。刷入自定义固件可能导致开发板变砖、
@@ -42,9 +42,13 @@
 
 只保留正式版与最新测试版；逐条改动见各版本的 Release 说明与 git 历史。
 
-### v1.5.4a（2026-11-18，测试版）
+### v1.5.4b（2026-11-19，测试版）
 
-**四条开发分支合入：内存优化第一批、连接恢复、闹钟 v1、打砖块。**
+**在 1.5.4a 之上做一轮评审修补（29 项）+ ota 检查任务的删除配对，含 1.5.4a 全部内容（四条开发分支合入：内存优化第一批、连接恢复、闹钟 v1、打砖块）。**
+
+- **1.5.4a 评审修补**：① 闹钟 F-A1——响闹时记下本地日期，SNTP 往回校时不再同日重响（正向跳过目标仍丢当天那一响，无中生有补不了）；② PSRAM 栈任务删除配对——TTS 预热/自检、词卡取词/播放四条退出路径改用 `vTaskDeleteWithCaps`（原来普通 `vTaskDelete` 会漏掉 PSRAM 里的栈与 TCB），音频播放任务补 `MALLOC_CAP_8BIT`；③ 闹钟时间一次提交 NVS（两个 key 一次 commit，原来两次）；④ 响闹页返回回调取出即清，防页面释放后二次调用；⑤ 契约测试：新增 `test_link_helper_task_contract`（helper 任务创建/删除必须配对），`test_link_transport_contract` 的 upgrade 断言补上中继 `k=` 令牌参数（旧断言停在加令牌之前）；⑥ 打砖块与游戏经济的注释、计划文档口径订正（10 金币入场、20 枚上限、一条命、场地与图标无外框、挡板反弹会加速）；⑦ PSRAM 任务创建失败的日志补上 PSRAM 余量。
+- **ota 检查任务（`ota_github.c`）**：`check_task` 用 `xTaskCreateWithCaps()` 创建却用普通 `vTaskDelete()` 删除，PSRAM 栈永远漏；改为由 `arg` 携带创建方式，按闭包决定 `vTaskDeleteWithCaps()` 还是 `vTaskDelete()`（纯内部分配的 fallback 路径走普通删除，否则崩）。
+- **TTS 服务端**：`5~10℃` 这类数值区间改读「5到10摄氏度」（原来波浪号被读成「大约」或被吞），与设备插件侧规则一致。
 
 - **内存优化（R1+R2+R4）**：音频播放任务与三个 setup 任务（Muse VM 查找、凭据刷新、扫描刷新）的栈改走 PSRAM（新增 `main/helper_task.h`，板级开关 `CONFIG_HOMEHUB_SETUP_TASKS_IN_PSRAM`，前提是本板代码与 rodata 已在 PSRAM）；LCD 分带 chunk 4 行 → 2 行，并同步修正 `ptest_lcd` 黑清循环步长（原来按 8 行读 2 行的缓冲，越界）。
 - **连接恢复（上游 `481743f`）**：半开连接 150 s 无入站即重连；隧道 keepalive 65 s 超时按「未答复的 ping 之后有没有入站」分流（重连 vs 只重开隧道），并补一个 WS ping 给活连接自证的机会；隧道外发/DMA 门控卡住 30 s 拆会话；本地标死隧道流后重开前先发 Reset（治服务端的 "duplicate id" 死循环）；静默断开时打一次 TCP 探针（1.1.1.1 / 8.8.8.8:443）。新增连接历史环：`device.health` 带最新 40 条 `connectivity_events`，`bug.report` 带全部 128 条且超 32 KiB 时从最旧事件丢起；`bug.report` 顶层 `tunnel` 对象移进 `device_health`。
@@ -52,7 +56,7 @@
 - **打砖块（第七个小游戏）**：24 块砖 6×4、球速 120 px/s、挡板 260 px/s 上限（按 vx 220 最坏情形推导）、**一条命：接不住直接结束**（用户 2026-11-18 定，无复活）、倾斜主控 + 手指拖动备用 + 长按暂停、砖碎 +1 分、结算只写实得（`min(分, 20)`）、入场费 10。
 - **实机看过后按用户口径改的五处**：打砖块游戏页去掉场地外框、列表图标去掉外框并放大、闹钟滚轮去掉外框、生命 3 → 1、响闹页「停止」按钮立刻生效（不再等 6 秒面板宽限，BOOT 与触摸的宽限不变）。
 
-状态：编译通过（`exit=0`，bin 4,132,864 B，4 MB app 槽余 60 KB）；已刷入开发板并确认启动（`App version: 1.5.4a`、`UI up 360x360`、Wi-Fi 与中继已通、隧道流已开、内部最大块 7–10 KB、无 panic）；台架实测 `>alarm` / `>alarm.test` / `>alarm.stop` 通过。host harness 与 main 基线逐条对比：改动涉及的模块（`test_breakout_logic`、`test_link_events`、`test_link_bug_report`、`test_sfx`、`test_link_wifi_scan_contract`、`test_goldrain_logic`、`test_doodle_logic`）全过；`test_link_transport_contract` / `test_link_diagnostic_log` / `test_link_epaper_status` / `test_link_noise_session` / `test_link_ota` 的失败在 main 上与合入后完全一致，属既有（零新增）。实机手感与观感验收待做（打砖块倾斜方向与手感、一条命的节奏、滚轮页与响闹页版面、响闹「停止」按钮、内网与中继的断网自愈）。
+状态：编译通过（`exit=0`，bin 4,132,864 B，4 MB app 槽余 61,440 B / 1%）。**刷机与实机验收未做**——本轮编译时开发板未连接（COM3 只剩 `CM_PROB_PHANTOM` 幽灵节点），插好 USB 后执行 `esp32/flash_154b.ps1`。host harness：新增 `test_link_helper_task_contract` 4 项全过，`test_link_transport_contract` 7 项全过；`test_link_ota` 5 项失败与 main 基线（`41d51cf`）逐条相同（宿主侧缺 `freertos/idf_additions.h`，属既有，零新增）。1.5.4a 已在实机验证的部分（启动、Wi-Fi 与中继、隧道流、`>alarm` 系台架命令）本轮未重复验证。
 
 ### v1.5.3（2026-11-17，正式版）
 
