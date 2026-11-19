@@ -13,15 +13,15 @@
  * (see below).
  *
  * Economy (same as snake / whack-a-mole / goldrain): each game costs
- * 5 coins. Tapping 开始 on the START overlay or 再来一局 on the OVER
- * overlay (which prints "- 5 金币" under the label) first checks the
- * pet snapshot: under 5 coins the start is refused with "金币不够
- * （需 5 枚）" -- the short copy, because the note shares the slot
+ * 10 coins. Tapping 开始 on the START overlay or 再来一局 on the OVER
+ * overlay (which prints "- 10 金币" under the label) first checks the
+ * pet snapshot: under 10 coins the start is refused with "金币不够
+ * （需 10 枚）" -- the short copy, because the note shares the slot
  * under the field, where only ~213 px of chord is left -- and nothing
  * is charged; otherwise PET_FEE is queued and the game starts. Resume
  * after pause never charges again, and there is no restart button on
  * the pause card (same decision as snake: one tap in the bezel must
- * not spend 5 coins). The worker is the only writer of coins; if its
+ * not spend 10 coins). The worker is the only writer of coins; if its
  * re-check finds the snapshot was stale (PET_FEE feedback PET_POOR),
  * the interact tile calls muse_doodle_ui_fee_refused(), which cancels
  * a running game back to START with the refusal note.
@@ -29,11 +29,11 @@
  * Score and payout: coins are +1 (user rule 2026-11-07), clouds give no
  * points and there is no bomb ("取消炸弹惩罚"), so the score only ever
  * goes up. The endless round's score is converted exactly once, at
- * OVER, by muse_pet_round_coins() -- 1 point per coin, at most 10 coins
+ * OVER, by muse_pet_round_coins() -- 1 point per coin, at most 20 coins
  * per round -- then sent as PET_PLAY_REWARD.
- * The payout is gross: the 5-coin entry fee was already charged at
- * start, so the round nets min(score,10) - 5 and no round mints more
- * than 5 coins. The result is printed once, under the field: white
+ * The payout is gross: the 10-coin entry fee was already charged at
+ * start, so the round nets min(score,20) - 10 and no round mints more
+ * than 10 coins. The result is printed once, under the field: white
  * and score-only ("本局 n 分") while PLAYING or PAUSED -- there is no
  * countdown, the round is endless until she falls -- and GOLD with
  * the gross payout ("本局 n 分，+m 金币") at OVER (same slot as the

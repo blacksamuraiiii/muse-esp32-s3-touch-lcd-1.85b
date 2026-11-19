@@ -24,6 +24,7 @@
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/idf_additions.h"
 #include "freertos/task.h"
 #include "minimp3.h"
 
@@ -319,7 +320,7 @@ static void fetch_task_exit(void)
         s_fetch_wanted = false;
         muse_wordcards_audio_prefetch_list(&list);
     }
-    vTaskDelete(NULL);
+    vTaskDeleteWithCaps(NULL);
 }
 
 /* Fail every word of `list` that is not READY yet: the single-fetch
@@ -715,7 +716,7 @@ static void play_task_exit(void)
             }
         }
     }
-    vTaskDelete(NULL);
+    vTaskDeleteWithCaps(NULL);
 }
 
 static void play_task(void *arg)

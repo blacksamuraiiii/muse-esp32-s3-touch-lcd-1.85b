@@ -375,11 +375,11 @@ static void time_task(void *arg)
             if (muse_rtc_present()) {
                 if (muse_rtc_push() == ESP_OK) {
                     /* The clock just jumped, so the chip's arm is for the old
-                     * time: re-arm from the new one, or a jump past the
-                     * target would lose that day's ring (alarm-plan §1.5).
-                     * Only on a real sync, never on the 5 s poll; while a
-                     * ring is in progress muse_input_alarm_sync() returns
-                     * on its own. */
+                     * time: re-arm from the new one. The re-arm only gets the
+                     * next arm date right (plan §1.5/§3.5, F-A1): a jump back
+                     * does not re-ring the same day, but a jump past the target
+                     * still loses that day's ring. Only on a real sync; a ring
+                     * in progress makes muse_input_alarm_sync() return at once. */
                     muse_input_alarm_sync();
                 }
             }

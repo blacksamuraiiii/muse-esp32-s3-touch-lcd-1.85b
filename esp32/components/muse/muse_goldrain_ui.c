@@ -385,9 +385,8 @@ static void on_pause(lv_event_t *e)
  * muse_pet_round_coins() is the only conversion curve -- 1 point (one
  * coin) per coin, 20 coins per round ceiling -- and the 10-coin entry
  * fee was already charged at start through PET_FEE, so the round's net
- * is payout minus 10, computed on the OVER card, never printed (kids
- * cannot tell net apart: the card shows what was added, not what was
- * gained). The score is floored at
+ * is never computed or printed (kids cannot tell net apart: the card
+ * shows what was added, not what was gained). The score is floored at
  * zero first (muse_goldrain_settle_score): a bomb is -5, so a round
  * can end below zero, and that pays 0 coins, never a negative amount
  * -- round_coins() takes an unsigned score, so an unfloored negative

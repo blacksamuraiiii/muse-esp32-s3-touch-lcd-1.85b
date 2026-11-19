@@ -64,7 +64,9 @@
  *     card at y = 114 with its content centred (grade 36, 28x2 gold
  *     rule 66, body 84), coin line at y = 302. (2026-11-14: the draw
  *     went from +20/day to -5/day, once a day, same draw all day --
- *     the old "每天+20，同日再抽无效" wording is gone with it.)
+ *     the old "每天+20，同日再抽无效" wording is gone with it.
+ *     2026-11-16: the -5 cost later became -2, for both the draw and
+ *     each 掷筊 toss.)
  *     The subpage is reached from the main page's 今日运势 card
  *     (2026-11-14, mockup v13): it holds two 100x100 cards at
  *     y = 120 (抽签 / 掷筊, icons 80 px, names at y = 228), the
@@ -1102,7 +1104,7 @@ static void fortune_layout(void)
 }
 
 /* Day-aware since 2026-11-14 (the draw went from +20/day to -5/day,
- * once a day, same draw all day): the stored grade is today's only
+ * later -2/day from 2026-11-16, once a day, same draw all day): the stored grade is today's only
  * when fortune_day IS today. A stale snapshot (yesterday's draw, or
  * no draw yet) shows "今天还没抽签", not yesterday's card; a request
  * in flight shows "抽取中..." instead. */

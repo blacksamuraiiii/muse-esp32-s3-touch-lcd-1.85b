@@ -2570,9 +2570,11 @@ bool app_hatch_vm_credentials(const char *want_vm, char *vm_id, size_t id_cap,
         .waiter = xTaskGetCurrentTaskHandle(),
     };
     if (helper_task_create(hatch_vm_task, "muse_vm", 8192, &req, 4, NULL) != pdPASS) {
-        ESP_LOGW(TAG, "muse_vm task create failed: internal free %u largest %u",
+        ESP_LOGW(TAG, "muse_vm task create failed: internal free %u largest %u, PSRAM free %u largest %u",
                  (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
-                 (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
+                 (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
+                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM),
+                 (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM));
         return false;
     }
     ulTaskNotifyTake(pdTRUE, portMAX_DELAY);

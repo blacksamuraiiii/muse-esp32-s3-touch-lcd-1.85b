@@ -13,16 +13,16 @@
  * (see below).
  *
  * Economy (user decision 2026-10-31, payout 2026-11-01):
- * each game costs 5 coins. Tapping 开始 on the START overlay or
- * 再玩一次 on the OVER overlay (which prints "- 5 金币" under the
- * label) first checks the pet snapshot: under 5 coins the start is
- * refused with "金币不够（需 5 枚）" -- the short copy, because the note
+ * each game costs 10 coins. Tapping 开始 on the START overlay or
+ * 再玩一次 on the OVER overlay (which prints "- 10 金币" under the
+ * label) first checks the pet snapshot: under 10 coins the start is
+ * refused with "金币不够（需 10 枚）" -- the short copy, because the note
  * now shares the slot under the field, where only ~213 px of chord is
  * left (2026-11-01) -- and nothing is charged; otherwise PET_FEE is
  * queued and the game starts. Resume
  * after pause never charges again, and there is no restart button on
  * the pause card (2026-11-01, same decision as snake: one tap in the
- * bezel must not spend 5 coins). The worker is the only writer of
+ * bezel must not spend 10 coins). The worker is the only writer of
  * coins; if its re-check finds the snapshot was stale (PET_FEE
  * feedback PET_POOR), the interact tile calls
  * muse_whackamole_ui_fee_refused(), which cancels a running game back
@@ -31,10 +31,10 @@
  * Score and payout: one mole is one point, and the 30 s round's score is
  * converted exactly once, at OVER, by muse_pet_round_coins() -- 1 point per
  * coin (corrected 2026-11-01 from 5, which paid a 13-point snake round only
- * 2 coins), at most 10 coins per round (2026-11-01, was 5) -- then sent as
- * PET_PLAY_REWARD. The payout is gross: the 5-coin entry fee was already
- * charged at start, so the round nets min(score,10) - 5 and no round mints
- * more than 5 coins. The result is printed once, under the field: white and
+ * 2 coins), at most 20 coins per round (2026-11-08, was 10; 2026-11-01, was 5) -- then sent as
+ * PET_PLAY_REWARD. The payout is gross: the 10-coin entry fee was already
+ * charged at start, so the round nets min(score,20) - 10 and no round mints
+ * more than 10 coins. The result is printed once, under the field: white and
  * score-only plus the 30 s countdown ("本局 n 分 · 剩余 X 秒") while PLAYING
  * or PAUSED, GOLD with the gross payout ("本局 n 分，+m 金币") at OVER (UI
  * polish 2026-11-01, same slot as the snake page). The net is deliberately

@@ -2,9 +2,14 @@
 /*
  * muse_breakout.c -- 打砖块 logic, see muse_breakout.h.
  *
- * One ball at a constant 120 px/s, 24 bricks in 6x4, a 72x10 paddle,
- * one life (a miss ends the round). Per 50 ms tick the ball moves v * 0.05 (6 px at serve
- * speed, 11 px at the vx cap of 220) -- less than a brick's 16 px
+ * One ball at 120 px/s at the serve, 24 bricks in 6x4, a 72x10 paddle,
+ * one life (a miss ends the round). A paddle hit only bends vx (up to
+ * +-90 px/s, clamped to +-220) and flips vy without rescaling it, so
+ * |v| grows with repeated edge hits to about 241 px/s at vx = 220
+ * (|vy| <= 98.3 px/s at the serve) -- the speed-up is by design, not
+ * a difficulty ramp over time. Per 50 ms tick the ball moves v * 0.05
+ * (6 px at serve speed, 11 px of vx at the 220 cap, ~12 px of |v| at
+ * the ~241 px/s maximum) -- less than a brick's 16 px
  * thickness plus the ball's 10 px diameter, so a plain AABB overlap
  * check per tick cannot tunnel through a brick and no sweep test is
  * needed. At most one brick breaks per tick (first hit scanning rows
@@ -291,7 +296,11 @@ void muse_breakout_tick(muse_breakout_t *b, uint32_t ms)
 
     /* Fell out of the bottom: lose a life. Lives left -> ball and
      * paddle reset and a fresh serve, score kept, no re-charge. No
-     * lives left -> OVER. */
+     * lives left -> OVER. With MUSE_BREAKOUT_LIVES 1 this re-serve
+     * branch is unreachable (lives hits 0 at once); restoring the
+     * constant to 3 revives it, and the re-serve path then needs a
+     * host test -- the harness "lose every life" loop only runs once
+     * at 1, so it never exercises a re-serve. */
     if (b->ball_y > (float)(MUSE_BREAKOUT_FIELD_Y + MUSE_BREAKOUT_FIELD_SIZE)) {
         b->event = MUSE_BREAKOUT_EV_LOST;
         if (b->lives > 0) {

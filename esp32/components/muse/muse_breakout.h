@@ -10,13 +10,19 @@
  * score is converted exactly once, at OVER, by muse_pet_round_coins()
  * (1 point per coin, 20 coins per round ceiling) -- never here.
  *
- * Ball speed is 120 px/s (MUSE_BREAKOUT_BALL_SPEED, user decision
- * 2026-11-18: the mockup's ~160 px/s was too fast for a 7-year-old).
- * The serve leaves (180,260) upward at 35..55 degrees to the
- * horizontal, vx sign random. vx can only change on a paddle hit
- * (offset * 90 px/s, clamped to +-220); speed never ramps up (v1 has
- * no difficulty curve -- if one is added later, the 220 cap and the
- * paddle's 260 px/s cap must be re-derived together, see below).
+ * Ball speed is 120 px/s at the serve (MUSE_BREAKOUT_BALL_SPEED, user
+ * decision 2026-11-18: the mockup's ~160 px/s was too fast for a
+ * 7-year-old). The serve leaves (180,260) upward at 35..55 degrees to
+ * the horizontal, vx sign random. A paddle hit only changes vx
+ * (offset * 90 px/s, clamped to +-220); vy is flipped, never
+ * rescaled, so |v| grows with repeated edge hits -- the speed-up is
+ * by design, not a difficulty ramp over time (v1 has no time/brick
+ * ramp; if one is added later, the 220 cap and the paddle's 260 px/s
+ * cap must be re-derived together, see below). At the serve |vy| is
+ * 68.8..98.3 px/s, so with vx at the 220 cap |v| reaches about
+ * 241 px/s (sqrt(220^2 + 98^2)); the host harness clamps a different
+ * case, vx = 220 with vy = 120, whose |v| is 250.6 px/s -- that is
+ * the algorithm's bound for those inputs, not the in-play maximum.
  *
  * Timing is in milliseconds and advances only through
  * muse_breakout_tick(), so the host test drives it deterministically
@@ -56,7 +62,8 @@
 #define MUSE_BREAKOUT_FIELD_X 60
 #define MUSE_BREAKOUT_FIELD_Y 60
 #define MUSE_BREAKOUT_FIELD_SIZE 240
-/* Ball: white dot, radius 5 px, constant speed (no ramp in v1). */
+/* Ball: white dot, radius 5 px, 120 px/s at the serve (speed grows on
+ * paddle hits, see the header comment; no time ramp in v1). */
 #define MUSE_BREAKOUT_BALL_R 5
 #define MUSE_BREAKOUT_BALL_SPEED 120.0f
 /* Paddle hits may push vx up to this; the paddle's own top speed is
@@ -88,7 +95,9 @@
     (MUSE_BREAKOUT_BRICK_COLS * MUSE_BREAKOUT_BRICK_ROWS)
 /* Lives per round: 1, i.e. a miss is game over (user, 2026-11-18).
  * The engine still counts them down, so raising this back to 3 restores
- * the revive behaviour without touching tick(). */
+ * the revive behaviour without touching tick() -- but the re-serve path
+ * is then untested at that value (see the note in tick()), so it needs
+ * a host test before relying on it. */
 #define MUSE_BREAKOUT_LIVES 1u
 /* Tilt calibration (金币雨's, 1.5.1 real-board verified): sign, gain
  * in px per m/s^2, dead zone in m/s^2, low-pass smoothing. */
