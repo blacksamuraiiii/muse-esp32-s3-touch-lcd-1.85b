@@ -56,7 +56,7 @@
 - **打砖块（第七个小游戏）**：24 块砖 6×4、球速 120 px/s、挡板 260 px/s 上限（按 vx 220 最坏情形推导）、**一条命：接不住直接结束**（用户 2026-11-18 定，无复活）、倾斜主控 + 手指拖动备用 + 长按暂停、砖碎 +1 分、结算只写实得（`min(分, 20)`）、入场费 10。
 - **实机看过后按用户口径改的五处**：打砖块游戏页去掉场地外框、列表图标去掉外框并放大、闹钟滚轮去掉外框、生命 3 → 1、响闹页「停止」按钮立刻生效（不再等 6 秒面板宽限，BOOT 与触摸的宽限不变）。
 
-状态：编译通过（`exit=0`，bin 4,132,864 B，4 MB app 槽余 61,440 B / 1%）。**刷机与实机验收未做**——本轮编译时开发板未连接（COM3 只剩 `CM_PROB_PHANTOM` 幽灵节点），插好 USB 后执行 `esp32/flash_154b.ps1`。host harness：新增 `test_link_helper_task_contract` 4 项全过，`test_link_transport_contract` 7 项全过；`test_link_ota` 5 项失败与 main 基线（`41d51cf`）逐条相同（宿主侧缺 `freertos/idf_additions.h`，属既有，零新增）。1.5.4a 已在实机验证的部分（启动、Wi-Fi 与中继、隧道流、`>alarm` 系台架命令）本轮未重复验证。
+状态：编译通过（`exit=0`，bin 4,132,864 B，4 MB app 槽余 61,440 B / 1%）；已刷入开发板并确认启动（`App version: 1.5.4b`、`UI up: 360x360`、Wi-Fi/WSS/raw 三层全通、隧道流 stream 2 已开、心跳 `tun rx+0 tx+0 drop+0`、内部最大块 7–10 KB、无 panic/assert）；台架 `>alarm.test` 与 `>alarm.stop` 通过（响闹页正常出现与停止；报出的 `lcd_panel.io.i2c … i2c transaction failed` 是面板唤醒瞬间的既有瞬态，2026-10-22 已定性，见 `notes/20261022进展记录.md` §4）。host harness：新增 `test_link_helper_task_contract` 4 项全过，`test_link_transport_contract` 7 项全过；`test_link_ota` 5 项失败与 main 基线（`41d51cf`）逐条相同（宿主侧缺 `freertos/idf_additions.h`，属既有，零新增）。实机手感与观感验收待做（打砖块倾斜手感、滚轮页与响闹页版面、闹钟 SNTP 回拨不重响、中继断网自愈）。
 
 ### v1.5.3（2026-11-17，正式版）
 
