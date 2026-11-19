@@ -33,17 +33,17 @@ static const char *TAG = "muse_alarm_ui";
 
 /* ------------------------------------------------------------ time picker page */
 
-/* A press that lasts longer than this is not a tap: it is the phantom touch
- * the panel reports for the first seconds after it wakes (the CST816S hands
- * back garbage until it settles, notes/20261022-progress §4). With the ring
- * page's Stop button deliberately skipping the 6 s settle grace (user,
- * 2026-11-18), such a phantom used to end the ring ~4 s in, every time --
- * measured on 2026-11-19: alarm.test -> "ring page: stop tapped" after
- * 4.3 s with nobody touching the board. A real tap is well under a second,
- * so anything held longer keeps ringing; BOOT still stops it at once. */
-#define RING_STOP_MAX_PRESS_US 1200000   /* 1.2 s */
+/* The ring page's Stop button waits out the 6 s settle grace inside
+ * muse_input_alarm_stop() (see there for why: the wake-up phantom arrives as
+ * a clean short click right on the button). A press inside the grace is not
+ * silent: the hint line under the button switches to this for a moment, so
+ * the button never reads as dead. */
+#define RING_HINT_WAIT_TEXT "稍候 · 按 BOOT 可停"
+#define RING_HINT_TEXT      "按 BOOT 也可停止"
+#define RING_HINT_SHOW_US   1500000   /* 1.5 s of feedback per refused tap */
 
-static int64_t s_stop_press_us;   /* when the finger went down on Stop */
+static lv_obj_t *s_ring_hint;      /* the hint line under Stop */
+static int64_t s_hint_until_us;    /* feedback shown until; 0 = default text */
 
 /* Ring overlay scale (2026-11-19: the user asked for one size step up).
  * The time uses muse_font_clock_48 -- Montserrat Medium 48 px cut down to
@@ -230,25 +230,19 @@ static void on_ring_pressed(lv_event_t *e)
     ESP_LOGI(TAG, "ring page: pressed at %d,%d", (int)p.x, (int)p.y);
 }
 
-static void on_stop_pressed(lv_event_t *e)
-{
-    (void)e;
-    s_stop_press_us = esp_timer_get_time();
-}
-
 static void on_ring_stop(lv_event_t *e)
 {
     (void)e;
-    /* The tick hides the page once the ring really ends. A press held longer
-     * than RING_STOP_MAX_PRESS_US is the wake-up phantom, not a finger (see
-     * the note at the top): ignore it so the ring keeps going. */
-    const int64_t held = s_stop_press_us ? esp_timer_get_time() - s_stop_press_us : 0;
-    s_stop_press_us = 0;
-    if (held > RING_STOP_MAX_PRESS_US) {
-        ESP_LOGW(TAG, "ring page: stop ignored (held %ld ms, phantom touch)", (long)(held / 1000));
+    /* The tick hides the page once the ring really ends. While the panel is
+     * still settling the stop is refused (see muse_input_alarm_stop), so tell
+     * the user rather than leaving the button looking dead. */
+    const bool stopped = muse_input_alarm_stop();
+    if (!stopped && muse_input_alarm_ringing() && s_ring_hint) {
+        lv_label_set_text(s_ring_hint, RING_HINT_WAIT_TEXT);
+        s_hint_until_us = esp_timer_get_time() + RING_HINT_SHOW_US;
+        ESP_LOGI(TAG, "ring page: stop refused (settling grace), hint shown");
         return;
     }
-    const bool stopped = muse_input_alarm_stop();
     ESP_LOGI(TAG, "ring page: stop tapped, stopped=%d", (int)stopped);
 }
 
@@ -303,7 +297,6 @@ static void build_ring(void)
     lv_obj_set_style_bg_color(btn, lv_color_hex(MUSE_THEME_DANGER), 0);
     lv_obj_set_style_border_width(btn, 0, 0);
     lv_obj_set_style_shadow_width(btn, 0, 0);
-    lv_obj_add_event_cb(btn, on_stop_pressed, LV_EVENT_PRESSED, NULL);
     lv_obj_add_event_cb(btn, on_ring_stop, LV_EVENT_CLICKED, NULL);
     lv_obj_t *lbl = lv_label_create(btn);
     lv_obj_set_style_text_font(lbl, muse_font_cjk(), 0);
@@ -315,15 +308,16 @@ static void build_ring(void)
     lv_label_set_text(lbl, "停止");
     lv_obj_center(lbl);
 
-    lv_obj_t *hint = lv_label_create(s_ring);
-    lv_obj_set_style_text_font(hint, muse_font_cjk(), 0);
-    lv_obj_set_style_text_color(hint, lv_color_hex(MUSE_THEME_DIM), 0);
-    lv_obj_set_style_transform_pivot_x(hint, LV_PCT(50), LV_PART_MAIN);
-    lv_obj_set_style_transform_pivot_y(hint, LV_PCT(50), LV_PART_MAIN);
-    lv_obj_set_style_transform_scale_x(hint, RING_CJK_SCALE, LV_PART_MAIN);
-    lv_obj_set_style_transform_scale_y(hint, RING_CJK_SCALE, LV_PART_MAIN);
-    lv_label_set_text(hint, "按 BOOT 也可停止");
-    lv_obj_align(hint, LV_ALIGN_TOP_MID, 0, h / 2 + 100);
+    s_ring_hint = lv_label_create(s_ring);
+    lv_obj_set_style_text_font(s_ring_hint, muse_font_cjk(), 0);
+    lv_obj_set_style_text_color(s_ring_hint, lv_color_hex(MUSE_THEME_DIM), 0);
+    lv_obj_set_style_transform_pivot_x(s_ring_hint, LV_PCT(50), LV_PART_MAIN);
+    lv_obj_set_style_transform_pivot_y(s_ring_hint, LV_PCT(50), LV_PART_MAIN);
+    lv_obj_set_style_transform_scale_x(s_ring_hint, RING_CJK_SCALE, LV_PART_MAIN);
+    lv_obj_set_style_transform_scale_y(s_ring_hint, RING_CJK_SCALE, LV_PART_MAIN);
+    lv_label_set_text(s_ring_hint, RING_HINT_TEXT);
+    lv_obj_align(s_ring_hint, LV_ALIGN_TOP_MID, 0, h / 2 + 100);
+    s_hint_until_us = 0;
 }
 
 static void refresh_ring(void)
@@ -334,6 +328,12 @@ static void refresh_ring(void)
     char sub[48];
     snprintf(sub, sizeof(sub), "%s · 闹钟响了", ring_days_cn(muse_settings_alarm_days()));
     lv_label_set_text(s_ring_sub, sub);
+    /* A new ring starts with the default hint line, whatever the last ring
+     * left behind. */
+    if (s_ring_hint) {
+        lv_label_set_text(s_ring_hint, RING_HINT_TEXT);
+    }
+    s_hint_until_us = 0;
 }
 
 void muse_alarm_ui_tick(void)
@@ -349,5 +349,12 @@ void muse_alarm_ui_tick(void)
     } else if (!ringing && s_ring_shown) {
         lv_obj_add_flag(s_ring, LV_OBJ_FLAG_HIDDEN);
         s_ring_shown = false;
+    }
+    /* Put the hint line back once the "still settling" feedback has run. */
+    if (s_hint_until_us && esp_timer_get_time() > s_hint_until_us) {
+        s_hint_until_us = 0;
+        if (s_ring_hint) {
+            lv_label_set_text(s_ring_hint, RING_HINT_TEXT);
+        }
     }
 }

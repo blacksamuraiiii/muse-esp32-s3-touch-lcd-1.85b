@@ -263,6 +263,11 @@ static time_t s_alarm_target;   /* local epoch the current arm is for; 0 unknown
  * yet this boot. */
 static int s_alarm_last_rung_year = -1;   /* tm_year + 1900 of the last ring */
 static int s_alarm_last_rung_yday = -1;   /* tm_yday of the last ring */
+/* talk_down() as of the previous poll, for the ring's stop path: only a
+ * rising edge counts as a key press there (see input_task), so the wake-up
+ * phantom -- a press that is already down and stays down -- cannot stop a
+ * ring once the settle grace has run out. */
+static bool s_talk_down_seen;
 
 /* Repeat masks name days the same way tm_wday and the chip's weekday counter
  * do: bit0 Sunday .. bit6 Saturday. 0 is a once-only alarm, 0x7F every day. */
@@ -372,6 +377,10 @@ static void alarm_start(const char *why)
     s_alarm_ringing = true;
     s_alarm_ring_us = esp_timer_get_time();
     s_alarm_sfx_us = s_alarm_ring_us;
+    /* Baseline for the ring's key path: whatever is already pressed when the
+     * ring starts (the panel wake-up phantom) is not a new press, so it cannot
+     * stop the ring later on. */
+    s_talk_down_seen = muse_board->talk_down && muse_board->talk_down();
     /* Stamp the local date this ring belongs to (F-A1): alarm_arm_next()
      * skips it, so an SNTP jump back over a ring that already fired does
      * not ring the same day twice. Stamped here, at the ring itself - not
@@ -428,13 +437,14 @@ bool muse_input_alarm_ringing(void)
     return s_alarm_ringing;
 }
 
-/* The ring page's Stop button. Unlike the any-key path it does NOT wait out
- * the 6 s panel-settling grace: the phantom press the grace exists for is a
- * spurious talk-button edge on wake-up, while this stops only when a finger
- * hits a 160x48 target in the middle of the screen (user report 2026-11-18:
- * "tapping Stop does nothing, only BOOT works"). A phantom landing exactly
- * on that button is vanishingly rare, and a Stop button that ignores its
- * first taps for six seconds reads as broken. False when there is no ring.
+/* The ring page's Stop button. It waits out the same 6 s panel-settling grace
+ * as BOOT and the glass (user decision 2026-11-19, after measurement): the
+ * phantom touch the CST816S reports while the panel comes back can arrive as
+ * a clean short click, and this button sits in the middle of the screen
+ * exactly where it lands -- ringing stopped itself 2.6 s and 4.1 s in, with
+ * nobody touching the board. The ring page shows "稍候 · 按 BOOT 可停" on a
+ * press inside the grace instead of looking dead. False when there is no
+ * ring, or while the grace still runs.
  * Cross-thread note: this runs on the LVGL thread, while the key, console
  * and 30 s paths run on the input task, all sharing s_alarm_ringing through
  * alarm_stop(). That is benign: alarm_stop() returns at once when no ring is
@@ -446,6 +456,9 @@ bool muse_input_alarm_stop(void)
 {
     if (!s_alarm_ringing) {
         return false;
+    }
+    if (esp_timer_get_time() - s_alarm_ring_us < ALARM_TOUCH_GRACE_US) {
+        return false;   /* the panel is still settling: see the note above */
     }
     alarm_stop("button");
     return true;
@@ -936,9 +949,20 @@ static void input_task(void *arg)
              * well. Without that a ring ended about four seconds in on the
              * bench: the phantom pulse arrived as a held button, the edge test
              * never saw it as an edge, and the "bezel counts at once" path took
-             * it anyway (measured 2026-10-23, 85B). */
-            const bool held = muse_board->talk_down && muse_board->talk_down();
-            const bool bezel = (ev & (ALARM_STOP_BITS & ~MUSE_BTN_TALK_PRESS)) || (held && !grace);
+             * it anyway (measured 2026-10-23, 85B).
+             *
+             * Only a NEW press counts (2026-11-19): the phantom is a press that
+             * stays down for seconds, so once the grace ran out a plain
+             * `held` test stopped the ring about seven seconds in with nobody
+             * touching the board (alarm.test, ev=0x1 touch=0x0 grace=0). A
+             * rising edge is what distinguishes a finger (or BOOT) pressed
+             * after the ring started from a press that was already down when
+             * the panel woke. */
+            const bool held_now = muse_board->talk_down && muse_board->talk_down();
+            const bool held_edge = held_now && !s_talk_down_seen;
+            s_talk_down_seen = held_now;
+            const bool bezel = (ev & (ALARM_STOP_BITS & ~MUSE_BTN_TALK_PRESS)) ||
+                               (held_edge && !grace);
             if (bezel || (talk && !grace)) {
                 ESP_LOGI(TAG, "alarm stopped by key (ev=0x%x touch=0x%x grace=%d)", ev, touch,
                          (int)grace);
