@@ -10,6 +10,7 @@
 
 #include "ota_github.h"
 
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -218,9 +219,17 @@ static bool read_manifest(char **version_out, char **url_out)
     return true;
 }
 
+/* arg carries how this task was created: non-zero means its stack came from
+ * PSRAM via xTaskCreateWithCaps(), zero means the plain xTaskCreate()
+ * fallback in ota_github_check(). The value is fixed at creation time and
+ * travels with the task, so there is no shared state and no race: the task
+ * reads it only at its own exit. The delete must match the creation — a
+ * WithCaps-created task plain-deleted leaks its PSRAM stack + TCB, and a
+ * plain-created task WithCaps-deleted faults — so the exit cannot blindly
+ * use one or the other (see done:). */
 static void check_task(void *arg)
 {
-    (void)arg;
+    const bool from_psram = ((uintptr_t)arg != 0);
     char running[sizeof(esp_app_get_description()->version) + 1];
     memcpy(running, esp_app_get_description()->version, sizeof(running) - 1);
     running[sizeof(running) - 1] = '\0';
@@ -252,7 +261,14 @@ static void check_task(void *arg)
 done:
     free(version);
     free(url);
-    vTaskDelete(NULL);
+    /* Delete with the caps this task was created with (see the header
+     * comment): WithCaps-created tasks need vTaskDeleteWithCaps, plain ones
+     * need vTaskDelete. */
+    if (from_psram) {
+        vTaskDeleteWithCaps(NULL);
+    } else {
+        vTaskDelete(NULL);
+    }
 }
 
 bool ota_github_check(void)
@@ -268,7 +284,8 @@ bool ota_github_check(void)
      * used to make that fail ("largest 7680" against an 8 KB request). TLS to
      * github.com only reads flash, so a PSRAM stack is fine; muse_tts.c's
      * fetch worker is the precedent. */
-    if (xTaskCreateWithCaps(check_task, "ota_gh", OTA_GH_TASK_STACK, NULL,
+    if (xTaskCreateWithCaps(check_task, "ota_gh", OTA_GH_TASK_STACK,
+                            (void *)(uintptr_t)1,
                             OTA_GH_TASK_PRIO, NULL, MALLOC_CAP_SPIRAM) == pdPASS) {
         return true;
     }
