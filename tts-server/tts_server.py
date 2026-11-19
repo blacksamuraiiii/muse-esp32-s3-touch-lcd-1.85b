@@ -215,6 +215,9 @@ def _preview(text: str, limit: int = 24) -> str:
     return flat if len(flat) <= limit else flat[:limit] + "…"
 
 
+# Numeric ranges ("5~10℃"): a spoken range is "5到10摄氏度", a tilde is not spoken at all.
+_RANGE_RE = re.compile(r"(\d+(?:\.\d+)?)\s*[~～]\s*(\d+(?:\.\d+)?)")
+
 _SYMBOL_WORDS = {
     "℃": "摄氏度", "°C": "摄氏度", "°c": "摄氏度", "℉": "华氏度",
     "‰": "千分之", "±": "正负", "×": "乘", "÷": "除以",
@@ -282,6 +285,10 @@ def speakable(text: str) -> str:
     text = _ZERO_WIDTH_RE.sub("", text)
     text = _EMOJI_RE.sub("", text)
     text = _strip_kaomoji(text)
+    # A spoken range: Azure reads "5~10℃" as a tilde (or skips it). The gadget plugin
+    # (textfmt.spoken_symbols) applies the same rule before Hermes's own TTS, which says
+    # "2 about 11" for the same text.
+    text = _RANGE_RE.sub(r"\1到\2", text)
     for sym, word in _SYMBOL_WORDS.items():
         text = text.replace(sym, word)
     if not _WORD_RE.search(text):
