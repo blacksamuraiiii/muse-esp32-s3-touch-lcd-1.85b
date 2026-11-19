@@ -867,7 +867,7 @@ static void prewarm_task(void *arg)
     s_prewarm = false;
     free(url);
     s_prewarm_task = NULL;
-    vTaskDelete(NULL);
+    vTaskDeleteWithCaps(NULL);
 }
 
 void muse_tts_prewarm(void)
@@ -1193,7 +1193,7 @@ static void probe_task(void *arg)
         probe_report(state, detail);
     }
     s_probe_running = false;
-    vTaskDelete(NULL);
+    vTaskDeleteWithCaps(NULL);
 }
 
 void muse_speech_test(void)

@@ -257,6 +257,12 @@ static int64_t s_alarm_sfx_us;
 static int64_t s_alarm_quiet_us;   /* talk edges ignored until this moment */
 static int64_t s_alarm_check_us;   /* last time the chip's flag was read */
 static time_t s_alarm_target;   /* local epoch the current arm is for; 0 unknown */
+/* Local date of the last ring (F-A1): alarm_start() stamps it, alarm_arm_next()
+ * skips it, so an SNTP jump back over a ring that already fired does not ring
+ * the same day twice. Memory only: a reboot loses it (plan §1.5). -1 = no ring
+ * yet this boot. */
+static int s_alarm_last_rung_year = -1;   /* tm_year + 1900 of the last ring */
+static int s_alarm_last_rung_yday = -1;   /* tm_yday of the last ring */
 
 /* Repeat masks name days the same way tm_wday and the chip's weekday counter
  * do: bit0 Sunday .. bit6 Saturday. 0 is a once-only alarm, 0x7F every day. */
@@ -280,7 +286,7 @@ static void alarm_arm_next(void)
     /* Once and every-day need no weekday test; anything else has to land on a
      * day the mask names, so walk forward at most a week
      * (docs/20261023-待办.md §2.1). mktime normalises the date and fills
-     * tm_wday, so the search and the weekday agree by construction. */
+     * tm_wday (and tm_yday), so the search and the weekday agree by construction. */
     const bool filter = days != 0 && days != ALARM_DAYS_DAILY;
     struct tm at;
     localtime_r(&now, &at);
@@ -295,6 +301,13 @@ static void alarm_arm_next(void)
         const time_t t = mktime(&cand);
         if (t <= now + 1) {
             continue;   /* today's time is already gone */
+        }
+        if (s_alarm_last_rung_yday >= 0 && cand.tm_year + 1900 == s_alarm_last_rung_year &&
+            cand.tm_yday == s_alarm_last_rung_yday) {
+            continue;   /* already rang on this local date (F-A1): a clock jump
+                         * back must not ring it twice. The search keeps walking,
+                         * so the next day the mask names is armed instead; a once
+                         * alarm never reaches here, it turns itself off on stop. */
         }
         if (filter && !(days & (1u << cand.tm_wday))) {
             continue;
@@ -359,6 +372,21 @@ static void alarm_start(const char *why)
     s_alarm_ringing = true;
     s_alarm_ring_us = esp_timer_get_time();
     s_alarm_sfx_us = s_alarm_ring_us;
+    /* Stamp the local date this ring belongs to (F-A1): alarm_arm_next()
+     * skips it, so an SNTP jump back over a ring that already fired does
+     * not ring the same day twice. Stamped here, at the ring itself - not
+     * in alarm_stop(), where the date may already have rolled over - and
+     * once per ring: every trigger (poll, deep-sleep boot, console test)
+     * funnels through here, and the guard above keeps a second entry out.
+     * Memory only: a reboot loses it (plan §1.5). If the clock cannot be
+     * read the stamp is left alone and the arm behaves as before. */
+    time_t now;
+    if (muse_rtc_now(&now)) {
+        struct tm lt;
+        localtime_r(&now, &lt);
+        s_alarm_last_rung_year = lt.tm_year + 1900;
+        s_alarm_last_rung_yday = lt.tm_yday;
+    }
     ESP_LOGI(TAG, "alarm ringing (%s)", why);
 #if CONFIG_MUSE_TELEMETRY
     muse_telemetry_event("alarm.fire", why);
@@ -406,7 +434,14 @@ bool muse_input_alarm_ringing(void)
  * hits a 160x48 target in the middle of the screen (user report 2026-11-18:
  * "tapping Stop does nothing, only BOOT works"). A phantom landing exactly
  * on that button is vanishingly rare, and a Stop button that ignores its
- * first taps for six seconds reads as broken. False when there is no ring. */
+ * first taps for six seconds reads as broken. False when there is no ring.
+ * Cross-thread note: this runs on the LVGL thread, while the key, console
+ * and 30 s paths run on the input task, all sharing s_alarm_ringing through
+ * alarm_stop(). That is benign: alarm_stop() returns at once when no ring is
+ * in progress, which catches the usual case, and if a button press and a key
+ * press land in the same instant and both slip past, the second run only
+ * re-arms the same target (or turns a once alarm off again) and at most
+ * notifies twice - no state ends up inconsistent. */
 bool muse_input_alarm_stop(void)
 {
     if (!s_alarm_ringing) {
@@ -452,7 +487,7 @@ static void alarm_poll(void)
         /* The ring tone, on its own SFX entry (muse_audio.h, "换音色只改这里"):
          * retuning the tone never touches this loop. The async queue drops
          * the repeat if the codecs are not up yet, so a cold-boot ring only
-         * loses its first arpeggio at most. */
+         * loses its first beep pair at most. */
         muse_audio_sfx(MUSE_SFX_ALARM);
         muse_state_poke();   /* and auto-sleep does not walk over the ring */
         s_alarm_sfx_us = now + ALARM_SFX_US;
@@ -1429,7 +1464,7 @@ static bool console_command(char *line, bool whole)
         !strcmp(line, "alarm.test") || !strncmp(line, "alarm.arm=", 10) ||
         !strcmp(line, "alarm.stop")) {
         /* The alarm from a cable: "alarm" reports, "alarm=07:30" sets and enables,
-         * "alarm.off" disables, "alarm.test" rings now (ring UI, chirp, the key
+         * "alarm.off" disables, "alarm.test" rings now (ring UI, double-beep, the key
          * that stops it), "alarm.stop" stops a ring without a finger, and
          * "alarm.arm=N" arms N seconds out - how the three wake paths are tested
          * without waiting for a real time. */

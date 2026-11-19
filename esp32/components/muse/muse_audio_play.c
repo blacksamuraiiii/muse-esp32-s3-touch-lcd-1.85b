@@ -274,7 +274,18 @@ static void play_task(void *arg)
     }
     free(req->url);
     free(req);
-    s_task = NULL;
+    /* Only clear the handle if it is still ours. A new request may have
+     * claimed s_task between the done callback above and this line -- the
+     * callback itself never starts one, but another task can on the other
+     * core -- and clearing it then would leave the new task unguarded, so
+     * a third request could start a second play_task on the shared decode
+     * buffers. The order stays: clear after the callback, never before,
+     * because this task is still on the buffers until the callback
+     * returns; deleting first and clearing after is impossible, the task
+     * is gone after vTaskDeleteWithCaps. */
+    if (s_task == xTaskGetCurrentTaskHandle()) {
+        s_task = NULL;
+    }
     vTaskDeleteWithCaps(NULL);
 }
 
@@ -295,7 +306,7 @@ bool muse_audio_play_url(const char *url, muse_audio_play_done_cb_t done, void *
     s_abort = false;
     s_dropped = false;
     if (xTaskCreateWithCaps(play_task, "muse_aplay", TASK_STACK, req, TASK_PRIO, &s_task,
-                            MALLOC_CAP_SPIRAM) != pdPASS) {
+                            MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) != pdPASS) {
         free(req->url);
         free(req);
         s_task = NULL;

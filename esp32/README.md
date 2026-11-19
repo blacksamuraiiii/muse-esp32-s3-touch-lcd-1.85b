@@ -327,6 +327,23 @@ A few things worth knowing:
 - Builds are signed with the included development key and never turn on
   Secure Boot, so you can reflash your board as often as you like.
 
+## Link recovery
+
+When the link to Muse goes quiet, the gadget heals it on its own instead of
+waiting for a reboot. A tunnel that goes 65 seconds without a keepalive
+answer is treated as stale, and a session that hears nothing at all for
+150 seconds is reopened as a silent disconnect; a stalled tunnel
+transmitter (DMA blocked for 30 seconds) tears the session down the same
+way. Every step is recorded in a 128-entry connection history ring (the
+latest 40 ride along in `device.health`, the full ring in `bug.report`), so
+a later bug report shows what dropped and when. When a session ends
+silently, the gadget also probes 1.1.1.1 and then 8.8.8.8 on port 443 to
+tell "the internet is down" from "Muse is down": the probe opens a TCP
+connection, sends no data, and does no DNS lookup, so it measures
+reachability, not the route to Muse. See
+[the link recovery plan](../notes/20261118-linkrecovery-plan.md) for the
+thresholds and the full event list.
+
 ## Tests
 
 The tests run on your computer, with no board attached:

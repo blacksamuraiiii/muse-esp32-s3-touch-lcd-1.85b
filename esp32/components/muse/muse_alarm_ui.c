@@ -50,12 +50,15 @@ static void on_page_back(lv_event_t *e)
      * hands navigation back to the settings page. The roller pointers are
      * cleared right after: the settings page drops (deletes) this page on
      * the way out, so a second exit event would otherwise save through a
-     * freed roller. */
+     * freed roller. The back callback is cleared too, so a second exit
+     * event cannot call it again after the page is gone. */
     muse_alarm_ui_time_page_save();
     s_hour_roller = NULL;
     s_min_roller = NULL;
-    if (s_back_cb) {
-        s_back_cb(e);
+    lv_event_cb_t back_cb = s_back_cb;
+    s_back_cb = NULL;
+    if (back_cb) {
+        back_cb(e);
     }
 }
 

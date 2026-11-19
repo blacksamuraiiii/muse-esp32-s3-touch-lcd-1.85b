@@ -13,9 +13,9 @@
  * (see below).
  *
  * Economy (user decision 2026-10-31, payout 2026-11-01): each game costs
- * 5 coins. Tapping 开始 on the START overlay or 再玩一次 on the OVER
- * overlay (which prints "- 5 金币" under the label) first checks the pet
- * snapshot: under 5 coins the start is refused with "金币不够…" and
+ * 10 coins. Tapping 开始 on the START overlay or 再玩一次 on the OVER
+ * overlay (which prints "- 10 金币" under the label) first checks the pet
+ * snapshot: under 10 coins the start is refused with "金币不够…" and
  * nothing is charged; otherwise PET_FEE is queued and the game starts.
  * Resume after pause never charges again, and a restart counts as a new
  * game and charges again. The worker is the only writer of coins; a
@@ -27,11 +27,11 @@
  * The score (1 point per food) is converted exactly once, when the round
  * ends, by muse_pet_round_coins() -- 1 point per coin (corrected
  * 2026-11-01 from 5, which paid a 13-point round only 2 coins), at most
- * 10 coins per round (2026-11-01, was 5) -- and sent as PET_PLAY_REWARD.
- * The payout is gross: the 5-coin entry fee was already charged at start,
- * so a round nets min(score,10) - 5 (10 points = +5, 5 points = 0, 0
- * points = -5, the same win/draw/loss as rock-paper-scissors) and no round
- * mints more than 5 coins. The result is shown once, under the board: the
+ * 20 coins per round (2026-11-08, was 10; 2026-11-01, was 5) -- and sent as PET_PLAY_REWARD.
+ * The payout is gross: the 10-coin entry fee was already charged at start,
+ * so a round nets min(score,20) - 10 (20 points = +10, 10 points = 0, 0
+ * points = -10, the same win/draw/loss as rock-paper-scissors) and no round
+ * mints more than 10 coins. The result is shown once, under the board: the
  * line is white and score-only ("本局 n 分") while PLAYING or PAUSED, and
  * turns GOLD at OVER with the gross payout ("本局 n 分，+m 金币", UI polish
  * 2026-11-01). The net is deliberately NOT printed -- the user said kids

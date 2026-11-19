@@ -3,7 +3,9 @@
  * muse_breakout_ui.c -- 打砖块 subpage, see muse_breakout_ui.h.
  *
  * Layout (mockup v4/v5, 360x360 round screen, dark theme like the other
- * games): a 240x240 field at (60,60), bordered, black inside. 24 bricks
+ * games): a 240x240 field at (60,60), unframed -- no border, the
+ * bricks, paddle and ball sit straight on the page background
+ * (user, 2026-11-18: the 2 px border made the field look small). 24 bricks
  * (6x4, 36x16) in four coloured rows, a 72x10 paddle on the bottom edge
  * and one white ball. The top crescent shows the title (y=38: the same
  * slot and ACCENT colour the snake page uses for its name): "打砖块" in
@@ -389,9 +391,10 @@ static void pause_game(void)
  * ceiling retuned to 20 on 2026-11-08). muse_pet_round_coins() is the
  * only conversion curve -- 1 point (one brick) per coin, 20 coins per
  * round ceiling -- and the 10-coin entry fee was already charged at
- * start through PET_FEE, so the round's net is payout minus 10, computed
- * on the OVER card, never printed (kids cannot tell net apart: the card
- * shows what was added, not what was gained). The score can never go
+ * start through PET_FEE, so the round's net is never computed or
+ * printed (kids cannot tell net apart: the HUD shows the gross
+ * payout, what was added, not what was gained after the entry fee).
+ * The score can never go
  * negative (bricks give +1, there is no penalty item), so no floor
  * helper is needed -- round_coins() takes an unsigned score. A refused
  * request (worker not ready / queue full) leaves s_round_coins at 0 so
@@ -628,10 +631,8 @@ void muse_breakout_ui_build(lv_obj_t *page, lv_event_cb_t back_cb)
     muse_breakout_init(&s_game);
     s_page = page;
 
-    /* Field: border only (2 px DIM, radius 6), black inside -- no CARD
-     * bottom under the bricks, unlike the snake board. The theme has no
-     * BORDER colour of its own; DIM is the muted outline the other
-     * pages use for lines that must not fight the play pieces. */
+    /* Field: no frame -- transparent, no border, no CARD bottom under
+     * the bricks, unlike the snake board (see the note just below). */
     lv_obj_t *field = lv_obj_create(page);
     lv_obj_remove_style_all(field);
     lv_obj_set_size(field, MUSE_BREAKOUT_FIELD_SIZE,
