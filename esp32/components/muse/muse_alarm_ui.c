@@ -32,10 +32,18 @@ static const char *TAG = "muse_alarm_ui";
 
 /* ------------------------------------------------------------ time picker page */
 
-/* Same big digits as the maths question line: Montserrat 28 scaled 439/256
- * (~1.71x -> ~48 px drawn). The box stays 28 px tall; the pivot is the
- * box centre, so the drawn glyphs extend 10 px above and below it. */
-#define ALARM_TIME_SCALE 439
+/* Ring overlay scale (2026-11-19: the user asked for one size step up).
+ * The time uses muse_font_clock_48 -- Montserrat Medium 48 px cut down to
+ * digits and the colon (~16 KB in flash; the full montserrat_48 face is
+ * ~128 KB and does not fit the 4 MB app slot) -- at 1.25x, so ~60 px drawn
+ * and crisp, unlike blowing the 28 px bitmap up 2.1x. The 16 px CJK faces
+ * (the only CJK size this build carries) scale 1.15x, the most they take
+ * before the bitmap edges go soft. Pivots are the box centres, so the drawn
+ * glyphs grow symmetrically around the slot they are aligned to. */
+#define RING_TIME_SCALE 320   /* 48 px clock face x 1.25 -> ~60 px */
+#define RING_CJK_SCALE 294    /* 16 px CJK x 1.15 -> ~18 px */
+
+LV_FONT_DECLARE(muse_font_clock_48);
 
 #define ROLLER_H 126   /* three visible rows */
 #define ROLLER_W 110
@@ -233,30 +241,37 @@ static void build_ring(void)
     lv_obj_add_flag(s_ring, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_event_cb(s_ring, on_ring_pressed, LV_EVENT_PRESSED, NULL);
 
-    /* The set time, big: Montserrat 28 scaled up (see ALARM_TIME_SCALE).
-     * Box top h/2-76 puts the drawn glyphs' centre at about h/2-62, the
-     * mockup's slot. */
+    /* The set time, big: native Montserrat 48 scaled up (RING_TIME_SCALE).
+     * Box top h/2-88 puts the drawn glyphs' centre at about h/2-64, one
+     * step larger and slightly higher than the 1.5.4 slot so the taller
+     * digits keep the same gaps. */
     s_ring_time = lv_label_create(s_ring);
-    lv_obj_set_style_text_font(s_ring_time, &lv_font_montserrat_28, 0);
+    lv_obj_set_style_text_font(s_ring_time, &muse_font_clock_48, 0);
     lv_obj_set_style_text_color(s_ring_time, lv_color_hex(MUSE_THEME_TEXT), 0);
     lv_obj_set_style_transform_pivot_x(s_ring_time, LV_PCT(50), LV_PART_MAIN);
     lv_obj_set_style_transform_pivot_y(s_ring_time, LV_PCT(50), LV_PART_MAIN);
-    lv_obj_set_style_transform_scale_x(s_ring_time, ALARM_TIME_SCALE, LV_PART_MAIN);
-    lv_obj_set_style_transform_scale_y(s_ring_time, ALARM_TIME_SCALE, LV_PART_MAIN);
+    lv_obj_set_style_transform_scale_x(s_ring_time, RING_TIME_SCALE, LV_PART_MAIN);
+    lv_obj_set_style_transform_scale_y(s_ring_time, RING_TIME_SCALE, LV_PART_MAIN);
     lv_label_set_text(s_ring_time, "07:00");
-    lv_obj_align(s_ring_time, LV_ALIGN_TOP_MID, 0, h / 2 - 76);
+    lv_obj_align(s_ring_time, LV_ALIGN_TOP_MID, 0, h / 2 - 88);
 
     s_ring_sub = lv_label_create(s_ring);
     lv_obj_set_style_text_font(s_ring_sub, muse_font_cjk(), 0);
     lv_obj_set_style_text_color(s_ring_sub, lv_color_hex(MUSE_THEME_DIM), 0);
+    lv_obj_set_style_transform_pivot_x(s_ring_sub, LV_PCT(50), LV_PART_MAIN);
+    lv_obj_set_style_transform_pivot_y(s_ring_sub, LV_PCT(50), LV_PART_MAIN);
+    lv_obj_set_style_transform_scale_x(s_ring_sub, RING_CJK_SCALE, LV_PART_MAIN);
+    lv_obj_set_style_transform_scale_y(s_ring_sub, RING_CJK_SCALE, LV_PART_MAIN);
     lv_label_set_text(s_ring_sub, "每天 · 闹钟响了");
-    lv_obj_align(s_ring_sub, LV_ALIGN_TOP_MID, 0, h / 2 - 8);
+    lv_obj_align(s_ring_sub, LV_ALIGN_TOP_MID, 0, h / 2 - 12);
 
-    /* One button only (v1: no snooze). DANGER fill, centred. */
+    /* One button only (v1: no snooze). DANGER fill, centred; 208x60 with
+     * the label at 1.25x, so the tap target grows with the rest of the
+     * page instead of staying the 160x48 it was at the smaller size. */
     lv_obj_t *btn = lv_btn_create(s_ring);
-    lv_obj_set_size(btn, 160, 48);
-    lv_obj_align(btn, LV_ALIGN_TOP_MID, 0, h / 2 + 30);
-    lv_obj_set_style_radius(btn, 18, 0);
+    lv_obj_set_size(btn, 208, 60);
+    lv_obj_align(btn, LV_ALIGN_TOP_MID, 0, h / 2 + 26);
+    lv_obj_set_style_radius(btn, 22, 0);
     lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, 0);
     lv_obj_set_style_bg_color(btn, lv_color_hex(MUSE_THEME_DANGER), 0);
     lv_obj_set_style_border_width(btn, 0, 0);
@@ -265,14 +280,22 @@ static void build_ring(void)
     lv_obj_t *lbl = lv_label_create(btn);
     lv_obj_set_style_text_font(lbl, muse_font_cjk(), 0);
     lv_obj_set_style_text_color(lbl, lv_color_hex(MUSE_THEME_TEXT), 0);
+    lv_obj_set_style_transform_pivot_x(lbl, LV_PCT(50), LV_PART_MAIN);
+    lv_obj_set_style_transform_pivot_y(lbl, LV_PCT(50), LV_PART_MAIN);
+    lv_obj_set_style_transform_scale_x(lbl, RING_TIME_SCALE, LV_PART_MAIN);
+    lv_obj_set_style_transform_scale_y(lbl, RING_TIME_SCALE, LV_PART_MAIN);
     lv_label_set_text(lbl, "停止");
     lv_obj_center(lbl);
 
     lv_obj_t *hint = lv_label_create(s_ring);
     lv_obj_set_style_text_font(hint, muse_font_cjk(), 0);
     lv_obj_set_style_text_color(hint, lv_color_hex(MUSE_THEME_DIM), 0);
+    lv_obj_set_style_transform_pivot_x(hint, LV_PCT(50), LV_PART_MAIN);
+    lv_obj_set_style_transform_pivot_y(hint, LV_PCT(50), LV_PART_MAIN);
+    lv_obj_set_style_transform_scale_x(hint, RING_CJK_SCALE, LV_PART_MAIN);
+    lv_obj_set_style_transform_scale_y(hint, RING_CJK_SCALE, LV_PART_MAIN);
     lv_label_set_text(hint, "按 BOOT 也可停止");
-    lv_obj_align(hint, LV_ALIGN_TOP_MID, 0, h / 2 + 96);
+    lv_obj_align(hint, LV_ALIGN_TOP_MID, 0, h / 2 + 100);
 }
 
 static void refresh_ring(void)

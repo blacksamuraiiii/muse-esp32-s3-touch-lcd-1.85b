@@ -1825,13 +1825,14 @@ static void build_home(lv_obj_t *tile)
 {
     lv_obj_t *list;
     s_home = page(tile, "SETTINGS", false, &list);
+    /* Alarm first: it is the row the user reaches for most (2026-11-19). */
+    row(list, LV_SYMBOL_BELL, "Alarm", &s_home_alarm, on_nav, (void *)&ALARM);
     row(list, LV_SYMBOL_WIFI, "Wi-Fi", &s_home_wifi, on_nav, (void *)&WIFI);
     row(list, LV_SYMBOL_HOME, "Muse", &s_home_hatch, on_nav, (void *)&HATCH);
     row(list, LV_SYMBOL_AUDIO, "TTS", &s_home_speech, on_nav, (void *)&SPEECH);
     row(list, LV_SYMBOL_BLUETOOTH, "Bluetooth", &s_home_ble, on_nav, (void *)&BLE);
     row(list, LV_SYMBOL_VOLUME_MAX, "Sound", &s_home_sound, on_nav, (void *)&SOUND);
     row(list, LV_SYMBOL_EYE_CLOSE, "Sleep", &s_home_sleep, on_nav, (void *)&SLEEP);
-    row(list, LV_SYMBOL_BELL, "Alarm", &s_home_alarm, on_nav, (void *)&ALARM);
     row(list, LV_SYMBOL_BATTERY_FULL, "Battery", &s_home_battery, on_nav, (void *)&BATTERY);
     /* Only when Link registered an updater (see muse_link.h): other boards and
      * builds without OTA keep the plain list. */
