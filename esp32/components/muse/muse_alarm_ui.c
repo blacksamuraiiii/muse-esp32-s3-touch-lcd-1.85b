@@ -27,10 +27,23 @@
 #include "muse_settings.h"
 
 #include "esp_log.h"
+#include "esp_timer.h"
 
 static const char *TAG = "muse_alarm_ui";
 
 /* ------------------------------------------------------------ time picker page */
+
+/* A press that lasts longer than this is not a tap: it is the phantom touch
+ * the panel reports for the first seconds after it wakes (the CST816S hands
+ * back garbage until it settles, notes/20261022-progress §4). With the ring
+ * page's Stop button deliberately skipping the 6 s settle grace (user,
+ * 2026-11-18), such a phantom used to end the ring ~4 s in, every time --
+ * measured on 2026-11-19: alarm.test -> "ring page: stop tapped" after
+ * 4.3 s with nobody touching the board. A real tap is well under a second,
+ * so anything held longer keeps ringing; BOOT still stops it at once. */
+#define RING_STOP_MAX_PRESS_US 1200000   /* 1.2 s */
+
+static int64_t s_stop_press_us;   /* when the finger went down on Stop */
 
 /* Ring overlay scale (2026-11-19: the user asked for one size step up).
  * The time uses muse_font_clock_48 -- Montserrat Medium 48 px cut down to
@@ -217,10 +230,24 @@ static void on_ring_pressed(lv_event_t *e)
     ESP_LOGI(TAG, "ring page: pressed at %d,%d", (int)p.x, (int)p.y);
 }
 
+static void on_stop_pressed(lv_event_t *e)
+{
+    (void)e;
+    s_stop_press_us = esp_timer_get_time();
+}
+
 static void on_ring_stop(lv_event_t *e)
 {
     (void)e;
-    /* The tick hides the page once the ring really ends. */
+    /* The tick hides the page once the ring really ends. A press held longer
+     * than RING_STOP_MAX_PRESS_US is the wake-up phantom, not a finger (see
+     * the note at the top): ignore it so the ring keeps going. */
+    const int64_t held = s_stop_press_us ? esp_timer_get_time() - s_stop_press_us : 0;
+    s_stop_press_us = 0;
+    if (held > RING_STOP_MAX_PRESS_US) {
+        ESP_LOGW(TAG, "ring page: stop ignored (held %ld ms, phantom touch)", (long)(held / 1000));
+        return;
+    }
     const bool stopped = muse_input_alarm_stop();
     ESP_LOGI(TAG, "ring page: stop tapped, stopped=%d", (int)stopped);
 }
@@ -276,6 +303,7 @@ static void build_ring(void)
     lv_obj_set_style_bg_color(btn, lv_color_hex(MUSE_THEME_DANGER), 0);
     lv_obj_set_style_border_width(btn, 0, 0);
     lv_obj_set_style_shadow_width(btn, 0, 0);
+    lv_obj_add_event_cb(btn, on_stop_pressed, LV_EVENT_PRESSED, NULL);
     lv_obj_add_event_cb(btn, on_ring_stop, LV_EVENT_CLICKED, NULL);
     lv_obj_t *lbl = lv_label_create(btn);
     lv_obj_set_style_text_font(lbl, muse_font_cjk(), 0);
