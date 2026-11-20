@@ -25,6 +25,7 @@
 #include "esp_netif.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/idf_additions.h"   /* vTaskDeleteWithCaps: the server task is created WithCaps */
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "lwip/sockets.h"
@@ -406,7 +407,9 @@ static void server_task(void *arg)
         ESP_LOGE(TAG, "no memory for the receive buffers");
         free(json);
         free(scratch);
-        vTaskDelete(NULL);
+        /* The task was created WithCaps (see muse_video_wifi_start), so its
+         * PSRAM stack has to go the same way, or it leaks (1.5.4b review). */
+        vTaskDeleteWithCaps(NULL);
         return;
     }
     uint8_t hdr[MUSE_VIDEO_FRAME_HEADER_LEN];

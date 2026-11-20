@@ -44,6 +44,15 @@ in `muse_font.c` (`muse_font_cjk()` / `muse_font_caption()` /
   U+2028/9), and since lv_font_conv writes each code point into a comment,
   GCC 15's `-Werror=bidi-chars` refused the file outright. None of them can
   be drawn; leaving them out is the fix.
+- `muse_font_clock_48.c` — the ring page's big time face, cut from
+  Montserrat Medium 48 px 4bpp with lv_font_conv@1.5.3 (0x30-0x3a:
+  digits + colon, 11 glyphs, ~4.8 KB of bitmap data; the generation
+  command and the source/license note are in the file's header comment,
+  regenerate with `tools/muse/gen_clock_font.sh`). Montserrat is licensed
+  under the SIL Open Font License 1.1. It is not part of the CJK chain:
+  the ring page's `s_ring_time` is its only user, and it only ever draws
+  `"%02d:%02d"`. The full 48 px Montserrat face is ~128 KB (unverified)
+  and does not fit the 4 MB app slot.
 - Montserrat 16/14/20 and unscii-16/8 come from LVGL itself. Montserrat's
   private-use range is what the LV_SYMBOL_* icons draw with, which is why
   icon labels can keep bare Montserrat while text labels cannot. Since the
@@ -63,5 +72,7 @@ Noto Sans CJK is by Adobe and Google, licensed under the SIL Open Font
 License, version 1.1 (https://openfontlicense.org). DejaVu Sans is
 distributed under its permissive Bitstream Vera-based license. GNU
 Unifont is by Roman Czyborra, Paul Hardy and contributors
-(https://unifoundry.com/unifont/). These files are conversions of
+(https://unifoundry.com/unifont/). Montserrat is by Julieta Ulanovsky
+and contributors, licensed under the SIL Open Font License, version 1.1
+(https://openfontlicense.org). These files are conversions of
 unaltered subsets of the fonts.

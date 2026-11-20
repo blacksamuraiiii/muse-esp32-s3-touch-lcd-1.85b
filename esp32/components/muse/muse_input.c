@@ -374,8 +374,8 @@ static void alarm_start(const char *why)
     if (s_alarm_ringing) {
         return;
     }
-    s_alarm_ringing = true;
     s_alarm_ring_us = esp_timer_get_time();
+    s_alarm_ringing = true;
     s_alarm_sfx_us = s_alarm_ring_us;
     /* Baseline for the ring's key path: whatever is already pressed when the
      * ring starts (the panel wake-up phantom) is not a new press, so it cannot
@@ -442,7 +442,7 @@ bool muse_input_alarm_ringing(void)
  * phantom touch the CST816S reports while the panel comes back can arrive as
  * a clean short click, and this button sits in the middle of the screen
  * exactly where it lands -- ringing stopped itself 2.6 s and 4.1 s in, with
- * nobody touching the board. The ring page shows "稍候 · 按 BOOT 可停" on a
+ * nobody touching the board. The ring page shows "稍候 · 6 秒后可停" on a
  * press inside the grace instead of looking dead. False when there is no
  * ring, or while the grace still runs.
  * Cross-thread note: this runs on the LVGL thread, while the key, console
@@ -957,7 +957,11 @@ static void input_task(void *arg)
              * touching the board (alarm.test, ev=0x1 touch=0x0 grace=0). A
              * rising edge is what distinguishes a finger (or BOOT) pressed
              * after the ring started from a press that was already down when
-             * the panel woke. */
+             * the panel woke. A press that starts inside the grace and stays
+             * held therefore never stops the ring: it must be released and
+             * pressed again once the grace has run out (the Stop button, by
+             * contrast, fires on release, so a press started at 5 s and
+             * released at 6.5 s still stops it). */
             const bool held_now = muse_board->talk_down && muse_board->talk_down();
             const bool held_edge = held_now && !s_talk_down_seen;
             s_talk_down_seen = held_now;

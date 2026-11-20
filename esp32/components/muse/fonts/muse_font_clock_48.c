@@ -1,8 +1,13 @@
 /*******************************************************************************
  * Size: 48 px
  * Bpp: 4
- * Opts: --font /mnt/c/Users/black_samurai/Documents/project/202610Muse-Gadget-185B/esp32/simulator/build/_deps/lvgl-src/scripts/built_in_font/Montserrat-Medium.ttf --range 0x30-0x3a --size 48 --bpp 4 --format lvgl --lv-include lvgl.h --no-compress --no-prefilter -o components/muse/fonts/muse_font_clock_48.c
+ * Opts: --font Montserrat-Medium.ttf --range 0x30-0x3a --size 48 --bpp 4 --format lvgl --lv-include lvgl.h --no-compress --no-prefilter -o components/muse/fonts/muse_font_clock_48.c
  ******************************************************************************/
+/* Source: Montserrat-Medium.ttf from LVGL's built-in faces
+ * (lvgl/scripts/built_in_font/); Montserrat is licensed under the
+ * SIL Open Font License 1.1. Subset: 48 px, 0x30-0x3a (digits +
+ * colon, 11 glyphs), ~4.8 KB. Regenerate with
+ * tools/muse/gen_clock_font.sh. */
 
 #ifdef LV_LVGL_H_INCLUDE_SIMPLE
 #include "lvgl.h"

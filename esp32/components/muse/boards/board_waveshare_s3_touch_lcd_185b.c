@@ -1552,8 +1552,11 @@ static unsigned poll_buttons(void)
 }
 
 /* The bezel button only - the glass is the adapter's business. The alarm ring
- * wants the difference: this one stops it at once, a touch press has to outlast
- * the panel's own wake noise first (muse_input.c, ALARM_TOUCH_GRACE_US). */
+ * wants the difference: this one is a debounced level plus the input task's
+ * rising-edge test, so it waits out the same 6 s panel-settling grace as
+ * everything else (muse_input.c, ALARM_TOUCH_GRACE_US); a touch press has
+ * to outlast the panel's own wake noise first, then clear the 500 ms hold
+ * threshold (TOUCH_HOLD_MS) on top of the grace. */
 static bool talk_down(void)
 {
     /* The debounced state, not the raw level: the pin is the BOOT strap and
