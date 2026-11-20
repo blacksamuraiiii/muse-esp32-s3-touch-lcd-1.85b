@@ -48,6 +48,7 @@ void muse_pet_model_init(muse_pet_model_t *s)
     s->decay_day = -1;
     s->sudoku_day = -1;
     s->jiaobei_day = -1;
+    s->tracing_day = -1;
 }
 
 bool muse_pet_model_valid(const muse_pet_model_t *s)
@@ -70,7 +71,9 @@ bool muse_pet_model_valid(const muse_pet_model_t *s)
             * must still load on Release (2026-11-17, B2). */
            s->jiaobei_count <= MUSE_PET_JIAOBEI_LEDGER_MAX &&
            s->jiaobei_streak <= MUSE_PET_JIAOBEI_LEDGER_MAX &&
-           s->jiaobei_last <= 3;
+           s->jiaobei_last <= 3 &&
+           s->tracing_day >= -1 &&
+           s->tracing_mask < (1u << MUSE_PET_TRACING_CHARS);
 }
 
 uint32_t muse_pet_round_coins_cap(uint32_t score, uint32_t cap)
@@ -171,6 +174,36 @@ void muse_pet_jiaobei_result_today(const muse_pet_model_t *s, int64_t now,
     }
     if (last) {
         *last = same_day ? s->jiaobei_last : 0;
+    }
+}
+
+/* Start a new 描红 ledger when the day advances. Same rule as
+ * sudoku_roll (no calibrated clock required): "one payout per
+ * character per day" must hold on a board with no RTC too, and a
+ * rollback keeps the stored ledger so a clock going backwards cannot
+ * re-grant a character. The mask rolls with the day: a new day
+ * starts with no character paid. */
+static void tracing_roll(muse_pet_model_t *s, int32_t day)
+{
+    if (s->tracing_day == day) {
+        return;
+    }
+    if (s->tracing_day != -1 && day < s->tracing_day) {
+        return; /* rollback: never re-grant */
+    }
+    s->tracing_day = day;
+    s->tracing_mask = 0;
+}
+
+void muse_pet_tracing_today(const muse_pet_model_t *s, int64_t now,
+                           uint32_t *paid_mask)
+{
+    bool calibrated = false;
+    int32_t day = muse_pet_day(now, &calibrated);
+    (void)calibrated; /* the ledger is day-based only, see tracing_roll() */
+    if (paid_mask) {
+        bool same_day = s->tracing_day != -1 && s->tracing_day == day;
+        *paid_mask = same_day ? s->tracing_mask : 0;
     }
 }
 
@@ -477,6 +510,29 @@ muse_pet_result_t muse_pet_model_apply(muse_pet_model_t *s, muse_pet_action_t ac
             s->jiaobei_streak = 0;
             s->jiaobei_last = (uint32_t)MUSE_PET_JIAOBEI_YIN;
         }
+        return PET_OK;
+    }
+
+    if (action == PET_TRACING_SOLVE) {
+        /* One 描红 completion reward (user decision 2026-11-20):
+         * MUSE_PET_TRACING_COINS (2) for the day's first correct trace
+         * of the character in `arg`, PET_CAP for every later trace of
+         * the same character the same day -- the once-a-day-per-item
+         * shape of the feed mask. The ledger rolls like sudoku's (no
+         * calibrated clock required). An out-of-range arg settles
+         * nothing: the UI only ever sends 0..9, and a stray value
+         * must not mint coins or corrupt the mask. The trace page
+         * shows the praise either way; only the payout is once a day. */
+        if (arg < 0 || arg >= (int)MUSE_PET_TRACING_CHARS) {
+            return PET_BUSY;
+        }
+        tracing_roll(s, day);
+        uint32_t bit = 1u << (uint32_t)arg;
+        if ((s->tracing_mask & bit) != 0) {
+            return PET_CAP; /* this character already paid today */
+        }
+        s->tracing_mask |= bit;
+        s->coins = capped_add(s->coins, MUSE_PET_TRACING_COINS);
         return PET_OK;
     }
 

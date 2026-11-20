@@ -73,6 +73,8 @@ if(CONFIG_MUSE_ENABLED)
         "muse_wordcards_audio.c"
         "muse_quiz.c"
         "muse_quiz_ui.c"
+        "muse_tracing.c"
+        "muse_tracing_ui.c"
         "muse_wordcards_art.c"
         "muse_wordcards_art_apple.c"
         "muse_wordcards_art_banana.c"
@@ -100,6 +102,7 @@ if(CONFIG_MUSE_ENABLED)
         "muse_main_grid_art_spell_book.c"
         "muse_main_grid_art_gamepad.c"
         "muse_learn_art.c"
+        "muse_learn_art_pencil_brush.c"
         "muse_learn_art_calculator.c"
         "muse_learn_art_open_book.c"
         "muse_learn_art_microphone.c"
@@ -137,6 +140,12 @@ if(CONFIG_MUSE_ENABLED)
     if(CONFIG_MUSE_CJK_FONT)
         list(APPEND srcs "fonts/muse_font_cjk_noto_16.c")  # the one CJK face: Noto Sans SC Medium 16 px 4bpp (GB2312)
         list(APPEND srcs "fonts/muse_font_sym_16.c")       # symbol tail neither Noto nor Montserrat has (DejaVu Sans 16 px 4bpp)
+        # The 描红 ghost face: Noto Sans SC Medium 48 px 4bpp, cut down to
+        # the ten characters the trace page draws (天地人日月山川木水火,
+        # ~9.8 KB). A 170 px subset would be ~115.9 KB and does not fit the
+        # 4 MB app slot, so the ghost is this face scaled to 170 px at
+        # runtime. Regenerate with tools/muse/gen_tracing_font.sh.
+        list(APPEND srcs "fonts/muse_font_tracing_48_v1.c")
         # The retired predecessors (fonts/muse_font_ui_16.c, Source Han
         # level-1, and fonts/muse_font_cjk_16.c, Unifont) were deleted from
         # the tree in 1.5.1d; the flash saving came from their exclusion,

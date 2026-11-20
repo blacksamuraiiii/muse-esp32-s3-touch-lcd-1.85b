@@ -71,6 +71,18 @@ bool muse_pet_request_game(int outcome);
 bool muse_pet_request_jiaobei_toss(int32_t result);
 
 /*
+ * Settle one 描红 completion reward for character `char_idx`
+ * (0..9, same as MUSE_TRACING_TABLE): the worker pays
+ * MUSE_PET_TRACING_COINS (2) for the day's first correct trace of
+ * that character and PET_CAP for every later one. Called once per
+ * DONE trace, never per point. Returns false when the worker is not
+ * ready or its queue is full, or when `char_idx` is out of range --
+ * in that case nothing is settled and the caller must not claim a
+ * reward in its UI (the trace page shows the praise either way).
+ */
+bool muse_pet_request_tracing_solve(int char_idx);
+
+/*
  * Test only (console `>pet.coins=N`): set the wallet outright, no decay,
  * clamped to 0..MUSE_PET_COINS_MAX. The balance is the one thing about the
  * model that only ever moves through play, so a tester who needs an exact
