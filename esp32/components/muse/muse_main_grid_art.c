@@ -14,3 +14,12 @@ const lv_image_dsc_t *const MUSE_MAIN_GRID_ART[MUSE_MAIN_GRID_COUNT] = {
     &muse_main_grid_art_spell_book,
     &muse_main_grid_art_gamepad,
 };
+
+/* Recolour per card (theme hex), in the same order (user decision
+ * 2026-11-20, coloured-grid mockup v1). */
+const uint32_t MUSE_MAIN_GRID_ART_COLOR[MUSE_MAIN_GRID_COUNT] = {
+    0xa77dff, /* crystal_ball (purple, = MUSE_THEME_ACCENT) */
+    0xff8fb3, /* cupcake (pink) */
+    0x8ec9ff, /* spell_book (light blue) */
+    0x6ff0bf, /* gamepad (green, = MUSE_THEME_OK) */
+};

@@ -626,20 +626,23 @@ static void refresh_status(void)
 
 /* One card of the main page's 2x2 grid (1.5.3a A flow): 140x95 card,
  * 56 px icon at the top, title under it, no subline. The icon is an
- * A8 master recoloured white (MUSE_THEME_TEXT), the word-cards art
- * idiom. The image is not clickable: the card takes the click. */
-static void grid_card(lv_obj_t *parent, int x, int y,
-                      const lv_image_dsc_t *art, const char *title,
-                      lv_event_cb_t cb)
+ * A8 master recoloured with the card's own colour
+ * (MUSE_MAIN_GRID_ART_COLOR), the word-cards idiom -- user decision
+ * 2026-11-20, coloured-grid mockup v1 (before that all white,
+ * MUSE_THEME_TEXT). The image is not clickable: the card takes the
+ * click. */
+static void grid_card(lv_obj_t *parent, int x, int y, int slot,
+                      const char *title, lv_event_cb_t cb)
 {
     lv_obj_t *b = muse_card(parent, IC_GRID_CARD_W, IC_GRID_CARD_H, IC_RADIUS);
     lv_obj_set_pos(b, x, y);
     lv_obj_t *img = lv_image_create(b);
-    lv_image_set_src(img, art);
+    lv_image_set_src(img, MUSE_MAIN_GRID_ART[slot]);
     lv_image_set_scale(img, IC_GRID_ICON_SCALE);
     lv_obj_set_size(img, IC_GRID_ICON, IC_GRID_ICON);
     lv_obj_align(img, LV_ALIGN_TOP_MID, 0, 8);
-    lv_obj_set_style_image_recolor(img, lv_color_hex(MUSE_THEME_TEXT), 0);
+    lv_obj_set_style_image_recolor(img,
+                                   lv_color_hex(MUSE_MAIN_GRID_ART_COLOR[slot]), 0);
     lv_obj_set_style_image_recolor_opa(img, LV_OPA_COVER, 0);
     lv_obj_remove_flag(img, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_t *l = label(b, muse_font_btn(), MUSE_THEME_TEXT, title);
@@ -1539,15 +1542,13 @@ static void build_main(void)
      * far corners sit 176.1 px from the centre, inside the circle
      * (mockup v3). */
     grid_card(s_main_page, IC_GRID_X0, IC_GRID_Y0,
-              MUSE_MAIN_GRID_ART[MUSE_MAIN_GRID_FORTUNE], "今日运势",
-              on_open_fortune_sub);
+              MUSE_MAIN_GRID_FORTUNE, "今日运势", on_open_fortune_sub);
     grid_card(s_main_page, IC_GRID_X1, IC_GRID_Y0,
-              MUSE_MAIN_GRID_ART[MUSE_MAIN_GRID_FEED], "喂饭", on_open_feed);
+              MUSE_MAIN_GRID_FEED, "喂饭", on_open_feed);
     grid_card(s_main_page, IC_GRID_X0, IC_GRID_Y1,
-              MUSE_MAIN_GRID_ART[MUSE_MAIN_GRID_LEARN], "学习", on_open_learn);
+              MUSE_MAIN_GRID_LEARN, "学习", on_open_learn);
     grid_card(s_main_page, IC_GRID_X1, IC_GRID_Y1,
-              MUSE_MAIN_GRID_ART[MUSE_MAIN_GRID_GAMES], "小游戏",
-              on_open_minigame);
+              MUSE_MAIN_GRID_GAMES, "小游戏", on_open_minigame);
     /* Coin line, the page's last row. It sat at y = 280 first (6 px under the
      * 今日运势 row, which ends at 274 -- too tight), then pinned to the bottom
      * (-22) which read as too low. 302 splits the gap: 28 px below the row,

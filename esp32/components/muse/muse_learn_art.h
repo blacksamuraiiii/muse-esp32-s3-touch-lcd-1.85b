@@ -9,11 +9,12 @@
  *     calculator = delapouite/calculator.svg  (Delapouite, 数学练习)
  *     open_book  = lorc/open-book.svg         (Lorc, 英语单词)
  *     microphone = delapouite/microphone.svg  (Delapouite, 英语口语)
- *   All three are 512x512 single-colour SVGs. Unlike the main grid
- *   (all white), each card is recoloured at runtime with its own
- *   colour -- the word-cards idiom (MUSE_LEARN_ART_COLOR below):
- *   calculator gold #f6cb4b (= MUSE_THEME_GOLD), open_book light blue
- *   #8ec9ff, microphone pink #ff8fb3 (user-confirmed, mockup v6).
+ *   All three are 512x512 single-colour SVGs. Each card is
+ *   recoloured at runtime with its own colour -- the word-cards
+ *   idiom (MUSE_LEARN_ART_COLOR below): calculator gold #f6cb4b
+ *   (= MUSE_THEME_GOLD), open_book light blue #8ec9ff, microphone
+ *   pink #ff8fb3 (user-confirmed, mockup v6). The main grid does
+ *   the same since 2026-11-20 (MUSE_MAIN_GRID_ART_COLOR).
  *
  * Generated once, offline, by ~/workspace/learn-cards-art-gen.py; the
  * three .c files beside this header hold the pixel data (LVGL A8,
