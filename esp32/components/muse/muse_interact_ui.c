@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 /*
  * muse_interact_ui.c -- 1.5a interaction tile + feed / game / fortune /
- * sudoku / minigame / snake / whack-a-mole subpages. See
+ * minigame / snake / whack-a-mole subpages. See
  * muse_interact_ui.h for the threading contract.
  *
  * Layout (design §5.2, mockups v11/v17/v18/v22; all coordinates are
@@ -129,7 +129,7 @@
 #include "esp_random.h"
 #include "muse_interact_food_art.h"
 #include "muse_interact_hand_assets.h"
-#include "muse_fortune_art.h"  /* 抽签 / 掷筊子页图标 (ARGB8888, 2026-11-14) */
+#include "muse_fortune_art.h"  /* 抽签 / 掷筊子页图标 (RGB565A8, 2026-11-14; size-trim 2026-11-20) */
 #include "muse_jiaobei_ui.h"  /* 掷筊板 (2026-11-14) */
 #include "muse_audio.h"   /* game sound effects */
 #include "muse_font.h"    /* muse_font_cjk() / muse_font_btn(), the one CJK chain (1.5b) */
@@ -137,7 +137,6 @@
 #include "muse_pet.h"
 #include "muse_pet_text.h"
 #include "muse_state.h"
-#include "muse_sudoku_ui.h"
 #include "muse_snake_ui.h"
 #include "muse_ui.h"
 #include "muse_whackamole_ui.h"
@@ -225,7 +224,6 @@ enum {
     IC_PAGE_FORTUNE,
     IC_PAGE_FORTUNE_SUB,
     IC_PAGE_JIAOBEI,
-    IC_PAGE_SUDOKU,
     IC_PAGE_MINIGAME,
     IC_PAGE_SNAKE,
     IC_PAGE_WHACKAMOLE,
@@ -249,7 +247,7 @@ enum {
 
 static lv_obj_t *s_tile;
 static lv_obj_t *s_main_page, *s_feed_page, *s_game_page, *s_fortune_page,
-    *s_fortune_sub_page, *s_jiaobei_page, *s_sudoku_page;
+    *s_fortune_sub_page, *s_jiaobei_page;
 static lv_obj_t *s_minigame_page, *s_snake_page, *s_whackamole_page,
     *s_goldrain_page, *s_doodle_page, *s_breakout_page, *s_mathpractice_page, *s_tictactoe_page,
     *s_wordcards_page, *s_wordcards_sets_page, *s_quiz_page, *s_learn_page;
@@ -258,7 +256,8 @@ static lv_obj_t *s_mg_rps_lbl, *s_mg_snake_lbl, *s_mg_whack_lbl,
     *s_mg_goldrain_lbl, *s_mg_doodle_lbl, *s_mg_breakout_lbl,
     *s_mg_tictactoe_lbl;
 /* s_mg_sudoku_lbl was here: removed 2026-11-08 with the archived 数独
- * row (see build_minigame). Re-add it when restoring 数独. */
+ * row, and the 数独 code itself was deleted 2026-11-20 (size-trim, see
+ * build_minigame). To restore, fetch it from git history (see there). */
 static int s_last_feed_idx;
 static uint32_t s_last_feed_before;
 /* 1.5b: one feed at a time. A second tap while the first request is still
@@ -380,15 +379,14 @@ static void show_page(int page)
      * not done here -- 2026-11-17 review fix.) Check 18/18 after any
      * change, from esp32/components/muse:
      *   grep -o "s_[a-z_]*_page" muse_interact_ui.c | sort -u | wc -l
-     *     (= 19 distinct page objects)
+     *     (= 18 distinct page objects)
      *   sed -n '/^static void show_page/,/^    lv_obj_t \*show/p' \
      *       muse_interact_ui.c | grep -c "^    lv_obj_add_flag"
-     *     (= 19 hide lines in this list -- one add_flag per page object;
+     *     (= 18 hide lines in this list -- one add_flag per page object;
      *     the lv_obj_remove_flag below is the one show, not a hide, so
      *     it is not counted). */
     lv_obj_add_flag(s_fortune_sub_page, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(s_jiaobei_page, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_add_flag(s_sudoku_page, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(s_minigame_page, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(s_snake_page, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(s_whackamole_page, LV_OBJ_FLAG_HIDDEN);
@@ -407,7 +405,6 @@ static void show_page(int page)
     if (page == IC_PAGE_FORTUNE) show = s_fortune_page;
     if (page == IC_PAGE_FORTUNE_SUB) show = s_fortune_sub_page;
     if (page == IC_PAGE_JIAOBEI) show = s_jiaobei_page;
-    if (page == IC_PAGE_SUDOKU) show = s_sudoku_page;
     if (page == IC_PAGE_MINIGAME) show = s_minigame_page;
     if (page == IC_PAGE_SNAKE) show = s_snake_page;
     if (page == IC_PAGE_WHACKAMOLE) show = s_whackamole_page;
@@ -472,13 +469,6 @@ static void on_back(lv_event_t *e)
     if (s_page == IC_PAGE_JIAOBEI) {
         muse_jiaobei_ui_hide();
     }
-    if (s_page == IC_PAGE_SUDOKU) {
-        /* Same as on_hidden: closes the keypad popup and the win overlay
-         * (the puzzle itself keeps its progress). Without this, a popup
-         * left open survives the "<" press and is still there on the
-         * next visit. */
-        muse_sudoku_ui_hide();
-    }
     if (s_page == IC_PAGE_SNAKE) {
         muse_snake_ui_hide();
     }
@@ -517,7 +507,7 @@ static void on_back(lv_event_t *e)
          * the draw page and the jiaobei board both land on the
          * fortune subpage, not on the main page. */
         show_page(IC_PAGE_FORTUNE_SUB);
-    } else if (s_page == IC_PAGE_GAME || s_page == IC_PAGE_SUDOKU ||
+    } else if (s_page == IC_PAGE_GAME ||
                s_page == IC_PAGE_SNAKE || s_page == IC_PAGE_WHACKAMOLE ||
                s_page == IC_PAGE_GOLDRAIN ||
                s_page == IC_PAGE_DOODLE ||
@@ -601,21 +591,14 @@ static void refresh_status(void)
      * OX棋 cost 10 coins per start, so they dim together when
      * nothing can be started. (数独 used to cost 5 once per
      * calendar day -- a day's ticket already paid meant it stayed
-     * bright even at 0 coins -- but it is ARCHIVED 2026-11-08, see
-     * build_minigame; its dimming line and sudoku_paid lookup below
-     * are commented out with it.) Dimming is not disabling: a tap
+     * bright even at 0 coins -- but it was ARCHIVED 2026-11-08 and
+     * its code deleted 2026-11-20, size-trim; see build_minigame.)
+     * Dimming is not disabling: a tap
      * still opens the game, and the gate inside refuses with
      * "金币不够…" there. */
     bool poor = s_snap.coins < MUSE_PET_GAME_STAKE;
-    /* ARCHIVED 2026-11-08 with 数独 (see build_minigame). */
-    /* bool sudoku_paid = false;
-     * muse_pet_sudoku_today(&s_snap, time(NULL), &sudoku_paid, NULL); */
     uint32_t mg_color = poor ? MUSE_THEME_DIM : MUSE_THEME_TEXT;
     lv_obj_set_style_text_color(s_mg_rps_lbl, lv_color_hex(mg_color), 0);
-    /* ARCHIVED 2026-11-08 with 数独 (see build_minigame). */
-    /* lv_obj_set_style_text_color(s_mg_sudoku_lbl,
-     *                           lv_color_hex(poor && !sudoku_paid ? MUSE_THEME_DIM
-     *                                                            : MUSE_THEME_TEXT), 0); */
     lv_obj_set_style_text_color(s_mg_snake_lbl, lv_color_hex(mg_color), 0);
     lv_obj_set_style_text_color(s_mg_whack_lbl, lv_color_hex(mg_color), 0);
     lv_obj_set_style_text_color(s_mg_goldrain_lbl, lv_color_hex(mg_color), 0);
@@ -1297,25 +1280,9 @@ static void drain_feedback(void)
             /* PET_OK: deduction confirmed; the game already started, so
              * nothing more to do here. */
             break;
-        case PET_SUDOKU_ENTRY:
-            /* The sudoku page words its own refusals synchronously, from the
-             * snapshot it just read; this branch only covers the stale-snapshot
-             * case (the UI's gate passed, the worker's did not). Nothing on the
-             * sudoku page listens for it, so the face caption is the only place
-             * left to explain why the board did not unlock. */
-            if (fb.result == PET_POOR) {
-                char cap[48];
-                snprintf(cap, sizeof(cap), "金币不够（数独入场 %u 枚）",
-                         (unsigned)MUSE_PET_SUDOKU_ENTRY_COINS);
-                write_pet_caption(cap);
-            } else if (fb.result == PET_STORAGE) {
-                write_pet_caption("互动数据损坏");
-            }
-            break;
-        case PET_SUDOKU_SOLVE:
         case PET_PLAY_REWARD:
             /* Mini-game payouts. Every game page prints its own result line
-             * (the sudoku win card, the snake / whack OVER cards), so the face
+             * (the snake / whack OVER cards), so the face
              * caption is deliberately left alone -- it is not on screen while a
              * game is being played anyway. */
             break;
@@ -1468,16 +1435,6 @@ static void on_open_quiz(lv_event_t *e)
     show_page(IC_PAGE_QUIZ);
     muse_quiz_ui_show();
 }
-
-/* ARCHIVED 2026-11-08 with 数独 (see build_minigame). Uncomment
- * together with the 数独 row to restore it.
-static void on_open_sudoku(lv_event_t *e)
-{
-    (void)e;
-    show_page(IC_PAGE_SUDOKU);
-    muse_sudoku_ui_show();
-}
-*/
 
 static void on_open_minigame(lv_event_t *e)
 {
@@ -1644,7 +1601,10 @@ static void build_learn(void)
  * The four image assets are already linked (their game pages use
  * them), so this adds no new art module and no new flash block --
  * and the two drawn icons are plain LVGL objects for the same
- * reason. Nothing here is recoloured: the images are shown as-is. */
+ * reason. The colour pictures are shown as-is; the paper hand is the
+ * one exception: it is an A8 mask since size-trim 2026-11-20, so its
+ * card recolours it pure white (0xffffff) to match the ARGB8888
+ * master pixel-for-pixel. */
 
 /* Card icon kinds, in strip order. */
 typedef enum {
@@ -1663,8 +1623,9 @@ typedef enum {
 
 /* Fit an image master into the 80 px slot, centred, keeping aspect:
  * scale by the limiting side (the learn/wordcards scale idiom), then
- * size the lv_image to the fitted box. */
-static void mg_icon_image(lv_obj_t *card, const lv_image_dsc_t *src,
+ * size the lv_image to the fitted box. Returns the image, so callers
+ * showing an A8 mask can set its recolour. */
+static lv_obj_t *mg_icon_image(lv_obj_t *card, const lv_image_dsc_t *src,
                           int src_w, int src_h)
 {
     int big = src_w > src_h ? src_w : src_h;
@@ -1677,6 +1638,7 @@ static void mg_icon_image(lv_obj_t *card, const lv_image_dsc_t *src,
     lv_obj_center(img);
     lv_obj_remove_flag(img, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_remove_flag(img, LV_OBJ_FLAG_CLICKABLE);
+    return img;
 }
 
 /* Transparent 80x80 slot, centred in the card: the drawn icons'
@@ -1838,14 +1800,20 @@ static void mg_icon_breakout(lv_obj_t *card)
 }
 
 /* Build one card's icon from its kind. Image kinds show their asset
- * as-is (no recolour); drawn kinds are plain LVGL objects. */
+ * as-is (no recolour), except the paper hand: an A8 mask since
+ * size-trim 2026-11-20, recoloured pure white; drawn kinds are plain
+ * LVGL objects. */
 static void minigame_icon(lv_obj_t *card, muse_mg_icon_kind_t kind)
 {
+    lv_obj_t *img;
     switch (kind) {
     case MUSE_MG_ICON_PAPER:
         /* One paper hand, 128x128 master, fingers up, white on
-         * transparent -- as-is. */
-        mg_icon_image(card, &muse_interact_hand_paper, 128, 128);
+         * transparent -- as-is. A8 mask since size-trim 2026-11-20:
+         * recolour pure white, the ARGB8888 master's exact pixels. */
+        img = mg_icon_image(card, &muse_interact_hand_paper, 128, 128);
+        lv_obj_set_style_image_recolor(img, lv_color_hex(0xffffff), 0);
+        lv_obj_set_style_image_recolor_opa(img, LV_OPA_COVER, 0);
         break;
     case MUSE_MG_ICON_SNAKE:
         mg_icon_snake(card);
@@ -1948,21 +1916,36 @@ static void build_minigame(void)
      * 英语口语, renamed the same day from 加减练习 / 单词练习).
      * 凑十法练习 was fused into
      * 加减练习 the same day (one game, two kinds of question), so it is
-     * gone from the list and from the tree. 数独 is ARCHIVED (same date):
-     * the 360px round screen is too small to read its 6x6 grid or
-     * tap its cells comfortably. The game code stays in the tree
-     * (muse_sudoku_ui.c, IC_PAGE_SUDOKU, muse_sudoku_ui_build);
-     * to restore it, add a minigame_card() call below (in the order
-     * it belongs), the on_open_sudoku handler, the s_mg_sudoku_lbl
-     * dimming line in refresh_status() (plus its sudoku_paid lookup),
-     * and re-add *s_mg_sudoku_lbl to the label declaration near the
-     * top of this file. */
+     * gone from the list and from the tree. 数独 was ARCHIVED the same
+     * date (the 360px round screen is too small to read its 6x6 grid or
+     * tap its cells comfortably) and its code DELETED 2026-11-20
+     * (size-trim: muse_sudoku.c, muse_sudoku_ui.c, muse_sudoku.h,
+     * muse_sudoku_ui.h, IC_PAGE_SUDOKU, on_open_sudoku, the sudoku
+     * page object). NOTE: do not write the page object's variable
+     * name here -- the show_page self-check above counts
+     * s_*_page tokens in this file, and a mention would throw it off.
+     * To restore it, fetch the four files from git history -- the last
+     * commit that has them is main 59f7d3b (1.5.4b):
+     *   git show 59f7d3b:esp32/components/muse/muse_sudoku.c > \
+     *       esp32/components/muse/muse_sudoku.c
+     *   git show 59f7d3b:esp32/components/muse/muse_sudoku_ui.c > \
+     *       esp32/components/muse/muse_sudoku_ui.c
+     *   git show 59f7d3b:esp32/components/muse/muse_sudoku.h > \
+     *       esp32/components/muse/muse_sudoku.h
+     *   git show 59f7d3b:esp32/components/muse/muse_sudoku_ui.h > \
+     *       esp32/components/muse/muse_sudoku_ui.h
+     * then re-add the CMakeLists entries, the IC_PAGE_SUDOKU page (hide
+     * list, show mapping, on_back/on_hidden hide hooks), a
+     * minigame_card() call below (in the order it belongs), the
+     * on_open_sudoku handler, the s_mg_sudoku_lbl dimming line in
+     * refresh_status() (plus its sudoku_paid lookup), and re-add
+     * *s_mg_sudoku_lbl to the label declaration near the top of this
+     * file. The pet-model sudoku ledger (muse_pet_model.c/h,
+     * PET_SUDOKU_ENTRY/SOLVE) was NOT deleted -- NVS compatibility --
+     * so a restored page works against the existing ledger. See also
+     * esp32/notes/20261120-数独删除说明.md. */
     minigame_card(strip, MUSE_MG_ICON_PAPER, "石头剪刀布",
                   on_open_game, &s_mg_rps_lbl);
-    /* ARCHIVED 2026-11-08: 数独 -- screen too small, grid unreadable
-     * and hard to tap. See the restore note in the comment above. */
-    /* minigame_card(strip, <icon kind>, "数独",
-     *               on_open_sudoku, &s_mg_sudoku_lbl); */
     minigame_card(strip, MUSE_MG_ICON_SNAKE, "贪吃蛇",
                   on_open_snake, &s_mg_snake_lbl);
     minigame_card(strip, MUSE_MG_ICON_MOLE, "打地鼠",
@@ -2124,6 +2107,12 @@ static void build_game(void)
         lv_obj_set_style_shadow_width(b, 0, 0);
         lv_obj_t *img = lv_image_create(b);
         lv_image_set_src(img, hand_img(hand));
+        /* A8 mask since size-trim 2026-11-20: the mask carries no colour
+         * of its own, so recolour it pure white (0xffffff) -- that is
+         * pixel-for-pixel what the ARGB8888 master showed here (the
+         * reveal page uses TEXT instead, set in show_game_result()). */
+        lv_obj_set_style_image_recolor(img, lv_color_hex(0xffffff), 0);
+        lv_obj_set_style_image_recolor_opa(img, LV_OPA_COVER, 0);
         /* The master asset is 128 px; the row is 100 px. Scale to ~80 px so
          * the hands sit inside the button instead of overrunning it. */
         lv_image_set_scale(img, (uint16_t)(256 * (IC_GAME_CHOICE - 20) / 128));
@@ -2183,10 +2172,12 @@ static void build_game(void)
  * page's card-column pattern -- a 100x128 column holding a 100x100
  * card (icon 80 px, centred) and the name 8 px below it, so the name
  * sits at y = 228 when the column starts at y = 120. The difference
- * from the learn cards is the icon: these are ARGB8888 colour pictures
+ * from the learn cards is the icon: these are RGB565A8 colour pictures
  * (the 135editor qiantong, the red/flat jiaobei pair), stored at the
  * 80 px display size, so they are drawn with no recolour and no scale
- * -- an A8 mask could not carry their colours. The image is not
+ * -- an A8 mask could not carry their colours. Plain RGB565 was NOT
+ * used: both icons rely on per-pixel alpha, which RGB565 would paint
+ * black (size-trim 2026-11-20). The image is not
  * clickable: the card takes the click. */
 static void fortune_sub_card(lv_obj_t *parent, int x, int slot, const char *name,
                              lv_event_cb_t cb)
@@ -2328,7 +2319,6 @@ void muse_interact_ui_build(lv_obj_t *tile)
     s_fortune_page = page_group(tile);
     s_fortune_sub_page = page_group(tile);
     s_jiaobei_page = page_group(tile);
-    s_sudoku_page = page_group(tile);
     s_minigame_page = page_group(tile);
     s_snake_page = page_group(tile);
     s_whackamole_page = page_group(tile);
@@ -2349,7 +2339,6 @@ void muse_interact_ui_build(lv_obj_t *tile)
     build_minigame();
     build_learn();
     muse_jiaobei_ui_build(s_jiaobei_page, on_back);
-    muse_sudoku_ui_build(s_sudoku_page, on_back);
     muse_snake_ui_build(s_snake_page, on_back);
     muse_whackamole_ui_build(s_whackamole_page, on_back);
     muse_goldrain_ui_build(s_goldrain_page, on_back);
@@ -2376,12 +2365,6 @@ void muse_interact_ui_on_hidden(void)
     /* No note line to clear any more: the coin line is a live status and the
      * subpages own their own hint slots (user decision 2026-10-25). */
     reset_game_view();
-    /* Sudoku keeps its puzzle progress (static state in the sudoku UI);
-     * only the pad popup and the win overlay are closed, so a return
-     * visit resumes the puzzle instead of restarting it. The snake
-     * page pauses the same way (a running game never plays on while
-     * the tile is hidden); its board and paid state stay in RAM. */
-    muse_sudoku_ui_hide();
     /* The five timed games pause the same way: their boards and paid
      * state stay in RAM, and a running game never plays on while the
      * tile is hidden. Whack-a-mole, goldrain, doodle and breakout resume

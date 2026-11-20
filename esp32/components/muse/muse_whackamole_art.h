@@ -16,9 +16,12 @@
  * so it coincides with the rim and never double-edges
  * (v8 mockup flaw: a separate uniform-width arc).
  *
- * Format mirrors the hand assets (LVGLImage.py, ARGB8888):
- * lv_image_dsc_t, stride = w * 4, straight alpha.
- * Generated once, offline, by
+ * Format is RGB565A8 (converted 2026-11-20, size-trim, from the
+ * ARGB8888 masters): RGB565 colour plane + A8 alpha plane, stride =
+ * w * 2 for the colour plane, alpha byte-identical. Plain RGB565 was
+ * NOT used: the lip is 84% transparent and layers over the mole, so
+ * RGB565 would paint a black rectangle over it. Generated once,
+ * offline, by
  * ~/workspace/whackamole-art-gen.py; do not hand-edit the
  * .c file -- rerun the script.
  */

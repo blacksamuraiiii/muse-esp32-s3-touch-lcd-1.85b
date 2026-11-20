@@ -1,15 +1,15 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 /*
- * muse_interact_ui.h -- 1.5a interaction tile + seven subpages.
+ * muse_interact_ui.h -- 1.5a interaction tile + six subpages.
  *
  * Built by muse_ui_start() on the interaction tile (0,0) of the 3-tile
  * layout (interaction, face, settings). This file owns NO tileview, NO
  * dots and NO caption label: muse_ui.c owns those (see muse_ui_patch.md).
- * It only owns the content of the interaction tile and its seven subpages
- * (feed, game, fortune, sudoku, minigame, snake, whack-a-mole), which are
+ * It only owns the content of the interaction tile and its six subpages
+ * (feed, game, fortune, minigame, snake, whack-a-mole), which are
  * groups inside that tile -- NOT top-level tiles, so the bottom dots never
  * change when a subpage opens. The minigame group is the menu that holds
- * the four game pages (game, sudoku, snake, whack-a-mole).
+ * the four game pages (game, snake, whack-a-mole).
  *
  * Threading, exactly as design §3.1: LVGL callbacks here only SEND actions
  * (muse_pet_request()) and NEVER settle state; the pet worker is the only

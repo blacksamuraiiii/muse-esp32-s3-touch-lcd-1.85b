@@ -11,11 +11,16 @@
  *              shading (mockup v12/v13), redrawn from the mockup
  *              geometry -- not the flat blue crescent pair from v3.
  *
- * Format is ARGB8888, not the A8 single-colour mask the learn cards
+ * Format is RGB565A8, not the A8 single-colour mask the learn cards
  * use: both icons are genuinely multi-colour, and an A8 mask can only
- * carry one colour per card. The two icons are 2 x 80x80x4 = 51.2 KB
+ * carry one colour per card. The two icons are 2 x 80x80x3 = 38.4 KB
  * of flash (stored at the 80 px display size, so the UI draws them
- * with no recolour and no scaling). See ~/workspace/fortune-art-gen.py
+ * with no recolour and no scaling). Converted 2026-11-20 (size-trim)
+ * from the ARGB8888 masters: RGB565 colour plane + A8 alpha plane
+ * (alpha byte-identical, colour quantised 5/6/5). Plain RGB565 was
+ * NOT used: both icons rely on per-pixel alpha (transparent corners
+ * on the card, and the jiaobei shading), which RGB565 would paint
+ * black. See ~/workspace/fortune-art-gen.py
  * for the generator; the two .c files beside this header hold the
  * pixel data. Do not hand-edit them.
  *
