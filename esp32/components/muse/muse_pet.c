@@ -291,6 +291,74 @@ static void migrate_v5(const pet_state_v5_t *old, muse_pet_model_t *out)
     out->jiaobei_last = 0;
 }
 
+/* The v6 layout (this branch before the lucky wheel): v5 plus the
+ * 掷圣杯 streak + last result. 68 bytes. */
+typedef struct {
+    uint32_t version;
+    uint32_t coins;
+    int32_t touch_day;
+    uint32_t daily_touch_coins;
+    int32_t feed_day;
+    uint32_t feed_mask;
+    int32_t fortune_day;
+    uint32_t fortune;
+    int32_t decay_day;
+    uint32_t decay_notice;
+    int32_t sudoku_day;
+    uint32_t sudoku_entry_paid;
+    uint32_t sudoku_reward_coins;
+    int32_t jiaobei_day;
+    uint32_t jiaobei_count;
+    uint32_t jiaobei_streak;
+    uint32_t jiaobei_last;
+} pet_state_v6_t;
+
+_Static_assert(sizeof(pet_state_v6_t) == 68, "v6 blob layout changed");
+
+/* v6 -> v7 (user decision 2026-11-20, 幸运大转盘): the only layout
+ * change is the lucky wheel daily ledger (day + paid spins settled
+ * today). Everything else carries over untouched; the ledger starts
+ * empty, which is exactly right -- the day it is first written is the
+ * day the wheel page charges its first 2-coin spin. */
+static void migrate_v6(const pet_state_v6_t *old, muse_pet_model_t *out)
+{
+    memset(out, 0, sizeof(*out));
+    out->version = MUSE_PET_VERSION;
+    out->coins = old->coins > MUSE_PET_COINS_MAX ? MUSE_PET_COINS_MAX : old->coins;
+    out->touch_day = old->touch_day;
+    out->daily_touch_coins = old->daily_touch_coins > MUSE_PET_TOUCH_DAILY_MAX
+                                 ? MUSE_PET_TOUCH_DAILY_MAX
+                                 : old->daily_touch_coins;
+    out->feed_day = old->feed_day;
+    out->feed_mask = old->feed_mask < (1u << MUSE_PET_FEED_KINDS)
+                         ? old->feed_mask
+                         : 0;
+    out->fortune_day = old->fortune_day;
+    out->fortune = old->fortune < MUSE_PET_FORTUNES ? old->fortune : 0;
+    out->decay_day = old->decay_day;
+    out->decay_notice = old->decay_notice > MUSE_PET_COINS_MAX
+                            ? MUSE_PET_COINS_MAX
+                            : old->decay_notice;
+    out->sudoku_day = old->sudoku_day;
+    out->sudoku_entry_paid = old->sudoku_entry_paid > 1
+                                 ? 0
+                                 : old->sudoku_entry_paid;
+    out->sudoku_reward_coins =
+        old->sudoku_reward_coins > MUSE_PET_SUDOKU_DAILY_MAX
+            ? 0
+            : old->sudoku_reward_coins;
+    out->jiaobei_day = old->jiaobei_day;
+    out->jiaobei_count = old->jiaobei_count > MUSE_PET_JIAOBEI_DAILY_MAX
+                             ? 0
+                             : old->jiaobei_count;
+    out->jiaobei_streak = old->jiaobei_streak > MUSE_PET_JIAOBEI_LEDGER_MAX
+                              ? 0
+                              : old->jiaobei_streak;
+    out->jiaobei_last = old->jiaobei_last > 3 ? 0 : old->jiaobei_last;
+    out->luckywheel_day = -1;
+    out->luckywheel_count = 0;
+}
+
 static void worker(void *arg)
 {
     (void)arg;
@@ -314,6 +382,21 @@ static void worker(void *arg)
             vTaskDelete(NULL);
             return;
         }
+    } else if (err == ESP_OK && bytes == sizeof(pet_state_v6_t) &&
+               blob_version(&state) == 6u) {
+        /* This branch's lucky wheel state: add the day's spin ledger
+         * instead of disabling rewards. Persist before publishing so
+         * a later read never sees v6. */
+        pet_state_v6_t legacy;
+        memcpy(&legacy, &state, sizeof(legacy));
+        migrate_v6(&legacy, &state);
+        if (!store(h, &state)) {
+            ESP_LOGE(TAG, "migration save failed");
+            nvs_close(h);
+            vTaskDelete(NULL);
+            return;
+        }
+        ESP_LOGW(TAG, "pet state migrated v6 -> v%d", (int)MUSE_PET_VERSION);
     } else if (err == ESP_OK && bytes == sizeof(pet_state_v5_t) &&
                blob_version(&state) == 5u) {
         /* This branch's 掷圣杯 state: add the day's streak + last
@@ -542,6 +625,18 @@ bool muse_pet_request_jiaobei_toss(int32_t result)
      * and counted, streak untouched), like the console's request. */
     int32_t arg = result >= 1 && result <= 3 ? result : 0;
     return request_cmd(PET_JIAOBEI_TOSS, arg);
+}
+
+bool muse_pet_request_luckywheel_spin(int32_t result, bool free)
+{
+    /* Only 1..5 carry a result; anything else is a bare spin (charged
+     * and counted, no prize paid), like the console's request. The
+     * free bit rides above the result byte. */
+    int32_t arg = result >= 1 && result <= 5 ? result : 0;
+    if (free) {
+        arg |= MUSE_PET_LUCKY_FREE;
+    }
+    return request_cmd(PET_LUCKYWHEEL_SPIN, arg);
 }
 
 bool muse_pet_request_play_reward(uint32_t coins)

@@ -48,6 +48,7 @@ void muse_pet_model_init(muse_pet_model_t *s)
     s->decay_day = -1;
     s->sudoku_day = -1;
     s->jiaobei_day = -1;
+    s->luckywheel_day = -1;
 }
 
 bool muse_pet_model_valid(const muse_pet_model_t *s)
@@ -70,7 +71,11 @@ bool muse_pet_model_valid(const muse_pet_model_t *s)
             * must still load on Release (2026-11-17, B2). */
            s->jiaobei_count <= MUSE_PET_JIAOBEI_LEDGER_MAX &&
            s->jiaobei_streak <= MUSE_PET_JIAOBEI_LEDGER_MAX &&
-           s->jiaobei_last <= 3;
+           s->jiaobei_last <= 3 &&
+           s->luckywheel_day >= -1 &&
+           /* Structural bound only (MUSE_PET_LUCKYWHEEL_LEDGER_MAX):
+            * same B2 reasoning as the 掷圣杯 ledger above. */
+           s->luckywheel_count <= MUSE_PET_LUCKYWHEEL_LEDGER_MAX;
 }
 
 uint32_t muse_pet_round_coins_cap(uint32_t score, uint32_t cap)
@@ -171,6 +176,36 @@ void muse_pet_jiaobei_result_today(const muse_pet_model_t *s, int64_t now,
     }
     if (last) {
         *last = same_day ? s->jiaobei_last : 0;
+    }
+}
+
+/* The lucky wheel ledger rolls like 掷筊's: a new day starts at 0, and
+ * a rollback keeps the stored ledger so a clock going backwards cannot
+ * re-grant spins. Free re-spins never touch the count. */
+static void luckywheel_roll(muse_pet_model_t *s, int32_t day)
+{
+    if (s->luckywheel_day == day) {
+        return;
+    }
+    if (s->luckywheel_day != -1 && day < s->luckywheel_day) {
+        return; /* rollback: never re-grant */
+    }
+    s->luckywheel_day = day;
+    s->luckywheel_count = 0;
+}
+
+void muse_pet_luckywheel_today(const muse_pet_model_t *s, int64_t now,
+                               uint32_t *remaining)
+{
+    bool calibrated = false;
+    int32_t day = muse_pet_day(now, &calibrated);
+    (void)calibrated; /* the ledger is day-based only, see luckywheel_roll() */
+    if (remaining) {
+        bool same_day = s->luckywheel_day != -1 && s->luckywheel_day == day;
+        uint32_t used = same_day ? s->luckywheel_count : 0;
+        *remaining = used >= MUSE_PET_LUCKYWHEEL_DAILY_MAX
+                          ? 0
+                          : MUSE_PET_LUCKYWHEEL_DAILY_MAX - used;
     }
 }
 
@@ -476,6 +511,44 @@ muse_pet_result_t muse_pet_model_apply(muse_pet_model_t *s, muse_pet_action_t ac
         } else if (arg == MUSE_PET_JIAOBEI_YIN) {
             s->jiaobei_streak = 0;
             s->jiaobei_last = (uint32_t)MUSE_PET_JIAOBEI_YIN;
+        }
+        return PET_OK;
+    }
+
+    if (action == PET_LUCKYWHEEL_SPIN) {
+        /* One lucky wheel spin (user decision 2026-11-20): a paid spin
+         * costs MUSE_PET_LUCKYWHEEL_COST, at most
+         * MUSE_PET_LUCKYWHEEL_DAILY_MAX a day. The ledger rolls like
+         * 掷筊's (no calibrated clock required: "at most 9 a day" must
+         * hold on a board with no RTC too). The cap is checked first:
+         * a player with coins but no spins left gets PET_CAP, not
+         * PET_POOR. The result rides in `arg` (MUSE_PET_LUCKY_*):
+         * +2 / +5 / +10 pay through capped_add, THANKS and AGAIN pay
+         * nothing, and the MUSE_PET_LUCKY_FREE bit marks a free
+         * re-spin won by landing on "再来一次" -- no fee, no daily
+         * count, so it can never hit PET_CAP or PET_POOR, and it
+         * still pays its prize. A refused spin returns before this
+         * point and records nothing; a bare request (arg 0) charges
+         * and counts the spin without paying a prize. */
+        bool free = (arg & MUSE_PET_LUCKY_FREE) != 0;
+        int32_t result = arg & 0xFF;
+        luckywheel_roll(s, day);
+        if (!free) {
+            if (s->luckywheel_count >= MUSE_PET_LUCKYWHEEL_DAILY_MAX) {
+                return PET_CAP; /* today's 9 spins are used up */
+            }
+            if (s->coins < MUSE_PET_LUCKYWHEEL_COST) {
+                return PET_POOR; /* not settled, no spin */
+            }
+            s->coins -= MUSE_PET_LUCKYWHEEL_COST;
+            s->luckywheel_count++;
+        }
+        if (result == MUSE_PET_LUCKY_COINS_2) {
+            s->coins = capped_add(s->coins, 2);
+        } else if (result == MUSE_PET_LUCKY_COINS_5) {
+            s->coins = capped_add(s->coins, 5);
+        } else if (result == MUSE_PET_LUCKY_COINS_10) {
+            s->coins = capped_add(s->coins, 10);
         }
         return PET_OK;
     }
