@@ -182,6 +182,7 @@ static void refresh_coverage(muse_tracing_t *t)
     int count = 0;
     (void)muse_tracing_strokes(t->char_idx, &count);
     t->sample_covered = 0;
+    uint16_t sample_total = 0;
     for (int s = 0; s < (int)MUSE_TRACING_MAX_STROKES; s++) {
         t->stroke_cover[s] = 0;
     }
@@ -205,26 +206,42 @@ static void refresh_coverage(muse_tracing_t *t)
         if (total > 0) {
             t->stroke_cover[s] = (uint8_t)(covered * 100u / total);
             t->sample_covered += covered;
+            sample_total += total;
         }
     }
+    /* Overall coverage at the last point, for grade(): the per-stroke
+     * view above keeps the harness readable, this is what decides. */
+    t->score_pct = sample_total > 0
+                       ? (uint8_t)((uint32_t)t->sample_covered * 100u /
+                                   sample_total)
+                       : 0;
 }
 
-/* Grade the attempt after a new point: DONE when every stroke is
- * covered, WRONG when the stray share is over the line (and enough
- * points are down to call it). DONE wins over WRONG: a child who
- * traced the whole glyph and then scribbled has still traced it. */
-static void grade(muse_tracing_t *t)
+/* Grade the attempt: DONE when every stroke is covered, WRONG when the
+ * stray share is over the line (and enough points are down to call it).
+ * DONE wins over WRONG: a child who traced the whole glyph and then
+ * scribbled has still traced it. Called from the UI after the pen has
+ * rested (muse_tracing_grade), never per point -- judging mid-stroke was
+ * calling 描错了 before the child finished (user report 2026-11-21). */
+static void grade_inner(muse_tracing_t *t);
+
+muse_tracing_phase_t muse_tracing_grade(muse_tracing_t *t)
 {
-    int count = 0;
-    (void)muse_tracing_strokes(t->char_idx, &count);
-    bool all_covered = count > 0;
-    for (int s = 0; s < count; s++) {
-        if (t->stroke_cover[s] < MUSE_TRACING_COVER_FRAC) {
-            all_covered = false;
-            break;
-        }
+    if (t == NULL) {
+        return MUSE_TRACING_IDLE;
     }
-    if (all_covered) {
+    refresh_coverage(t);
+    grade_inner(t);
+    return t->phase;
+}
+
+static void grade_inner(muse_tracing_t *t)
+{
+    /* Overall coverage, not every stroke: a child who wrote the shape
+     * with a stroke slightly off has still written it (user decision
+     * 2026-11-21). >= 50 passes, >= 90 also earns the reward; the UI
+     * reads score_pct to tell the two apart. */
+    if (t->score_pct >= MUSE_TRACING_PASS_PCT) {
         t->phase = MUSE_TRACING_DONE;
         return;
     }
@@ -289,8 +306,9 @@ muse_tracing_phase_t muse_tracing_add_point(muse_tracing_t *t, int x, int y)
     if (stray) {
         t->stray_count++;
     }
+    /* Coverage is kept current; grading waits for the UI's settle timer
+     * (see muse_tracing_grade). */
     refresh_coverage(t);
-    grade(t);
     return t->phase;
 }
 

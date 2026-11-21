@@ -123,6 +123,9 @@ int main(void)
         assert(t.phase == MUSE_TRACING_IDLE);
         assert(t.point_count == 0);
         trace_char(&t, idx);
+        /* Grading is explicit now: the UI calls it once the pen has
+         * rested two seconds, so a stroke in progress is never judged. */
+        assert(muse_tracing_grade(&t) == MUSE_TRACING_DONE);
         assert(t.phase == MUSE_TRACING_DONE);
         int count = 0;
         (void)muse_tracing_strokes(idx, &count);
@@ -159,6 +162,7 @@ int main(void)
      * to TRACING; reset() starts a fresh attempt. */
     assert(muse_tracing_set_char(&t, 0));
     scribble_top(&t, 60);
+    assert(muse_tracing_grade(&t) == MUSE_TRACING_WRONG);
     assert(t.phase == MUSE_TRACING_WRONG);
     assert(t.wrong_ms == MUSE_TRACING_WRONG_MS);
     assert(t.stray_count * 100u > t.point_count * 35u);
@@ -170,6 +174,7 @@ int main(void)
     /* Points during the flash are ignored (the UI freezes the ink). */
     assert(muse_tracing_set_char(&t, 0));
     scribble_top(&t, 60);
+    assert(muse_tracing_grade(&t) == MUSE_TRACING_WRONG);
     assert(t.phase == MUSE_TRACING_WRONG);
     uint32_t points_before = t.point_count;
     muse_tracing_add_point(&t, 114, 114);
@@ -182,8 +187,10 @@ int main(void)
      * are still TRACING, the 40th calls WRONG. */
     assert(muse_tracing_set_char(&t, 0));
     scribble_top(&t, 39);
+    assert(muse_tracing_grade(&t) == MUSE_TRACING_TRACING);
     assert(t.phase == MUSE_TRACING_TRACING);
     scribble_top(&t, 1);
+    assert(muse_tracing_grade(&t) == MUSE_TRACING_WRONG);
     assert(t.phase == MUSE_TRACING_WRONG);
 
     /* A wobbly start does not doom a correct trace: 5 stray points
@@ -193,11 +200,13 @@ int main(void)
     scribble_top(&t, 5);
     assert(t.phase == MUSE_TRACING_TRACING);
     trace_char(&t, 0);
+    assert(muse_tracing_grade(&t) == MUSE_TRACING_DONE);
     assert(t.phase == MUSE_TRACING_DONE);
 
     /* A few stray points never call an attempt wrong on their own. */
     assert(muse_tracing_set_char(&t, 0));
     scribble_top(&t, 10);
+    assert(muse_tracing_grade(&t) == MUSE_TRACING_TRACING);
     assert(t.phase == MUSE_TRACING_TRACING);
 
     printf("ok\n");

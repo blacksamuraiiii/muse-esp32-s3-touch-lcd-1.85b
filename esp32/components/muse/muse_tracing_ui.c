@@ -70,22 +70,19 @@ LV_FONT_DECLARE(muse_font_tracing_48_v1);
 #define TRACING_FONT_SCALE 2720
 #endif
 
-/* List page geometry (user decision 2026-11-21, second pass: the card
- * holds the character only and the pinyin sits UNDER it, the 英语单词
- * sets page's idiom, with the coin line at y = 302 below). One 1x10 row:
- * ten 34 px cards with a 2 px gutter fill the width (10 x 34 + 9 x 2 =
- * 358, x0 = 1), the row centred vertically at y = 126. The 48 px glyph
- * face is drawn scaled to 28 px inside the card; the 16 px pinyin line
- * is drawn scaled to 12 px under it, aligned out of the card's bottom
- * edge so it is never clipped by the card. */
-#define TRACING_LIST_CARD_W 34
-#define TRACING_LIST_CARD_H 76
-#define TRACING_LIST_GAP 2
-#define TRACING_LIST_X0 1
-#define TRACING_LIST_Y0 126
+/* List page geometry (user decision 2026-11-21, third pass: the same
+ * swipe strip the 英语单词 sets page uses -- one 100 px card per
+ * character, ten cards in a horizontal strip with snap scrolling, a 22 px
+ * pad at each end so three sit centred and the fourth shows a sliver).
+ * The card carries the character at its native 48 px; the pinyin line
+ * sits under the card, the way the sets page puts 水果 / Fruit there.
+ * Coin line at y = 302, the slot every interaction subpage ends with. */
+#define TRACING_LIST_CARD 100
+#define TRACING_LIST_ITEM_H 128
+#define TRACING_LIST_STRIP_Y 120
+#define TRACING_LIST_STRIP_H 128
+#define TRACING_LIST_NAME_Y 108
 #define TRACING_LIST_COINS_Y 302
-#define TRACING_LIST_GLYPH_SCALE 149  /* 48 px face -> 28 px */
-#define TRACING_LIST_PINYIN_SCALE 192 /* 16 px face -> 12 px */
 
 /* Trace page geometry (mockup v1). */
 #define TRACING_GRID_X 66
@@ -94,10 +91,7 @@ LV_FONT_DECLARE(muse_font_tracing_48_v1);
 #define TRACING_GRID_DASH 12
 #define TRACING_GRID_GAP 8
 #define TRACING_GRID_LINE_W 2
-#define TRACING_HINT_Y 302
-#define TRACING_PROGRESS_Y 322
-#define TRACING_NEXT_X 322
-#define TRACING_NEXT_Y 180
+#define TRACING_PINYIN_Y 300
 /* Ink: white ~10 px, round ends (mockup v1). */
 #define TRACING_INK_W 10
 /* Faint ghost fill, out of 255 (mockup v1's pale grey). */
@@ -116,6 +110,10 @@ LV_FONT_DECLARE(muse_font_tracing_48_v1);
 /* Wrong-flash timer period (the logic ages the flash in the same
  * steps; muse_tracing_tick() is called with this period). */
 #define TRACING_UI_TICK_MS 50
+/* Grading waits for the pen to rest (user report 2026-11-21: a stroke in
+ * progress was being judged). After this long with no touch event the
+ * logic grades once; until then coverage is only recomputed. */
+#define TRACING_UI_SETTLE_MS 2000
 
 static lv_obj_t *s_list_page;
 static lv_obj_t *s_list_glyphs[MUSE_TRACING_CHARS];
@@ -124,10 +122,10 @@ static muse_tracing_open_char_cb_t s_open_cb;
 
 static lv_obj_t *s_trace_page;
 static lv_obj_t *s_ghost;
-static lv_obj_t *s_hint;
-static lv_obj_t *s_progress;
-static lv_obj_t *s_stars;
-static lv_obj_t *s_next;
+static lv_obj_t *s_pinyin;    /* pinyin line under the 田字格 */
+static lv_obj_t *s_done_ov;   /* 再写一次 card, DONE only */
+static lv_obj_t *s_done_title; /* 写得真棒！/ 继续加油 */
+static uint32_t s_last_touch_ms;
 static lv_timer_t *s_timer;
 
 static muse_tracing_t s_trace;
@@ -229,43 +227,49 @@ static void ink_add(int x, int y)
 
 /* --- trace page state --------------------------------------------- */
 
-static void show_praise(void)
+/* The one line under the 田字格 (user decision 2026-11-21): the
+ * character's pinyin by default -- the 跟着虚影描一描 hint and the
+ * 第 N/10 个字 counter are gone -- and the refusal, in red, while the
+ * wrong flash runs. */
+static void show_pinyin(void)
 {
-    lv_label_set_text(s_hint, "写得真棒！");
-    lv_obj_set_style_text_color(s_hint, lv_color_hex(MUSE_THEME_GOLD), 0);
-    lv_obj_clear_flag(s_stars, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_clear_flag(s_next, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_add_flag(s_progress, LV_OBJ_FLAG_HIDDEN);
-}
-
-static void show_hint(void)
-{
-    lv_label_set_text(s_hint, "跟着虚影描一描");
-    lv_obj_set_style_text_color(s_hint, lv_color_hex(MUSE_THEME_DIM), 0);
-    lv_obj_add_flag(s_stars, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_add_flag(s_next, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_clear_flag(s_progress, LV_OBJ_FLAG_HIDDEN);
+    int idx = s_char_idx >= 0 ? s_char_idx : 0;
+    lv_label_set_text(s_pinyin, MUSE_TRACING_TABLE[idx].pinyin);
+    lv_obj_set_style_text_color(s_pinyin, lv_color_hex(MUSE_THEME_TEXT), 0);
 }
 
 static void show_wrong(void)
 {
-    lv_label_set_text(s_hint, "描错了，再试一次");
-    lv_obj_set_style_text_color(s_hint, lv_color_hex(MUSE_THEME_DANGER), 0);
+    lv_label_set_text(s_pinyin, "描错了，再试一次");
+    lv_obj_set_style_text_color(s_pinyin, lv_color_hex(MUSE_THEME_DANGER), 0);
     ink_set_color(MUSE_THEME_DANGER);
-    lv_obj_add_flag(s_stars, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_add_flag(s_next, LV_OBJ_FLAG_HIDDEN);
+}
+
+/* DONE: the 再写一次 card (the games' 再来一次 idiom, but free -- a
+ * trace costs nothing, so the button only restarts the same
+ * character). There is no next-character arrow: one character is one
+ * practice (user decision 2026-11-21). */
+static void show_praise(void)
+{
+    lv_obj_remove_flag(s_done_ov, LV_OBJ_FLAG_HIDDEN);
 }
 
 static void on_done(void)
 {
-    if (!s_reward_sent) {
+    /* Two tiers (user decision 2026-11-21): 90%+ coverage is a real
+     * trace -- praise and the 2-coin reward (once per character per
+     * day, the worker decides), 50..89% passes with 继续加油 and pays
+     * nothing. The page never prints "+2 金币", so a pass cannot look
+     * like a payout. */
+    bool praise = s_trace.score_pct >= MUSE_TRACING_PRAISE_PCT;
+    if (praise && !s_reward_sent) {
         s_reward_sent = true;
-        /* Once per finished trace; the worker pays 2 for the day's
-         * first correct trace of this character and PET_CAP after
-         * that. The praise shows either way -- the page never prints
-         * "+2 金币", so a repeat trace cannot look like a payout. */
         (void)muse_pet_request_tracing_solve(s_char_idx);
     }
+    lv_label_set_text(s_done_title, praise ? "写得真棒！" : "继续加油");
+    lv_obj_set_style_text_color(
+        s_done_title,
+        lv_color_hex(praise ? MUSE_THEME_GOLD : MUSE_THEME_TEXT), 0);
     show_praise();
 }
 
@@ -275,15 +279,27 @@ static void on_done(void)
 static void on_timer(lv_timer_t *timer)
 {
     (void)timer;
-    if (s_trace.phase != MUSE_TRACING_WRONG) {
+    if (s_trace.phase == MUSE_TRACING_WRONG) {
+        /* Red flash running: age it, then start the character over. */
+        muse_tracing_tick(&s_trace, TRACING_UI_TICK_MS);
+        if (s_trace.phase == MUSE_TRACING_TRACING) {
+            muse_tracing_reset(&s_trace);
+            ink_clear();
+            show_pinyin();
+        }
         return;
     }
-    muse_tracing_tick(&s_trace, TRACING_UI_TICK_MS);
-    if (s_trace.phase == MUSE_TRACING_TRACING) {
-        /* Flash over: fresh attempt, same character. */
-        muse_tracing_reset(&s_trace);
-        ink_clear();
-        show_hint();
+    /* A finished-looking attempt is judged only after the pen has rested
+     * for TRACING_UI_SETTLE_MS: a child still on the second stroke must
+     * not be told 描错了 (user report 2026-11-21). */
+    if (s_trace.phase == MUSE_TRACING_TRACING &&
+        lv_tick_get() - s_last_touch_ms >= TRACING_UI_SETTLE_MS) {
+        muse_tracing_grade(&s_trace);
+        if (s_trace.phase == MUSE_TRACING_DONE) {
+            on_done();
+        } else if (s_trace.phase == MUSE_TRACING_WRONG) {
+            show_wrong();
+        }
     }
 }
 
@@ -296,6 +312,7 @@ static void on_touch(lv_event_t *e)
          * left or the flash clears. */
         return;
     }
+    s_last_touch_ms = lv_tick_get();
     lv_point_t pt;
     lv_indev_get_point(lv_indev_active(), &pt);
     /* Field coords: the grid's page offset, with an 8 px margin so a
@@ -324,23 +341,9 @@ static void on_touch(lv_event_t *e)
         s_pen_down = false;
         return;
     }
-    if (s_trace.phase == MUSE_TRACING_DONE) {
-        on_done();
-    } else if (s_trace.phase == MUSE_TRACING_WRONG) {
-        show_wrong();
-    }
-}
-
-static void on_next(lv_event_t *e)
-{
-    (void)e;
-    int next = (s_char_idx + 1) % (int)MUSE_TRACING_CHARS;
-    if (s_open_cb) {
-        /* The ">" is the trace page's own next-character shortcut:
-         * it goes through the owner's open path, so the page it
-         * opens is the same one a list tap opens. */
-        s_open_cb(next);
-    }
+    /* No grading here: the timer grades once the pen has rested (see
+     * on_timer). Every event, RELEASED included, restarts the settle
+     * clock above. */
 }
 
 /* --- list page ----------------------------------------------------- */
@@ -360,44 +363,54 @@ void muse_tracing_ui_build_list(lv_obj_t *page, lv_event_cb_t back_cb,
     s_open_cb = open_cb;
     muse_back_button(page, back_cb);
     muse_page_title(page, "语文练习", 44);
-    /* One row of ten (user decision 2026-11-21): the same single-row
-     * idiom as 英语口语. Reading order is the table order,
+    /* Horizontal strip, the 英语单词 sets page's idiom (user decision
+     * 2026-11-21): one row of ten 100 px cards, swipe left/right, snap
+     * per card, scrollbar off, hard edge while dragging. Each item is
+     * the card plus its pinyin line under it, so the pinyin scrolls with
+     * its character. Reading order is the table order,
      * 天 地 人 日 月 山 川 木 水 火. */
+    lv_obj_t *strip = lv_obj_create(page);
+    lv_obj_remove_style_all(strip);
+    lv_obj_set_size(strip, 360, TRACING_LIST_STRIP_H);
+    lv_obj_align(strip, LV_ALIGN_TOP_MID, 0, TRACING_LIST_STRIP_Y);
+    lv_obj_set_flex_flow(strip, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(strip, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START,
+                          LV_FLEX_ALIGN_START);
+    lv_obj_set_style_pad_left(strip, 22, 0);
+    lv_obj_set_style_pad_right(strip, 22, 0);
+    lv_obj_set_style_pad_column(strip, 8, 0);
+    lv_obj_set_scroll_dir(strip, LV_DIR_HOR);
+    lv_obj_set_scrollbar_mode(strip, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_set_scroll_snap_x(strip, LV_SCROLL_SNAP_START);
+    lv_obj_remove_flag(strip, LV_OBJ_FLAG_SCROLL_ELASTIC);
+
     for (int idx = 0; idx < (int)MUSE_TRACING_CHARS; idx++) {
-        int x = TRACING_LIST_X0 + idx * (TRACING_LIST_CARD_W + TRACING_LIST_GAP);
-        lv_obj_t *card = muse_card(page, TRACING_LIST_CARD_W,
-                                   TRACING_LIST_CARD_H, 10);
-        lv_obj_set_pos(card, x, TRACING_LIST_Y0);
         const muse_tracing_char_t *ch = &MUSE_TRACING_TABLE[idx];
-        /* The card holds the character only. The 48 px face is scaled to
-         * 28 px: at native size the glyph is wider than the card. Pivot
-         * in percent (LV_PCT) -- a bare 50 means 50 px, which is what
-         * threw the trace-page ghost out of the 田字格. */
+        lv_obj_t *item = lv_obj_create(strip);
+        lv_obj_remove_style_all(item);
+        lv_obj_set_size(item, TRACING_LIST_CARD, TRACING_LIST_ITEM_H);
+        lv_obj_remove_flag(item, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_t *card = muse_card(item, TRACING_LIST_CARD,
+                                   TRACING_LIST_CARD, 14);
+        lv_obj_set_pos(card, 0, 0);
+        /* The character at its native 48 px: a 100 px card is the one
+         * place the tracing face needs no scaling. */
         lv_obj_t *glyph = label(card, TRACING_FONT, MUSE_THEME_TEXT);
         lv_label_set_text(glyph, ch->utf8);
-        lv_obj_set_style_transform_scale(glyph, TRACING_LIST_GLYPH_SCALE, 0);
-        lv_obj_set_style_transform_pivot_x(glyph, LV_PCT(50), 0);
-        lv_obj_set_style_transform_pivot_y(glyph, LV_PCT(50), 0);
         lv_obj_center(glyph);
         lv_obj_remove_flag(glyph, LV_OBJ_FLAG_CLICKABLE);
         s_list_glyphs[idx] = glyph;
-        /* Pinyin UNDER the card (the 英语单词 sets page's idiom), as a
-         * sibling aligned to the card's bottom edge so the card's round
-         * corners cannot clip it. Tone marks come from the Latin
-         * Extended-A tail in the CJK chain (muse_font.c). */
-        lv_obj_t *py = label(page, muse_font_cjk(), MUSE_THEME_DIM);
+        /* Pinyin with its tone marks (tiān, shuǐ), 16 px, under the card
+         * -- the marks come from the Latin Extended-A tail in the CJK
+         * chain (muse_font.c). */
+        lv_obj_t *py = label(item, muse_font_pinyin(), MUSE_THEME_DIM);
         lv_label_set_text(py, ch->pinyin);
-        lv_obj_set_style_transform_scale(py, TRACING_LIST_PINYIN_SCALE, 0);
-        lv_obj_set_style_transform_pivot_x(py, LV_PCT(50), 0);
-        lv_obj_set_style_transform_pivot_y(py, LV_PCT(50), 0);
-        lv_obj_align_to(py, card, LV_ALIGN_OUT_BOTTOM_MID, 0, 6);
+        lv_obj_align(py, LV_ALIGN_TOP_MID, 0, TRACING_LIST_NAME_Y);
         lv_obj_remove_flag(py, LV_OBJ_FLAG_CLICKABLE);
         lv_obj_add_event_cb(card, on_card, LV_EVENT_CLICKED,
                             (void *)(intptr_t)idx);
     }
-    /* Coin line, the 英语单词 sets page's slot (y = 302): the balance
-     * lives one level up on the 学习 page too, but the list reads better
-     * with it, and it costs one label. */
+    /* Coin line, the sets page's slot (y = 302). */
     s_list_coins = label(page, muse_font_cjk(), MUSE_THEME_TEXT);
     lv_label_set_text(s_list_coins, "金币 --/100");
     lv_obj_align(s_list_coins, LV_ALIGN_TOP_MID, 0, TRACING_LIST_COINS_Y);
@@ -475,6 +488,17 @@ static void grid_dash(lv_obj_t *parent, bool vertical)
     }
 }
 
+/* The DONE card's button: the same character again, free -- clearing the
+ * ink and the ledger-free attempt state, then back to the pinyin line. */
+static void on_retry(lv_event_t *e)
+{
+    (void)e;
+    lv_obj_add_flag(s_done_ov, LV_OBJ_FLAG_HIDDEN);
+    muse_tracing_reset(&s_trace);
+    ink_clear();
+    show_pinyin();
+}
+
 void muse_tracing_ui_build_trace(lv_obj_t *page, lv_event_cb_t back_cb)
 {
     s_trace_page = page;
@@ -539,27 +563,42 @@ void muse_tracing_ui_build_trace(lv_obj_t *page, lv_event_cb_t back_cb)
         lv_obj_remove_flag(line, LV_OBJ_FLAG_CLICKABLE);
         s_lines[i] = line;
     }
-    s_hint = label(page, muse_font_cjk(), MUSE_THEME_DIM);
-    lv_label_set_text(s_hint, "跟着虚影描一描");
-    lv_obj_align(s_hint, LV_ALIGN_TOP_MID, 0, TRACING_HINT_Y);
-    s_progress = label(page, muse_font_cjk(), MUSE_THEME_TEXT);
-    lv_label_set_text(s_progress, "第 1/10 个字");
-    lv_obj_align(s_progress, LV_ALIGN_TOP_MID, 0, TRACING_PROGRESS_Y);
-    /* Praise + stars, hidden until DONE. "★" is in the Noto face
-     * (checked against the font file: U+2605 present), so the stars
-     * are a text label, not drawn polygons. */
-    s_stars = label(page, muse_font_cjk(), MUSE_THEME_GOLD);
-    lv_label_set_text(s_stars, "★★★");
-    lv_obj_align(s_stars, LV_ALIGN_TOP_MID, 0, TRACING_PROGRESS_Y + 4);
-    lv_obj_add_flag(s_stars, LV_OBJ_FLAG_HIDDEN);
-    /* Next-character shortcut (mockup v1's done page): ">" in
-     * Montserrat, ACCENT, at the grid's right edge. */
-    s_next = label(page, &lv_font_montserrat_28, MUSE_THEME_ACCENT);
-    lv_label_set_text(s_next, ">");
-    lv_obj_align(s_next, LV_ALIGN_TOP_LEFT, TRACING_NEXT_X,
-                 TRACING_NEXT_Y);
-    lv_obj_add_flag(s_next, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_add_event_cb(s_next, on_next, LV_EVENT_CLICKED, NULL);
+    /* Pinyin line under the grid (the slot the 跟着虚影描一描 hint and
+     * the 第 N/10 个字 counter used to share). */
+    s_pinyin = label(page, muse_font_pinyin(), MUSE_THEME_TEXT);
+    lv_label_set_text(s_pinyin, MUSE_TRACING_TABLE[0].pinyin);
+    lv_obj_align(s_pinyin, LV_ALIGN_TOP_MID, 0, TRACING_PINYIN_Y);
+    lv_obj_remove_flag(s_pinyin, LV_OBJ_FLAG_CLICKABLE);
+
+    /* DONE card: 50% dim + praise + 再写一次, vertically centred (user
+     * decision 2026-11-21). The overlay itself is NOT clickable, so the
+     * "<" underneath still works while the card is up; only the button
+     * takes the tap. */
+    s_done_ov = lv_obj_create(page);
+    lv_obj_remove_style_all(s_done_ov);
+    lv_obj_set_size(s_done_ov, 360, 360);
+    lv_obj_set_pos(s_done_ov, 0, 0);
+    lv_obj_set_style_bg_color(s_done_ov, lv_color_hex(MUSE_THEME_BG), 0);
+    lv_obj_set_style_bg_opa(s_done_ov, LV_OPA_50, 0);
+    lv_obj_remove_flag(s_done_ov, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_remove_flag(s_done_ov, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_flex_flow(s_done_ov, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(s_done_ov, LV_FLEX_ALIGN_CENTER,
+                          LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_row(s_done_ov, 12, 0);
+    s_done_title = label(s_done_ov, muse_font_cjk(), MUSE_THEME_GOLD);
+    lv_label_set_text(s_done_title, "写得真棒！");
+    lv_obj_remove_flag(s_done_title, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_t *retry = muse_card(s_done_ov, 98, 66, 14);
+    lv_obj_set_style_border_width(retry, 2, 0);
+    lv_obj_set_style_border_color(retry, lv_color_hex(MUSE_THEME_ACCENT), 0);
+    lv_obj_add_event_cb(retry, on_retry, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *retry_lb = label(retry, muse_font_cjk(), MUSE_THEME_TEXT);
+    lv_label_set_text(retry_lb, "再写一次");
+    lv_obj_center(retry_lb);
+    lv_obj_remove_flag(retry_lb, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_flag(s_done_ov, LV_OBJ_FLAG_HIDDEN);
+
     /* Initial character, before the timer exists: open_char() only
      * resumes the timer when it is already created, so the build
      * does not start a 50 ms tick at boot -- the timer starts when
@@ -580,10 +619,8 @@ void muse_tracing_ui_open_char(int idx)
     ink_clear();
     const muse_tracing_char_t *ch = &MUSE_TRACING_TABLE[idx];
     lv_label_set_text(s_ghost, ch->utf8);
-    char buf[32];
-    snprintf(buf, sizeof(buf), "第 %d/10 个字", idx + 1);
-    lv_label_set_text(s_progress, buf);
-    show_hint();
+    lv_obj_add_flag(s_done_ov, LV_OBJ_FLAG_HIDDEN);
+    show_pinyin();
     if (s_timer) {
         lv_timer_resume(s_timer);
     }

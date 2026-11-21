@@ -69,9 +69,16 @@
  * 170 px (~7) plus a child's wobble (~4). */
 #define MUSE_TRACING_COVER_DIST_PX 16
 /* Percent of a stroke's samples that must be covered for that
- * stroke to count. 70% lets a slightly short stroke pass while a
- * stroke the child skipped stays open. */
-#define MUSE_TRACING_COVER_FRAC 70u
+ * stroke to count (per-stroke view, kept for the harness). */
+#define MUSE_TRACING_COVER_FRAC 60u
+/* Overall coverage (covered samples / all samples) decides the result
+ * (user decision 2026-11-21): >= PASS_PCT passes the attempt, and only
+ * >= PRAISE_PCT earns the 2-coin reward and the praise line. 50..89 is
+ * "继续加油" -- the character counts as written, but pays nothing. Below
+ * PASS_PCT the attempt is not finished (a scribble still bounces off the
+ * stray rule). */
+#define MUSE_TRACING_PASS_PCT 50u
+#define MUSE_TRACING_PRAISE_PCT 90u
 /* A traced point farther than this from every sample is stray.
  * 28 px is well outside the ghost's ink (half-width ~7) plus pen
  * radius, so a point on the glyph never counts as stray. */
@@ -135,6 +142,7 @@ typedef struct {
     uint8_t sample_stroke[MUSE_TRACING_MAX_SAMPLES]; /* which stroke each sample belongs to */
     uint16_t sample_count;
     uint16_t sample_covered; /* samples with a traced point near them */
+    uint8_t score_pct;       /* overall coverage at the last grade, 0..100 */
     /* Per-stroke coverage, percent, for the UI and the harness. */
     uint8_t stroke_cover[MUSE_TRACING_MAX_STROKES];
     uint32_t wrong_ms; /* ms left of the wrong flash, 0 = not flashing */
@@ -152,6 +160,15 @@ bool muse_tracing_set_char(muse_tracing_t *t, int char_idx);
  * MUSE_TRACING_SAMPLE_PX from the last stored point is not stored
  * (but it still counts for nothing else). No-op unless IDLE or
  * TRACING; returns the phase after the point. */
+/* Grade the attempt: DONE when overall coverage reaches
+ * MUSE_TRACING_PASS_PCT (score_pct says how much: >= PRAISE_PCT earns
+ * the reward, 50..89 is a pass without one), WRONG when too many points
+ * are stray (and MUSE_TRACING_WRONG_MIN_POINTS are down). add_point() deliberately does
+ * NOT call this any more: the UI grades once the pen has rested for two
+ * seconds, so a stroke in progress is never judged (user decision
+ * 2026-11-21). Returns the resulting phase. */
+muse_tracing_phase_t muse_tracing_grade(muse_tracing_t *t);
+
 muse_tracing_phase_t muse_tracing_add_point(muse_tracing_t *t, int x, int y);
 
 /* Clear the attempt (same character, fresh ink). The phase returns

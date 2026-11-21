@@ -45,3 +45,8 @@ const lv_font_t *muse_font_cjk(void);
 const lv_font_t *muse_font_caption(void);
 const lv_font_t *muse_font_reply(void);
 const lv_font_t *muse_font_btn(void);
+
+/* The pinyin face: Latin Extended-A tone marks (ā ǎ ǐ ǒ ǔ ...) plus plain
+ * ASCII through its own fallback. Use this for pinyin lines -- the CJK
+ * chain's tail link is not reached reliably for those code points. */
+const lv_font_t *muse_font_pinyin(void);

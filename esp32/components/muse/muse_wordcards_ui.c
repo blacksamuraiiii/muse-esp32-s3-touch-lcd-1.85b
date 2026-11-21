@@ -13,7 +13,7 @@
  * the set icon (80 px, first word's picture recoloured with its own
  * colour) in the card, the set title split into two lines under it
  * (Chinese Noto 16, English Montserrat 14), no count text -- and
- * the greeting line ("Good Morning") pinned at y=84, the coin line at y=302 like
+ * the greeting line ("Good Morning!") pinned at y=84, the coin line at y=302 like
  * every other interaction page. The first three cards sit centred;
  * the fourth shows a sliver at the right edge, inviting a swipe.
  * (v5's four fixed 80x80 cards in one row were drawn and then
@@ -585,9 +585,9 @@ static void refresh_greeting(void)
             hour = lt.tm_hour;
         }
     }
-    const char *text = hour < 12 ? "Good Morning"
-                       : hour < 18 ? "Good Afternoon"
-                                   : "Good Evening";
+    const char *text = hour < 12 ? "Good Morning!"
+                       : hour < 18 ? "Good Afternoon!"
+                                   : "Good Evening!";
     set_label(s_sets_greeting, text);
 }
 
