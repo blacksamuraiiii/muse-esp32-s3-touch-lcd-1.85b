@@ -10,8 +10,13 @@
  *     cupcake      = delapouite/cupcake.svg    (Delapouite, 喂饭, user pick)
  *     spell_book   = delapouite/spell-book.svg (Delapouite, 学习, user pick)
  *     gamepad      = delapouite/gamepad.svg    (Delapouite, 小游戏)
- *   All four are 512x512 single-colour SVGs, drawn white
- *   (MUSE_THEME_TEXT) on the grid cards -- no per-icon colour.
+ *   All four are 512x512 single-colour SVGs, each recoloured at
+ *   runtime with its own colour (MUSE_MAIN_GRID_ART_COLOR below),
+ *   the word-cards idiom -- user decision 2026-11-20, coloured-grid
+ *   mockup v1: crystal_ball purple #a77dff (= MUSE_THEME_ACCENT),
+ *   cupcake pink #ff8fb3, spell_book light blue #8ec9ff, gamepad
+ *   green #6ff0bf (= MUSE_THEME_OK). Before that they were all
+ *   white (MUSE_THEME_TEXT).
  *
  * Generated once, offline, by ~/workspace/main-grid-art-gen.py; the
  * four .c files beside this header hold the pixel data (LVGL A8,
@@ -21,7 +26,7 @@
  * Format is A8, not ARGB8888: one ARGB8888 128x128 master is 64 KB,
  * and four icons would be 256 KB against the ~290 KB free in the
  * 4 MB app slot at 1.5.2a. A8 is 16 KB per icon (64 KB for the
- * grid). The UI recolours the mask white at runtime
+ * grid). The UI recolours the mask per card at runtime
  * (lv_obj_set_style_image_recolor + _opa COVER), exactly like the
  * word-cards art.
  *
@@ -60,6 +65,9 @@ enum {
 };
 
 extern const lv_image_dsc_t *const MUSE_MAIN_GRID_ART[MUSE_MAIN_GRID_COUNT];
+
+/* Recolour per card (theme hex), in the same order. */
+extern const uint32_t MUSE_MAIN_GRID_ART_COLOR[MUSE_MAIN_GRID_COUNT];
 
 #ifdef __cplusplus
 }
