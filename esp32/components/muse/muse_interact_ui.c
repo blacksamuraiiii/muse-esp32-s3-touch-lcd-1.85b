@@ -1622,7 +1622,7 @@ static void build_learn(void)
     learn_card(s_learn_page, IC_GRID_X0, IC_GRID_Y1, MUSE_LEARN_WORDS,
                "英语单词", on_open_wordcards);
     learn_card(s_learn_page, IC_GRID_X1, IC_GRID_Y1, MUSE_LEARN_QUIZ,
-               "英语口语", on_open_quiz);
+               "英语听力", on_open_quiz);
     /* Coin line: the page's last row, same slot as the other pages'
      * (y = 302), so every interaction page ends the same way
      * (2026-11-01, user request "统一页面内容"). A live status, not a

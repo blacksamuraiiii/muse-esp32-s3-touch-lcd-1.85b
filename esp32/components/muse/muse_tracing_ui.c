@@ -49,6 +49,7 @@
 #include <string.h>
 #include <time.h>
 
+#include "muse_audio.h"    /* verdict sounds, same two as the quiz */
 #include "muse_font.h"
 #include "muse_pet.h"
 #include "muse_pet_model.h"
@@ -242,6 +243,9 @@ static void show_pinyin(void)
 
 static void show_wrong(void)
 {
+    /* Same two sounds the 英语听力 quiz grades with: the falling BAD
+     * chirp. */
+    muse_audio_sfx(MUSE_SFX_BAD);
     lv_obj_add_flag(s_pinyin_img, LV_OBJ_FLAG_HIDDEN);
     lv_label_set_text(s_pinyin, "描错了，再试一次");
     lv_obj_set_style_text_color(s_pinyin, lv_color_hex(MUSE_THEME_DANGER), 0);
@@ -279,6 +283,9 @@ static void on_done(void)
     lv_label_set_text(s_pinyin, praise ? "写得真棒！+2 分" : "还需努力！");
     lv_obj_set_style_text_color(
         s_pinyin, lv_color_hex(praise ? MUSE_THEME_GOLD : MUSE_THEME_TEXT), 0);
+    /* One sound per verdict, the quiz's own good/bad pair (user request
+     * 2026-11-21): rising for 写得真棒, falling for 还需努力. */
+    muse_audio_sfx(praise ? MUSE_SFX_GOOD : MUSE_SFX_BAD);
     show_praise();
 }
 

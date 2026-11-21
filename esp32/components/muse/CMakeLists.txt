@@ -103,7 +103,7 @@ if(CONFIG_MUSE_ENABLED)
         "muse_learn_art_pencil_brush.c"
         "muse_learn_art_calculator.c"
         "muse_learn_art_open_book.c"
-        "muse_learn_art_microphone.c"
+        "muse_learn_art_headphones.c"
         "muse_jiaobei.c"
         "muse_jiaobei_ui.c"
         "muse_luckywheel.c"

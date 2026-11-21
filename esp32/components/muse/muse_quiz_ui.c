@@ -248,7 +248,7 @@ static void refresh_display(void)
     /* Title: the game name in every phase (no "游戏结束" swap: the
      * OX page's result-title idiom does not apply here -- the result
      * lives in the HUD line, and the OVER card carries no title). */
-    set_label(s_name, "英语口语");
+    set_label(s_name, "英语听力");
     /* Overlays: the START card while a round has not begun, the OVER
      * card once it ends (user request 2026-11-21: entering 英语口语 used
      * to start a round and speak at once -- the page now waits for a
@@ -555,7 +555,7 @@ void muse_quiz_ui_build(lv_obj_t *page, lv_event_cb_t back_cb)
      * subpage title font/colour), the verdict line and the score
      * line below the cards: page-level, above the dim overlay, so
      * they stay readable in every state. */
-    s_name = muse_page_title(page, "英语口语", 38);
+    s_name = muse_page_title(page, "英语听力", 38);
     s_verdict = label(page, muse_font_cjk(), MUSE_THEME_OK);
     lv_obj_align(s_verdict, LV_ALIGN_TOP_MID, 0, MUSE_QUIZ_VERDICT_Y);
     lv_obj_add_flag(s_verdict, LV_OBJ_FLAG_HIDDEN);

@@ -10,7 +10,9 @@
  *     pencil_brush = delapouite/pencil-brush.svg (Delapouite, 语文练习)
  *     calculator = delapouite/calculator.svg  (Delapouite, 数学练习)
  *     open_book  = lorc/open-book.svg         (Lorc, 英语单词)
- *     microphone = delapouite/microphone.svg  (Delapouite, 英语口语)
+ *     headphones = delapouite/headphones.svg  (Delapouite, 英语听力;
+ *                  replaced the microphone 2026-11-21 when the row
+ *                  was renamed from 英语口语)
  *   All four are 512x512 single-colour SVGs. Each card -- and the
  *   main grid since 2026-11-20 (MUSE_MAIN_GRID_ART_COLOR) -- is
  *   recoloured at runtime with its own colour, the word-cards
@@ -56,13 +58,13 @@ extern "C" {
 extern const lv_image_dsc_t muse_learn_art_pencil_brush;
 extern const lv_image_dsc_t muse_learn_art_calculator;
 extern const lv_image_dsc_t muse_learn_art_open_book;
-extern const lv_image_dsc_t muse_learn_art_microphone;
+extern const lv_image_dsc_t muse_learn_art_headphones;
 
 /* Master size, px (square). The UI draws the picture at 80 px. */
 #define MUSE_LEARN_ART_PX 128
 
 /* Card slot -> descriptor, in learn-page order
- * (语文练习, 数学练习, 英语单词, 英语口语). */
+ * (语文练习, 数学练习, 英语单词, 英语听力). */
 enum {
     MUSE_LEARN_TRACING = 0,
     MUSE_LEARN_MATH,
