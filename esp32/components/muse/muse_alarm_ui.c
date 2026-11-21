@@ -38,22 +38,35 @@ static const char *TAG = "muse_alarm_ui";
  * a clean short click right on the button). A press inside the grace is not
  * silent: the hint line under the button switches to this for a moment, so
  * the button never reads as dead. */
-#define RING_HINT_WAIT_TEXT "稍候 · 按 BOOT 可停"
+#define RING_HINT_WAIT_TEXT "稍候 · 6 秒后可停"
 #define RING_HINT_TEXT      "按 BOOT 也可停止"
 #define RING_HINT_SHOW_US   1500000   /* 1.5 s of feedback per refused tap */
 
 static lv_obj_t *s_ring_hint;      /* the hint line under Stop */
 static int64_t s_hint_until_us;    /* feedback shown until; 0 = default text */
 
+/* The hint line is TOP_MID aligned at build; re-align it after every
+ * set_text: a longer/shorter line would otherwise sit off-centre (the
+ * refused-tap text is ~15 px longer than the default). Whether LVGL
+ * re-centres a label on set_text is not verified on this build, so do
+ * it explicitly (1.5.4b review A-7). */
+static void realign_ring_hint(void)
+{
+    if (s_ring_hint) {
+        lv_obj_align(s_ring_hint, LV_ALIGN_TOP_MID, 0, muse_board->height / 2 + 100);
+    }
+}
+
 /* Ring overlay scale (2026-11-19: the user asked for one size step up).
  * The time uses muse_font_clock_48 -- Montserrat Medium 48 px cut down to
- * digits and the colon (~16 KB in flash; the full montserrat_48 face is
- * ~128 KB and does not fit the 4 MB app slot) -- at 1.25x, so ~60 px drawn
- * and crisp, unlike blowing the 28 px bitmap up 2.1x. The 16 px CJK faces
+ * digits and the colon (~4.8 KB in flash; the full montserrat_48 face is
+ * ~128 KB (unverified) and does not fit the 4 MB app slot) -- at 1.25x,
+ * so ~42.5 px drawn (box_h 34 x 1.25) and crisp, unlike blowing the
+ * 28 px bitmap up 2.1x. The 16 px CJK faces
  * (the only CJK size this build carries) scale 1.15x, the most they take
  * before the bitmap edges go soft. Pivots are the box centres, so the drawn
  * glyphs grow symmetrically around the slot they are aligned to. */
-#define RING_TIME_SCALE 320   /* 48 px clock face x 1.25 -> ~60 px */
+#define RING_TIME_SCALE 320   /* 48 px clock face x 1.25 -> 60 px em, ~42.5 px drawn */
 #define RING_CJK_SCALE 294    /* 16 px CJK x 1.15 -> ~18 px */
 
 LV_FONT_DECLARE(muse_font_clock_48);
@@ -239,6 +252,7 @@ static void on_ring_stop(lv_event_t *e)
     const bool stopped = muse_input_alarm_stop();
     if (!stopped && muse_input_alarm_ringing() && s_ring_hint) {
         lv_label_set_text(s_ring_hint, RING_HINT_WAIT_TEXT);
+        realign_ring_hint();
         s_hint_until_us = esp_timer_get_time() + RING_HINT_SHOW_US;
         ESP_LOGI(TAG, "ring page: stop refused (settling grace), hint shown");
         return;
@@ -263,7 +277,8 @@ static void build_ring(void)
     lv_obj_add_event_cb(s_ring, on_ring_pressed, LV_EVENT_PRESSED, NULL);
 
     /* The set time, big: native Montserrat 48 scaled up (RING_TIME_SCALE).
-     * Box top h/2-88 puts the drawn glyphs' centre at about h/2-64, one
+     * Box top h/2-88 puts the drawn glyphs' centre at about h/2-71 (box
+     * top 92 + half the ~42.5 px drawn height), one
      * step larger and slightly higher than the 1.5.4 slot so the taller
      * digits keep the same gaps. */
     s_ring_time = lv_label_create(s_ring);
@@ -332,6 +347,7 @@ static void refresh_ring(void)
      * left behind. */
     if (s_ring_hint) {
         lv_label_set_text(s_ring_hint, RING_HINT_TEXT);
+        realign_ring_hint();
     }
     s_hint_until_us = 0;
 }
@@ -355,6 +371,7 @@ void muse_alarm_ui_tick(void)
         s_hint_until_us = 0;
         if (s_ring_hint) {
             lv_label_set_text(s_ring_hint, RING_HINT_TEXT);
+            realign_ring_hint();
         }
     }
 }

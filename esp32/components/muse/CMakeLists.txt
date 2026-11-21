@@ -128,9 +128,9 @@ if(CONFIG_MUSE_ENABLED)
         list(APPEND srcs "muse_chat_link.c")   # text replies over Link's session
     endif()
     list(APPEND srcs "muse_chat_text.c")
-    # The ring page's big time: Montserrat Medium 48 px cut down to the ten
-    # glyphs it draws (digits and colon, ~16 KB). The full
-    # lv_font_montserrat_48 face is ~128 KB and does not fit the 4 MB app
+    # The ring page's big time: Montserrat Medium 48 px cut down to the eleven
+    # glyphs it draws (digits and colon, ~4.8 KB). The full
+    # lv_font_montserrat_48 face is ~128 KB (unverified) and does not fit the 4 MB app
     # slot -- enabling it made the link fail with "all app partitions are
     # too small". Regenerate with tools/muse/gen_clock_font.sh.
     list(APPEND srcs "fonts/muse_font_clock_48.c")

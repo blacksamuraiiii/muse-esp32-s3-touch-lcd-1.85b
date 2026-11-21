@@ -44,20 +44,20 @@
 
 ### v1.5.4b（2026-11-19，测试版）
 
-**在 1.5.4a 之上做一轮评审修补（29 项）+ ota 检查任务的删除配对，含 1.5.4a 全部内容（四条开发分支合入：内存优化第一批、连接恢复、闹钟 v1、打砖块）。**
+**在 1.5.4a 之上做一轮评审修补（26 项）+ ota 检查任务的删除配对，含 1.5.4a 全部内容（四条开发分支合入：内存优化第一批、连接恢复、闹钟 v1、打砖块）。**
 
 - **1.5.4a 评审修补**：① 闹钟 F-A1——响闹时记下本地日期，SNTP 往回校时不再同日重响（正向跳过目标仍丢当天那一响，无中生有补不了）；② PSRAM 栈任务删除配对——TTS 预热/自检、词卡取词/播放四条退出路径改用 `vTaskDeleteWithCaps`（原来普通 `vTaskDelete` 会漏掉 PSRAM 里的栈与 TCB），音频播放任务补 `MALLOC_CAP_8BIT`；③ 闹钟时间一次提交 NVS（两个 key 一次 commit，原来两次）；④ 响闹页返回回调取出即清，防页面释放后二次调用；⑤ 契约测试：新增 `test_link_helper_task_contract`（helper 任务创建/删除必须配对），`test_link_transport_contract` 的 upgrade 断言补上中继 `k=` 令牌参数（旧断言停在加令牌之前）；⑥ 打砖块与游戏经济的注释、计划文档口径订正（10 金币入场、20 枚上限、一条命、场地与图标无外框、挡板反弹会加速）；⑦ PSRAM 任务创建失败的日志补上 PSRAM 余量。
 - **ota 检查任务（`ota_github.c`）**：`check_task` 用 `xTaskCreateWithCaps()` 创建却用普通 `vTaskDelete()` 删除，PSRAM 栈永远漏；改为由 `arg` 携带创建方式，按闭包决定 `vTaskDeleteWithCaps()` 还是 `vTaskDelete()`（纯内部分配的 fallback 路径走普通删除，否则崩）。
-- **TTS 服务端**：`5~10℃` 这类数值区间改读「5到10摄氏度」（原来波浪号被读成「大约」或被吞），与设备插件侧规则一致。
-- **设置页与响铃页（2026-11-19 用户实机反馈）**：设置首页 **Alarm 提到第一行**（原来排在 Sleep 之后、Battery 之前）；**响铃页整体放大一圈**——时间改用 48px 原生数字字体 ×1.25（字形高约 42px，原来是 28 号放大 1.71 倍、约 34px），停止按钮 160×48 → 208×60、圆角 18 → 22、按钮文字 ×1.25，副标题与底部提示 16 → 18px，四个元素整体上移重排。新增 `muse_font_clock_48`（Montserrat 数字与冒号十个字形的子集，15.7 KB；完整 48 号字体 128 KB，塞不进 4 MB app 槽，链接会报 all app partitions are too small），生成脚本 `tools/muse/gen_clock_font.sh`。另外给停止按钮加「按住超过 1.2 秒即视为唤醒幻触、忽略」的过滤：去掉 6 秒宽限后实测面板唤醒的幻触会在响铃约 4 秒时把闹钟停掉（`ring page: stop tapped` 日志、无人触碰），真手指点按远短于 1.2 秒不受影响，BOOT 仍立即停。
+- **TTS 服务端**：`5~10℃` 这类数值区间改读「5到10摄氏度」（原来波浪号被读成「大约」或被吞），与设备插件侧规则一致（基线提交 `0e77338`，1.5.4b 评审范围的起点）。
+- **设置页与响铃页（2026-11-19 用户实机反馈）**：设置首页 **Alarm 提到第一行**（原来排在 Sleep 之后、Battery 之前）；**响铃页整体放大一圈**——时间改用 48px 原生数字字体 ×1.25（字形高约 42px，原来是 28 号放大 1.71 倍、约 34px），停止按钮 160×48 → 208×60、圆角 18 → 22、按钮文字 ×1.25，副标题与底部提示 16 → 18px，时间与按钮上移，副标题与提示微调拉开间距。新增 `muse_font_clock_48`（Montserrat 数字与冒号十一个字形的子集，约 4.8 KB；完整 48 号字体约 128 KB（未核实），塞不进 4 MB app 槽，链接会报 all app partitions are too small），生成脚本 `tools/muse/gen_clock_font.sh`。停止按钮恢复 6 秒面板稳定宽限：宽限内点按被拒并显示提示，宽限后点按立即停；机身按键路径只认响铃开始后新按下的上升沿。
 
 - **内存优化（R1+R2+R4）**：音频播放任务与三个 setup 任务（Muse VM 查找、凭据刷新、扫描刷新）的栈改走 PSRAM（新增 `main/helper_task.h`，板级开关 `CONFIG_HOMEHUB_SETUP_TASKS_IN_PSRAM`，前提是本板代码与 rodata 已在 PSRAM）；LCD 分带 chunk 4 行 → 2 行，并同步修正 `ptest_lcd` 黑清循环步长（原来按 8 行读 2 行的缓冲，越界）。
 - **连接恢复（上游 `481743f`）**：半开连接 150 s 无入站即重连；隧道 keepalive 65 s 超时按「未答复的 ping 之后有没有入站」分流（重连 vs 只重开隧道），并补一个 WS ping 给活连接自证的机会；隧道外发/DMA 门控卡住 30 s 拆会话；本地标死隧道流后重开前先发 Reset（治服务端的 "duplicate id" 死循环）；静默断开时打一次 TCP 探针（1.1.1.1 / 8.8.8.8:443）。新增连接历史环：`device.health` 带最新 40 条 `connectivity_events`，`bug.report` 带全部 128 条且超 32 KiB 时从最旧事件丢起；`bug.report` 顶层 `tunnel` 对象移进 `device_health`。
 - **闹钟 v1**：Alarm 子页的 Hour/Minute 合并成 Time 一行，点进双滚轮设时页（离页一次性写 NVS + 重 arm，分钟不再只能 ±10）；响闹改全屏响闹页（大字时间 + 只留「停止」，无小睡、无试响），响闹音单列 `MUSE_SFX_ALARM`（4000 Hz 双声蜂鸣、每 250 ms 一遍，换音色只改 `muse_audio.h` 一处），自动停 60 s → 30 s；SNTP 校时成功后重 arm，修「校时跳过目标当天漏响」。
 - **打砖块（第七个小游戏）**：24 块砖 6×4、球速 120 px/s、挡板 260 px/s 上限（按 vx 220 最坏情形推导）、**一条命：接不住直接结束**（用户 2026-11-18 定，无复活）、倾斜主控 + 手指拖动备用 + 长按暂停、砖碎 +1 分、结算只写实得（`min(分, 20)`）、入场费 10。
-- **实机看过后按用户口径改的五处**：打砖块游戏页去掉场地外框、列表图标去掉外框并放大、闹钟滚轮去掉外框、生命 3 → 1、响闹页「停止」按钮立刻生效（不再等 6 秒面板宽限，BOOT 与触摸的宽限不变）。
+- **实机看过后按用户口径改的五处**：打砖块游戏页去掉场地外框、列表图标去掉外框并放大、闹钟滚轮去掉外框、生命 3 → 1、响闹页「停止」按钮恢复 6 秒面板宽限（宽限内点按被拒并显示提示，宽限后立即停；1.5.4a 的“立刻生效”已作废，见上）。
 
-状态：编译通过（`exit=0`，bin 4,132,864 B，4 MB app 槽余 61,440 B / 1%）；已刷入开发板并确认启动（`App version: 1.5.4b`、`UI up: 360x360`、Wi-Fi/WSS/raw 三层全通、隧道流 stream 2 已开、心跳 `tun rx+0 tx+0 drop+0`、内部最大块 7–10 KB、无 panic/assert）；台架 `>alarm.test` 与 `>alarm.stop` 通过（响闹页正常出现与停止；报出的 `lcd_panel.io.i2c … i2c transaction failed` 是面板唤醒瞬间的既有瞬态，2026-10-22 已定性，见 `notes/20261022进展记录.md` §4）。host harness：新增 `test_link_helper_task_contract` 4 项全过，`test_link_transport_contract` 7 项全过；`test_link_ota` 5 项失败与 main 基线（`41d51cf`）逐条相同（宿主侧缺 `freertos/idf_additions.h`，属既有，零新增）。实机手感与观感验收待做（打砖块倾斜手感、滚轮页与响闹页版面、闹钟 SNTP 回拨不重响、中继断网自愈）。
+状态：编译通过（`exit=0`，bin 约 4,140,000–4,144,000 B（估算：1.5.4a 的 4,132,864 B + 新字体约 4.8 KB + 约 180 行净增代码，待用户编译后以实测重填），4 MB app 槽余约 50–54 KB（约 1%））；已刷入开发板并确认启动（`App version: 1.5.4b`、`UI up: 360x360`、Wi-Fi/WSS/raw 三层全通、隧道流 stream 2 已开、心跳 `tun rx+0 tx+0 drop+0`、内部最大块 7–10 KB、无 panic/assert）；台架 `>alarm.test` 与 `>alarm.stop` 通过（响闹页正常出现与停止；报出的 `lcd_panel.io.i2c … i2c transaction failed` 是面板唤醒瞬间的既有瞬态，2026-10-22 已定性，见 `notes/20261022进展记录.md` §4）。host harness：新增 `test_link_helper_task_contract` 4 项全过，`test_link_transport_contract` 7 项全过；`test_link_ota` 5 项失败与 main 基线（`41d51cf`）逐条相同（宿主侧缺 `freertos/idf_additions.h`，属既有，零新增）。实机手感与观感验收待做（打砖块倾斜手感、滚轮页与响闹页版面、闹钟 SNTP 回拨不重响、中继断网自愈）。刷机：`tools/muse/board.sh flash lcd185b`。
 
 ### v1.5.3（2026-11-17，正式版）
 

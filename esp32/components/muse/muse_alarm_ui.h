@@ -15,8 +15,9 @@
  *     covers whichever tile the alarm caught the device on without
  *     touching the 3-tile structure. It has no tile, no back button and
  *     no swipe: one Stop button (the any-key stop in muse_input.c still
- *     applies underneath, and the button itself does not wait out the 6 s
- *     panel-settling grace). It is driven by muse_alarm_ui_tick(), called
+ *     applies underneath, and the button itself waits out the same 6 s
+ *     panel-settling grace as the keys: a press inside the grace is
+ *     refused and the hint line says so). It is driven by muse_alarm_ui_tick(), called
  *     every frame from the LVGL timer in muse_ui.c: the input task runs
  *     on its own task and must never touch LVGL, so the tick polls
  *     muse_input_alarm_ringing() and shows/hides the overlay from the
