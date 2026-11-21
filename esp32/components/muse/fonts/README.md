@@ -9,9 +9,15 @@ in `muse_font.c` (`muse_font_cjk()` / `muse_font_caption()` /
   Noto 16 for all text on 2026-11-06: Noto Sans SC Medium at 16 px, 4bpp
   antialiased, taken from upstream's `muse_font_cjk_noto_16.c`
   (upstream's `gen_cjk_noto_font.sh`, GB2312 6763 hanzi + CJK
-  punctuation, kana and fullwidth forms, plus ASCII 0x20-0x7E and Latin-1
-  0xA0-0xFF since the unification, 7431 glyphs, 875,591 bytes of bitmap
-  data, 970,135 bytes of flash all in, measured by compiling the file).
+  punctuation and fullwidth forms, plus ASCII 0x20-0x7E and Latin-1
+  0xA0-0xFF since the unification, 7242 glyphs, 721,254 bytes of
+  (RLE-compressed) bitmap data, 793,430 bytes of flash all in, measured
+  by compiling the file on the host -- the same measure as the old
+  7431 glyphs / 875,719 bitmap / 970,327 flash. Size-trim 2026-11-20:
+  compression + kana removed (0x3040-0x30FF, 189 glyphs; CJK
+  punctuation 0x3000-0x303F kept) + kerning removed (--no-kerning),
+  saving 176,897 bytes of flash: bitmap -154,465, kerning tables
+  -20,798, glyph descriptors -1,512, kana cmaps -122.)
   It replaces Source Han Sans SC Regular level-1 (3755 hanzi) + the
   Unifont fallback below. The trade is coverage, not looks: a hanzi
   outside GB2312 (a GBK name character like 燊堃喆, which Unifont used

@@ -14,11 +14,18 @@
 # limitations under the License.
 
 # Regenerates components/muse/fonts/muse_font_cjk_noto_16.c: Noto Sans SC
-# Medium at 16 px, 4 bpp, for CJK punctuation, kana, the 6763 hanzi of GB2312
+# Medium at 16 px, 4 bpp, for CJK punctuation, the 6763 hanzi of GB2312
 # and the fullwidth forms, plus ASCII and Latin-1 (the 2026-11-06
 # unification: every label, button and reply renders in this one face at
 # 16 px; Montserrat stays only for the clock, keypad, pairing code and
 # LVGL icons). Needs curl, python3 and npx.
+#
+# Size-trim 2026-11-20: the font is generated COMPRESSED (lv_font_conv's
+# RLE, decoded by LVGL at runtime -- no code change), WITHOUT kana
+# (0x3040-0x30FF; the UI prints no Japanese, and the 0x3000-0x303F CJK
+# punctuation stays) and WITHOUT kerning (--no-kerning: Latin kerning
+# pairs cost ~20 KB and the 16 px UI never relied on them). Re-running
+# this script reproduces the shipped file byte-for-byte.
 set -eu
 
 HERE="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -44,8 +51,8 @@ print(",".join(hex(c) for c in sorted(cps)))')
 # (2026-11-16).
 EXTRA="0x7B4A"
 npx -y lv_font_conv@1.5.3 --font "$TMP/noto.otf" --size 16 --bpp 4 \
-    --format lvgl --lv-font-name muse_font_cjk_noto_16 --no-compress \
-    -r 0x20-0x7E -r 0xA0-0xFF -r 0x3000-0x30FF -r 0xFF00-0xFFEF -r "$HANZI" -r "$EXTRA" -o "$TMP/font.c"
+    --format lvgl --lv-font-name muse_font_cjk_noto_16 --no-kerning \
+    -r 0x20-0x7E -r 0xA0-0xFF -r 0x3000-0x303F -r 0xFF00-0xFFEF -r "$HANZI" -r "$EXTRA" -o "$TMP/font.c"
 sed -e 's|#include "lvgl/lvgl.h"|#include "lvgl.h"|' -e "s|$TMP/||g" "$TMP/font.c" > "$OUT"
 # Pin the line box to 20/5 (see fonts/README.md): Noto's own metrics are
 # 31/9, but every layout number on this screen was tuned to the 20/5 line

@@ -9,8 +9,14 @@
  *   Order in the game subpage is rock, paper, scissors (left to right).
  *
  * Generated once, offline; the three .c files beside this header hold the
- * pixel data (LVGLImage.py, ARGB8888, 128x128 master). Do not hand-edit them
- * and do not hand-draw replacements: the only approved art is the set above.
+ * pixel data (LVGLImage.py, A8 alpha mask, 128x128 master). Every
+ * non-transparent pixel of the ARGB8888 masters was white, so the
+ * colour channel carried nothing: the A8 mask is pixel-equivalent
+ * (converted 2026-11-20, size-trim). An A8 mask carries no colour of
+ * its own -- every display site must set image_recolor + opa COVER
+ * (the choice row uses pure white 0xffffff, the reveal uses TEXT/DIM).
+ * Do not hand-edit them and do not hand-draw replacements: the only
+ * approved art is the set above.
  *
  * Regenerate:
  *   1. take each SVG, delete its first full-canvas path
@@ -18,7 +24,7 @@
  *   2. wrap the rest in <g transform="rotate(-90 256 256)"> so the hands
  *      point UP, and render 256x256 PNG, white on transparent, then
  *      Lanczos-resize to 128x128 (one master, LVGL scales it at runtime);
- *   3. python3 LVGLImage.py --ofmt C --cf ARGB8888 --name muse_interact_hand_<x>
+ *   3. python3 LVGLImage.py --ofmt C --cf A8 --name muse_interact_hand_<x>
  *      and copy the .c here.
  *
  * The loser-dim effect is NOT a second asset: the UI recolours the same image

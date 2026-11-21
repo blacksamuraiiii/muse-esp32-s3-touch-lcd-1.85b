@@ -152,7 +152,11 @@ CONFIG_MBEDTLS_ECDSA_DETERMINISTIC=y
 # Main task stack (TLS handshake is hungry).
 CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
 
-CONFIG_LOG_DEFAULT_LEVEL_INFO=y
+CONFIG_LOG_DEFAULT_LEVEL_WARN=y
+# Size-trim 2026-11-20: INFO -> WARN drops the ESP_LOGI strings from the
+# image (one config line, easy to revert alone). Saving unmeasured here --
+# confirm from the user's build size. Note a generated build/sdkconfig
+# overrides this file, so a stale build dir must be deleted and rebuilt.
 CONFIG_LOG_VERSION_1=y
 CONFIG_LOG_MODE_TEXT=y
 CONFIG_LOG_COLORS=n

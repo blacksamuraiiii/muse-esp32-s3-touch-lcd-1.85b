@@ -47,8 +47,6 @@ if(CONFIG_MUSE_ENABLED)
         "muse_pet.c"
         "muse_pet_text.c"
         "muse_interact_ui.c"
-        "muse_sudoku.c"
-        "muse_sudoku_ui.c"
         "muse_snake.c"
         "muse_snake_ui.c"
         "muse_whackamole.c"
