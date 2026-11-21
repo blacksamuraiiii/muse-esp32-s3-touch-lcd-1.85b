@@ -32,6 +32,11 @@
  *     midnight day boundary clears it). A refused toss records
  *     nothing; a bare request (arg 0) charges and counts but records
  *     no result.
+ *   - PET_TRACING_SOLVE (user decision 2026-11-20): 2 coins for the
+ *     day's first correct trace of one character (arg 0..9), PET_CAP
+ *     for every later trace of the same character the same day; a
+ *     new day rolls the mask, a rollback never re-grants a character,
+ *     and an out-of-range arg settles nothing (PET_BUSY).
  *   - Day rollback (clock going backwards) never re-charges a paid day.
  *   - muse_pet_sudoku_today() answers the UI's two questions.
  */
@@ -545,6 +550,73 @@ int main(void)
     muse_pet_model_roll_daily(&m, MUSE_PET_TIME_MIN - 3600);
     assert(m.feed_day == d1);
     assert(m.feed_mask == 0x7u);
+
+    /* --- tracing: 2 coins for the day's first trace of a character -----
+     * (user decision 2026-11-20: same once-a-day-per-item shape as the
+     * feed mask, arg is the character index 0..9). */
+    muse_pet_model_init(&m);
+    m.coins = 50;
+    uint32_t paid_mask = 0;
+    muse_pet_tracing_today(&m, day_now(d1), &paid_mask);
+    assert(paid_mask == 0);
+    assert(apply(&m, PET_TRACING_SOLVE, d1, 0) == PET_OK);
+    assert(m.coins == 50 + MUSE_PET_TRACING_COINS);
+    assert(m.tracing_day == d1);
+    assert(m.tracing_mask == 0x1u);
+    muse_pet_tracing_today(&m, day_now(d1), &paid_mask);
+    assert(paid_mask == 0x1u);
+    /* The same character again the same day pays nothing (PET_CAP),
+     * and the mask is untouched. */
+    assert(apply(&m, PET_TRACING_SOLVE, d1, 0) == PET_CAP);
+    assert(m.coins == 50 + MUSE_PET_TRACING_COINS);
+    assert(m.tracing_mask == 0x1u);
+    /* Another character the same day pays: the mask is per character. */
+    assert(apply(&m, PET_TRACING_SOLVE, d1, 1) == PET_OK);
+    assert(m.coins == 50 + 2 * MUSE_PET_TRACING_COINS);
+    assert(m.tracing_mask == 0x3u);
+    /* An out-of-range character settles nothing (PET_BUSY): no coins,
+     * no mask bit, no day stamped. */
+    assert(apply(&m, PET_TRACING_SOLVE, d1, 10) == PET_BUSY);
+    assert(apply(&m, PET_TRACING_SOLVE, d1, -1) == PET_BUSY);
+    assert(m.coins == 50 + 2 * MUSE_PET_TRACING_COINS);
+    assert(m.tracing_mask == 0x3u);
+    /* The wallet cap still applies: 99 + 2 is 100, not 101. */
+    m.coins = 99;
+    assert(apply(&m, PET_TRACING_SOLVE, d1, 2) == PET_OK);
+    assert(m.coins == MUSE_PET_COINS_MAX);
+    assert(m.tracing_mask == 0x7u);
+    /* A new day rolls the mask (the living cost is settled first). */
+    assert(apply(&m, PET_TRACING_SOLVE, d2, 0) == PET_OK);
+    assert(m.coins == MUSE_PET_COINS_MAX - MUSE_PET_DECAY_PER_DAY +
+           MUSE_PET_TRACING_COINS);
+    assert(m.tracing_day == d2);
+    assert(m.tracing_mask == 0x1u);
+    muse_pet_tracing_today(&m, day_now(d2), &paid_mask);
+    assert(paid_mask == 0x1u);
+    muse_pet_tracing_today(&m, day_now(d1), &paid_mask);
+    assert(paid_mask == 0); /* yesterday's mask does not read back */
+    /* Clock rollback never re-grants a character: the stored day is
+     * kept, and the trace settles against it (a character not yet
+     * paid on the stored day still pays, with no second decay). */
+    assert(apply(&m, PET_TRACING_SOLVE, d2 - 1, 1) == PET_OK);
+    assert(m.coins == MUSE_PET_COINS_MAX - MUSE_PET_DECAY_PER_DAY +
+           2 * MUSE_PET_TRACING_COINS);
+    assert(m.tracing_day == d2);
+    assert(m.tracing_mask == 0x3u);
+    assert(apply(&m, PET_TRACING_SOLVE, d2 - 1, 0) == PET_CAP);
+    assert(m.tracing_mask == 0x3u);
+
+    /* --- validation catches a corrupt tracing ledger ------------------- */
+    muse_pet_model_init(&m);
+    m.tracing_day = -2;
+    assert(!muse_pet_model_valid(&m));
+    muse_pet_model_init(&m);
+    m.tracing_mask = 1u << MUSE_PET_TRACING_CHARS;
+    assert(!muse_pet_model_valid(&m));
+    muse_pet_model_init(&m);
+    m.tracing_day = d1;
+    m.tracing_mask = (1u << MUSE_PET_TRACING_CHARS) - 1;
+    assert(muse_pet_model_valid(&m));
 
     printf("ok\n");
     return 0;

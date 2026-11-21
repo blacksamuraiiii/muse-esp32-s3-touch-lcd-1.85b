@@ -20,16 +20,19 @@
  *     the 学习 page, the 小游戏 card the mini-game list. Coin line
  *     at y = 302. The main page has NO back arrow (its header back
  *     callback is NULL); the face is one swipe away.
- *   - 学习 page (1.5.3a A flow, reworked to three cards 2026-11-12,
- *     user decision v6, see notes/learn-section.md "三张卡片改版"):
- *     title "学习" with a back arrow; motto "好好学习，天天向上"
- *     at y = 84 (DIM, same slot/colour as the feed page's rule line);
- *     three 100x100 cards at y = 120 (x = 22/130/238), 80px icons +
- *     names at y = 228 (DIM); coin line at y = 302 (TEXT, refreshed
- *     by refresh_status()). All three are free (user decision
- *     2026-11-12, 学习全部免费): no entry fee, no dimming. Back
- *     lands on the main page; the three games' own back arrows land
- *     here, not on the mini-game list.
+ *   - 学习 page (1.5.3a A flow, reworked to four 2x2 cards
+ *     2026-11-20, user decision mockup v3, see notes/learn-section.md
+ *     "三张卡片改版" for the earlier three-card row): title "学习"
+ *     with a back arrow; NO motto -- "好好学习，天天向上" was
+ *     deleted 2026-11-20 (user decision), so the four cards take the
+ *     main page's exact grid (140x95, rows y=80/185, x=35/185, 56 px
+ *     icons + titles inside the cards); coin line at y=302 (TEXT,
+ *     refreshed by refresh_status()). Order is the user's: 语文练习
+ *     first, then 数学练习, 英语单词, 英语口语. All four are free
+ *     (user decision 2026-11-12, 学习全部免费): no entry fee, no
+ *     dimming. Back lands on the main page; the four items' own back
+ *     arrows land here, not on the mini-game list (the 描红 trace
+ *     page lands on the character list first, one level deeper).
  *   - Mini-game list page (mockup v1, user decision 2026-11-17):
  *     title "小游戏" with a back arrow, rule line "每局 10 金币"
  *     at y = 84 (DIM), and the feed page's horizontal strip at
@@ -148,6 +151,7 @@
 #include "muse_widgets.h" /* the shared back arrow / card / title (1.5g) */
 #include "muse_wordcards_ui.h"
 #include "muse_quiz_ui.h"
+#include "muse_tracing_ui.h"
 #include "muse_main_grid_art.h"
 #include "muse_learn_art.h"     /* 学习子页 three-card icons (mockup v6) */
 #include "muse_whackamole_art.h" /* 打地鼠卡: 鼹鼠头 (donor art, personal use) */
@@ -174,8 +178,6 @@
 #define IC_RADIUS 18
 #define IC_FEED_CARD 100
 #define IC_FEED_ICON 80
-/* Same as IC_GRID_ICON_SCALE: the learn cards use the 128 px A8 masters. */
-#define IC_FEED_ICON_SCALE (256 * IC_FEED_ICON / MUSE_LEARN_ART_PX)
 #define IC_GAME_CHOICE 100
 #define IC_HAND_RESULT 130
 #define IC_FORTUNE_CARD_W 300
@@ -236,6 +238,8 @@ enum {
     IC_PAGE_WORDCARDS_SETS,
     IC_PAGE_QUIZ,
     IC_PAGE_LEARN,
+    IC_PAGE_TRACING_LIST,
+    IC_PAGE_TRACING_TRACE,
 };
 
 enum {
@@ -250,7 +254,8 @@ static lv_obj_t *s_main_page, *s_feed_page, *s_game_page, *s_fortune_page,
     *s_fortune_sub_page, *s_jiaobei_page;
 static lv_obj_t *s_minigame_page, *s_snake_page, *s_whackamole_page,
     *s_goldrain_page, *s_doodle_page, *s_breakout_page, *s_mathpractice_page, *s_tictactoe_page,
-    *s_wordcards_page, *s_wordcards_sets_page, *s_quiz_page, *s_learn_page;
+    *s_wordcards_page, *s_wordcards_sets_page, *s_quiz_page, *s_learn_page,
+    *s_tracing_list_page, *s_tracing_trace_page;
 static lv_obj_t *s_minigame_coins;
 static lv_obj_t *s_mg_rps_lbl, *s_mg_snake_lbl, *s_mg_whack_lbl,
     *s_mg_goldrain_lbl, *s_mg_doodle_lbl, *s_mg_breakout_lbl,
@@ -376,13 +381,13 @@ static void show_page(int page)
      * hide list, 2) the show mapping if-chain below, 3) the hide hooks
      * in on_back(), 4) the hide hooks in muse_interact_ui_on_hidden().
      * (A single static page registry driving all four is a follow-up,
-     * not done here -- 2026-11-17 review fix.) Check 18/18 after any
+     * not done here -- 2026-11-17 review fix.) Check 20/20 after any
      * change, from esp32/components/muse:
      *   grep -o "s_[a-z_]*_page" muse_interact_ui.c | sort -u | wc -l
-     *     (= 18 distinct page objects)
+     *     (= 20 distinct page objects)
      *   sed -n '/^static void show_page/,/^    lv_obj_t \*show/p' \
      *       muse_interact_ui.c | grep -c "^    lv_obj_add_flag"
-     *     (= 18 hide lines in this list -- one add_flag per page object;
+     *     (= 20 hide lines in this list -- one add_flag per page object;
      *     the lv_obj_remove_flag below is the one show, not a hide, so
      *     it is not counted). */
     lv_obj_add_flag(s_fortune_sub_page, LV_OBJ_FLAG_HIDDEN);
@@ -399,6 +404,8 @@ static void show_page(int page)
     lv_obj_add_flag(s_wordcards_sets_page, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(s_quiz_page, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(s_learn_page, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(s_tracing_list_page, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(s_tracing_trace_page, LV_OBJ_FLAG_HIDDEN);
     lv_obj_t *show = s_main_page;
     if (page == IC_PAGE_FEED) show = s_feed_page;
     if (page == IC_PAGE_GAME) show = s_game_page;
@@ -417,6 +424,8 @@ static void show_page(int page)
     if (page == IC_PAGE_WORDCARDS_SETS) show = s_wordcards_sets_page;
     if (page == IC_PAGE_QUIZ) show = s_quiz_page;
     if (page == IC_PAGE_LEARN) show = s_learn_page;
+    if (page == IC_PAGE_TRACING_LIST) show = s_tracing_list_page;
+    if (page == IC_PAGE_TRACING_TRACE) show = s_tracing_trace_page;
     lv_obj_remove_flag(show, LV_OBJ_FLAG_HIDDEN);
     /* The swipe lock takes effect here, not at the next 0.25 s chrome tick
      * (muse_ui.c): chrome polling left up to 250 ms after leaving a subpage
@@ -430,15 +439,15 @@ bool muse_interact_ui_swipe_locked(void)
 {
     /* Any interaction subpage: 喂食, 今日运势, 学习, 小游戏 (the minigame
      * list) and the seven game boards (石头剪刀布 / 贪吃蛇 / 打地鼠 /
-     * 金币雨 / 毛毛跳跃 / OX棋 / 打砖块) plus the three learning games
-     * (数学练习 / 英语单词 / 英语口语, reached through the 学习 page)
-     * and the word-cards category page. Only the
-     * main page swipes, right to the face. A subpage leaves through its
-     * "<" back arrow, one level up; BOOT is the exception, and it does not
-     * go through here (the voice task switches to the face and starts a
-     * turn). The game boards were the original lock (2026-10-31, rim
-     * buttons); the feed, fortune and minigame-list pages joined it on
-     * 2026-11-04. */
+     * 金币雨 / 毛毛跳跃 / OX棋 / 打砖块) plus the four learning items
+     * (语文练习 / 数学练习 / 英语单词 / 英语口语, reached through the
+     * 学习 page), the word-cards category page and the two 描红 pages.
+     * Only the main page swipes, right to the face. A subpage leaves
+     * through its "<" back arrow, one level up; BOOT is the exception,
+     * and it does not go through here (the voice task switches to the
+     * face and starts a turn). The game boards were the original lock
+     * (2026-10-31, rim buttons); the feed, fortune and minigame-list
+     * pages joined it on 2026-11-04. */
     return s_page != IC_PAGE_MAIN;
 }
 
@@ -453,12 +462,14 @@ static void on_back(lv_event_t *e)
      * would break the "left < = one level up" rule. The seven menu
      * games (game, snake, whack-a-mole, goldrain, doodle, tictactoe,
      * breakout)
-     * all land on the menu; the three learning games (mathpractice,
-     * wordcards, quiz) land on the 学习 page; feed is a main-page
+     * all land on the menu; the four learning items (tracing,
+     * mathpractice, wordcards, quiz) land on the 学习 page; feed is a main-page
      * card, so it still lands on the main page. Fortune is one level
      * deeper since 2026-11-14 (mockup v13): the draw page lands on
      * the fortune subpage, the jiaobei board lands there too, and the
-     * subpage itself lands on the main page. Leaving a game page
+     * subpage itself lands on the main page. The 描红 trace page is
+     * one level deeper the same way: it lands on the character list,
+     * which lands on the 学习 page. Leaving a game page
      * pauses a running game through its hide hook (snake keeps its
      * board, whack-a-mole, goldrain, doodle, breakout, mathpractice,
      * tictactoe
@@ -496,12 +507,19 @@ static void on_back(lv_event_t *e)
     if (s_page == IC_PAGE_QUIZ) {
         muse_quiz_ui_hide();
     }
+    if (s_page == IC_PAGE_TRACING_TRACE) {
+        muse_tracing_ui_hide();
+    }
     if (s_page == IC_PAGE_MAIN) {
         muse_ui_show_face();
     } else if (s_page == IC_PAGE_WORDCARDS) {
         /* One level deeper than the other games: back to the
          * category page, not the minigame list. */
         show_page(IC_PAGE_WORDCARDS_SETS);
+    } else if (s_page == IC_PAGE_TRACING_TRACE) {
+        /* One level deeper than the other learning items: back to
+         * the character list, not the 学习 page. */
+        show_page(IC_PAGE_TRACING_LIST);
     } else if (s_page == IC_PAGE_FORTUNE || s_page == IC_PAGE_JIAOBEI) {
         /* Fortune is one level deeper since 2026-11-14 (mockup v13):
          * the draw page and the jiaobei board both land on the
@@ -516,7 +534,8 @@ static void on_back(lv_event_t *e)
         show_page(IC_PAGE_MINIGAME);
     } else if (s_page == IC_PAGE_MATHPRACTICE ||
                s_page == IC_PAGE_QUIZ ||
-               s_page == IC_PAGE_WORDCARDS_SETS) {
+               s_page == IC_PAGE_WORDCARDS_SETS ||
+               s_page == IC_PAGE_TRACING_LIST) {
         /* Reached through the 学习 page, so back lands there. */
         show_page(IC_PAGE_LEARN);
     } else {
@@ -1284,9 +1303,11 @@ static void drain_feedback(void)
              * nothing more to do here. */
             break;
         case PET_PLAY_REWARD:
+        case PET_TRACING_SOLVE:
             /* Mini-game payouts. Every game page prints its own result line
-             * (the snake / whack OVER cards), so the face
-             * caption is deliberately left alone -- it is not on screen while a
+             * (the snake / whack OVER cards, the trace page's
+             * "写得真棒！"), so the face caption is deliberately
+             * left alone -- it is not on screen while a
              * game is being played anyway. */
             break;
         case PET_JIAOBEI_TOSS:
@@ -1439,6 +1460,22 @@ static void on_open_quiz(lv_event_t *e)
     muse_quiz_ui_show();
 }
 
+/* The 学习 page's "语文练习" row opens the character list; a list
+ * card opens that character's trace page (user decision 2026-11-20,
+ * two levels, like the word-cards category -> card pages). */
+static void on_open_tracing(lv_event_t *e)
+{
+    (void)e;
+    muse_tracing_ui_refresh_list();
+    show_page(IC_PAGE_TRACING_LIST);
+}
+
+static void on_open_tracing_char(int idx)
+{
+    muse_tracing_ui_open_char(idx);
+    show_page(IC_PAGE_TRACING_TRACE);
+}
+
 static void on_open_minigame(lv_event_t *e)
 {
     (void)e;
@@ -1515,61 +1552,58 @@ static void build_main(void)
     lv_obj_align(s_status1, LV_ALIGN_TOP_MID, 0, 302);
 }
 
-/* One card of the learn page's three-card row (mockup v6, 2026-11-12):
- * the feed page's item-column pattern -- a 100x128 column holding a
- * 100x100 card (icon 80 px, centred) and the name 8 px below it, so the
- * name sits at y = 228 when the column starts at y = 120. The icon is
- * an A8 master recoloured with the card's own colour
- * (MUSE_LEARN_ART_COLOR), the word-cards idiom -- not white like the
- * main grid. The image is not clickable: the card takes the click. */
-static void learn_card(lv_obj_t *parent, int x, int slot, const char *name,
-                       lv_event_cb_t cb)
+/* One card of the learn page's 2x2 grid (mockup v3, 2026-11-20):
+ * the main page's grid geometry -- 140x95 card, 56 px icon at the
+ * top (+8), title inside the card at +70 -- with the card's own
+ * colour (MUSE_LEARN_ART_COLOR), the word-cards idiom, instead of
+ * the main grid's white. The image is not clickable: the card takes
+ * the click. (Before 2026-11-20 this was the three-card row: a
+ * 100x128 column holding a 100x100 card with the name 8 px below
+ * it. The motto's deletion freed the top slot, so the four cards
+ * now take the main page's exact grid: rows y=80/185, x=35/185.) */
+static void learn_card(lv_obj_t *parent, int x, int y, int slot,
+                       const char *name, lv_event_cb_t cb)
 {
-    lv_obj_t *item = lv_obj_create(parent);
-    lv_obj_remove_style_all(item);
-    lv_obj_set_size(item, IC_FEED_CARD, 128);
-    lv_obj_set_pos(item, x, 120);
-    lv_obj_set_flex_flow(item, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_flex_align(item, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
-                          LV_FLEX_ALIGN_CENTER);
-    lv_obj_set_style_pad_row(item, 8, 0);
-    lv_obj_remove_flag(item, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_t *card = muse_card(item, IC_FEED_CARD, IC_FEED_CARD, IC_RADIUS);
+    lv_obj_t *card = muse_card(parent, IC_GRID_CARD_W, IC_GRID_CARD_H,
+                               IC_RADIUS);
+    lv_obj_set_pos(card, x, y);
     lv_obj_t *img = lv_image_create(card);
     lv_image_set_src(img, MUSE_LEARN_ART[slot]);
-    lv_image_set_scale(img, IC_FEED_ICON_SCALE);
-    lv_obj_set_size(img, IC_FEED_ICON, IC_FEED_ICON);
-    lv_obj_center(img);
+    lv_image_set_scale(img, IC_GRID_ICON_SCALE);
+    lv_obj_set_size(img, IC_GRID_ICON, IC_GRID_ICON);
+    lv_obj_align(img, LV_ALIGN_TOP_MID, 0, 8);
     lv_obj_set_style_image_recolor(img,
                                    lv_color_hex(MUSE_LEARN_ART_COLOR[slot]), 0);
     lv_obj_set_style_image_recolor_opa(img, LV_OPA_COVER, 0);
     lv_obj_remove_flag(img, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_t *l = label(card, muse_font_btn(), MUSE_THEME_TEXT, name);
+    lv_obj_align(l, LV_ALIGN_TOP_MID, 0, 70);
     lv_obj_add_event_cb(card, cb, LV_EVENT_CLICKED, NULL);
-    label(item, muse_font_cjk(), MUSE_THEME_DIM, name);
 }
 
 static void build_learn(void)
 {
     page_header(s_learn_page, "学习", on_back);
-    /* Same layout as the feed page (user decision 2026-11-12, mockup
-     * v6): the motto takes the feed rule line's slot (y = 84, DIM),
-     * three cards sit in a row at y = 120, and the coin line ends the
-     * page at y = 302 (TEXT, live via refresh_status, same as the feed
-     * and fortune pages). The three rows the A flow built (58 px rows,
-     * scrolling column, 110 px bottom pad) are gone with the list: three
-     * cards fit, so nothing scrolls. The names are the renamed ones
-     * (user decision 2026-11-11): 数学练习 (was 加减练习), 英语单词
-     * (was 单词练习), 英语口语 (the B-flow quiz, moved here from the
-     * minigame list -- same page, only the entry moved). All three are
-     * free (user decision 2026-11-12, 学习全部免费). */
-    lv_obj_t *motto = label(s_learn_page, muse_font_cjk(), MUSE_THEME_DIM,
-                            "好好学习，天天向上");
-    lv_obj_align(motto, LV_ALIGN_TOP_MID, 0, 84);
-    learn_card(s_learn_page, 22, MUSE_LEARN_MATH, "数学练习",
-               on_open_mathpractice);
-    learn_card(s_learn_page, 130, MUSE_LEARN_WORDS, "英语单词",
-               on_open_wordcards);
-    learn_card(s_learn_page, 238, MUSE_LEARN_QUIZ, "英语口语", on_open_quiz);
+    /* The main page's 2x2 grid (user decision 2026-11-20, mockup v3):
+     * four 140x95 cards at rows y=80/185, x=35/185, 56 px icons +
+     * titles inside the cards, and the coin line ends the page at
+     * y=302 (TEXT, live via refresh_status, same as the feed and
+     * fortune pages). The motto "好好学习，天天向上" was deleted the
+     * same day (user decision 2026-11-20) -- it took the top slot
+     * the grid now uses, and the main page has no motto either, so
+     * the two pages now differ only by the coin line (and the back
+     * arrow, which a top-level page never has). Order is the user's:
+     * 语文练习 first, then 数学练习, 英语单词, 英语口语. All four
+     * are free (user decision 2026-11-12, 学习全部免费): no entry
+     * fee, no dimming. */
+    learn_card(s_learn_page, IC_GRID_X0, IC_GRID_Y0, MUSE_LEARN_TRACING,
+               "语文练习", on_open_tracing);
+    learn_card(s_learn_page, IC_GRID_X1, IC_GRID_Y0, MUSE_LEARN_MATH,
+               "数学练习", on_open_mathpractice);
+    learn_card(s_learn_page, IC_GRID_X0, IC_GRID_Y1, MUSE_LEARN_WORDS,
+               "英语单词", on_open_wordcards);
+    learn_card(s_learn_page, IC_GRID_X1, IC_GRID_Y1, MUSE_LEARN_QUIZ,
+               "英语口语", on_open_quiz);
     /* Coin line: the page's last row, same slot as the other pages'
      * (y = 302), so every interaction page ends the same way
      * (2026-11-01, user request "统一页面内容"). A live status, not a
@@ -2332,6 +2366,8 @@ void muse_interact_ui_build(lv_obj_t *tile)
     s_wordcards_sets_page = page_group(tile);
     s_quiz_page = page_group(tile);
     s_learn_page = page_group(tile);
+    s_tracing_list_page = page_group(tile);
+    s_tracing_trace_page = page_group(tile);
     build_main();
     build_feed();
     build_game();
@@ -2351,6 +2387,9 @@ void muse_interact_ui_build(lv_obj_t *tile)
     muse_wordcards_ui_build_sets(s_wordcards_sets_page, on_back,
                                  on_open_wordcards_set);
     muse_quiz_ui_build(s_quiz_page, on_back);
+    muse_tracing_ui_build_list(s_tracing_list_page, on_back,
+                               on_open_tracing_char);
+    muse_tracing_ui_build_trace(s_tracing_trace_page, on_back);
     show_page(IC_PAGE_MAIN);
     /* Main page is the only one shown at build; muse_ui.c's tileview
      * hides the whole tile when it is not the active tile, so no extra
@@ -2381,6 +2420,7 @@ void muse_interact_ui_on_hidden(void)
     muse_wordcards_ui_hide();
     muse_quiz_ui_hide();
     muse_jiaobei_ui_hide();
+    muse_tracing_ui_hide();
     show_page(IC_PAGE_MAIN);
 }
 

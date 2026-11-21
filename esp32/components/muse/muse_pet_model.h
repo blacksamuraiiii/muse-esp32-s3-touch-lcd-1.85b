@@ -45,7 +45,7 @@
 #endif
 
 /* Struct layout version. Bump this whenever the layout below changes. */
-#define MUSE_PET_VERSION 6u
+#define MUSE_PET_VERSION 7u
 
 /* Economy constants (design §4). All amounts are whole coins. */
 #define MUSE_PET_COINS_MAX 100u        /* wallet cap: excess is discarded */
@@ -145,6 +145,11 @@
                                         * from MUSE_PET_GAME_STAKE */
 #define MUSE_PET_SUDOKU_SOLVE_COINS 10u /* the day's first completed puzzle */
 #define MUSE_PET_SUDOKU_DAILY_MAX 10u   /* per day: the first completion pays */
+#define MUSE_PET_TRACING_COINS 2u       /* one traced character, once per
+                                         * character per day (user decision
+                                         * 2026-11-20, same as math practice
+                                         * per question) */
+#define MUSE_PET_TRACING_CHARS 10u      /* 天 地 人 日 月 山 川 木 水 火 */
 
 /*
  * "No real time yet" threshold, taken from muse_rtc.c ("Older than this means
@@ -185,6 +190,10 @@ typedef struct {
     uint32_t jiaobei_streak;     /* consecutive holy cups today, 0..9 */
     uint32_t jiaobei_last;       /* last result today: 0 none, 1 holy,
                                   * 2 laughing, 3 yin (the codes below) */
+    int32_t tracing_day;         /* day of the 描红 ledger, -1 = none */
+    uint32_t tracing_mask;       /* bits 0..9: that character already
+                                  * paid today (same index as
+                                  * MUSE_TRACING_TABLE) */
 } muse_pet_model_t;
 
 /* Result codes carried in `arg` by PET_JIAOBEI_TOSS (same numbering as
@@ -244,7 +253,16 @@ typedef struct {
  * 0..MUSE_PET_ROUND_COIN_HARD_MAX (the wallet, 100 since 2026-11-17, was
  * 20) so a UI bug cannot mint coins. The round's net is that payout
  * minus the 10-coin entry fee the UI already charged with PET_FEE; the
- * model never nets the two itself. */
+ * model never nets the two itself.
+ * PET_TRACING_SOLVE is the 描红 completion reward (user decision
+ * 2026-11-20): arg is the character index (0..9, same as
+ * MUSE_TRACING_TABLE); it pays MUSE_PET_TRACING_COINS (2) for the
+ * day's first correct trace of that character and PET_CAP for every
+ * later one -- the same once-a-day-per-item shape as the feed mask
+ * (PET_FEED_*) and the sudoku reward (PET_SUDOKU_SOLVE), with the
+ * tracing_mask ledger instead of a single flag. An out-of-range arg
+ * settles nothing (PET_BUSY, like a bad sudoku day). The trace page
+ * shows the praise either way; only the payout is once a day. */
 typedef enum {
     PET_TOUCH = 0,
     PET_FEED_RICE,
@@ -262,6 +280,7 @@ typedef enum {
     PET_SUDOKU_SOLVE,
     PET_PLAY_REWARD,
     PET_JIAOBEI_TOSS,
+    PET_TRACING_SOLVE,
     /* Test only, console `>pet.coins=N`: set the wallet outright. Not
      * reachable from the UI, and the console command is Test-gated like
      * the other mutating pet.* ones. Bypasses decay like PET_RESET. */
@@ -364,6 +383,16 @@ void muse_pet_jiaobei_today(const muse_pet_model_t *s, int64_t now,
  */
 void muse_pet_jiaobei_result_today(const muse_pet_model_t *s, int64_t now,
                                    uint32_t *streak, uint32_t *last);
+
+/*
+ * Today's 描红 ledger, as a UI can read it without duplicating the
+ * day rule: *paid_mask is the bits of the characters already paid
+ * today (0..9, same index as MUSE_TRACING_TABLE; 0 on a new day or
+ * when nothing has been traced today). Derived from the snapshot;
+ * nothing is written. The pointer may be NULL.
+ */
+void muse_pet_tracing_today(const muse_pet_model_t *s, int64_t now,
+                           uint32_t *paid_mask);
 
 /* Settle one calendar day's living cost into `s` (idempotent for a given day).
  * No-op when uncalibrated, and never moves decay_day backwards on rollback. */

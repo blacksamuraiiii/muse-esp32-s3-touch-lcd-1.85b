@@ -37,6 +37,19 @@ in `muse_font.c` (`muse_font_cjk()` / `muse_font_caption()` /
   the caption band 72 px and pushed Muse up into the READY label).
   The pin is applied by `tools/muse/gen_cjk_noto_font.sh` itself on every
   run, so re-running the script keeps it.
+- `muse_font_tracing_48_v1.c` — the 描红 ghost face (2026-11-20): Noto
+  Sans SC Medium at 48 px, 4bpp, cut down to the ten first-grade
+  characters the trace page draws (天 地 人 日 月 山 川 木 水 火,
+  9,542 bytes of bitmap data, ~9.8 KB of flash all in -- the same
+  ~340 B of overhead the clock's 48 px digit subset measured). The
+  list page draws it at its own 48 px; the trace page scales it to
+  170 px at runtime (lv_obj_set_style_transform_scale, 907), because
+  a 170 px subset is ~115.9 KB and does not fit the ~50 KB free in
+  the 4 MB app slot at 1.5.4b. Regenerate with
+  `tools/muse/gen_tracing_font.sh` (lv_font_conv@1.5.2, the pin that
+  generated the committed file). Only built with
+  `CONFIG_MUSE_CJK_FONT`; the trace UI falls back to the 16 px chain
+  on boards without it.
 - `muse_font_sym_16.c` — the symbol tail of the chain, cut from DejaVu
   Sans 16 px 4bpp with lv_font_conv@1.5.3 (30 glyphs, ~1 KB of bitmap
   data; the generation command is in the file's header comment). Noto now
