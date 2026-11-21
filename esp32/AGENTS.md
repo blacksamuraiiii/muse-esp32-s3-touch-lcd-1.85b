@@ -318,10 +318,16 @@ python ../tools/muse/paced_esptool.py --chip esp32s3 -p PORT -b 115200 \
   alone, so pairing and Wi-Fi credentials survive a reflash.
 - `idf.py -p PORT erase-flash` wipes everything, including pairing. Do this
   only when you mean to start from scratch.
-- The app is signed with the committed `dev_signing_key.pem`, and Secure Boot
-  is **not** enabled, so flashing never burns eFuses. Keep it that way: don't
-  enable `CONFIG_SECURE_BOOT`, flash encryption, or
+- The app is signed with `dev_signing_key.pem`, and Secure Boot is **not**
+  enabled, so flashing never burns eFuses. Keep it that way: don't enable
+  `CONFIG_SECURE_BOOT`, flash encryption, or
   `CONFIG_HOMEHUB_PAIRING_EFUSE_AUTH` on a board you want to keep reflashing.
+- The key is **not tracked any more** (2026-11-21). An earlier copy was
+  published in the public history, so treat it as leaked: never reuse it if
+  Secure Boot or flash encryption is ever turned on, generate a fresh one
+  instead. `sdkconfig.defaults` still names the file, so a fresh clone needs
+  one before the first build:
+      espsecure.py generate_signing_key --version 2 dev_signing_key.pem
 
 ## Monitor
 

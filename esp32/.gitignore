@@ -52,3 +52,9 @@ __pycache__/
 .gradle/
 .idea/
 local.properties
+
+# ESP-IDF app-signing key: never commit it. The copy that used to live here
+# was published in the public history (2026-11-21, moved out of the index),
+# so treat it as leaked and generate a fresh one:
+#   espsecure.py generate_signing_key --version 2 dev_signing_key.pem
+dev_signing_key.pem
