@@ -590,9 +590,9 @@ muse_pet_result_t muse_pet_model_apply(muse_pet_model_t *s, muse_pet_action_t ac
         int32_t result = arg & 0xFF;
         luckywheel_roll(s, day);
         if (!free) {
-            if (s->luckywheel_count >= MUSE_PET_LUCKYWHEEL_DAILY_MAX) {
-                return PET_CAP; /* today's 9 spins are used up */
-            }
+            /* No daily cap any more (user decision 2026-11-21): the wheel
+             * spins as long as the wallet pays. The count is still kept
+             * for the ledger and the harness, it just never refuses. */
             if (s->coins < MUSE_PET_LUCKYWHEEL_COST) {
                 return PET_POOR; /* not settled, no spin */
             }

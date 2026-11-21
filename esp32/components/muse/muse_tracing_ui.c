@@ -54,6 +54,7 @@
 #include "muse_pet_model.h"
 #include "muse_theme.h"
 #include "muse_tracing.h"
+#include "muse_tracing_pinyin_art.h"
 #include "muse_widgets.h"
 
 #if CONFIG_MUSE_CJK_FONT
@@ -122,9 +123,9 @@ static muse_tracing_open_char_cb_t s_open_cb;
 
 static lv_obj_t *s_trace_page;
 static lv_obj_t *s_ghost;
-static lv_obj_t *s_pinyin;    /* pinyin line under the 田字格 */
+static lv_obj_t *s_pinyin;    /* verdict line under the 田字格 (DONE) */
+static lv_obj_t *s_pinyin_img; /* the pinyin bitmap, same slot */
 static lv_obj_t *s_done_ov;   /* 再写一次 card, DONE only */
-static lv_obj_t *s_done_title; /* 写得真棒！/ 继续加油 */
 static uint32_t s_last_touch_ms;
 static lv_timer_t *s_timer;
 
@@ -234,14 +235,17 @@ static void ink_add(int x, int y)
 static void show_pinyin(void)
 {
     int idx = s_char_idx >= 0 ? s_char_idx : 0;
-    lv_label_set_text(s_pinyin, MUSE_TRACING_TABLE[idx].pinyin);
-    lv_obj_set_style_text_color(s_pinyin, lv_color_hex(MUSE_THEME_TEXT), 0);
+    lv_image_set_src(s_pinyin_img, MUSE_TRACING_PINYIN_ART[idx]);
+    lv_obj_remove_flag(s_pinyin_img, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(s_pinyin, LV_OBJ_FLAG_HIDDEN);
 }
 
 static void show_wrong(void)
 {
+    lv_obj_add_flag(s_pinyin_img, LV_OBJ_FLAG_HIDDEN);
     lv_label_set_text(s_pinyin, "描错了，再试一次");
     lv_obj_set_style_text_color(s_pinyin, lv_color_hex(MUSE_THEME_DANGER), 0);
+    lv_obj_remove_flag(s_pinyin, LV_OBJ_FLAG_HIDDEN);
     ink_set_color(MUSE_THEME_DANGER);
 }
 
@@ -266,10 +270,15 @@ static void on_done(void)
         s_reward_sent = true;
         (void)muse_pet_request_tracing_solve(s_char_idx);
     }
-    lv_label_set_text(s_done_title, praise ? "写得真棒！" : "继续加油");
+    /* The verdict takes the pinyin slot under the 田字格 (user decision
+     * 2026-11-21): praise prints the payout, a pass only encourages.
+     * The copy is the user's: "写得真棒！+2 分" / "还需努力！" -- the
+     * payout itself is the 2 coins the worker pays. */
+    lv_obj_add_flag(s_pinyin_img, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_remove_flag(s_pinyin, LV_OBJ_FLAG_HIDDEN);
+    lv_label_set_text(s_pinyin, praise ? "写得真棒！+2 分" : "还需努力！");
     lv_obj_set_style_text_color(
-        s_done_title,
-        lv_color_hex(praise ? MUSE_THEME_GOLD : MUSE_THEME_TEXT), 0);
+        s_pinyin, lv_color_hex(praise ? MUSE_THEME_GOLD : MUSE_THEME_TEXT), 0);
     show_praise();
 }
 
@@ -400,11 +409,14 @@ void muse_tracing_ui_build_list(lv_obj_t *page, lv_event_cb_t back_cb,
         lv_obj_center(glyph);
         lv_obj_remove_flag(glyph, LV_OBJ_FLAG_CLICKABLE);
         s_list_glyphs[idx] = glyph;
-        /* Pinyin with its tone marks (tiān, shuǐ), 16 px, under the card
-         * -- the marks come from the Latin Extended-A tail in the CJK
-         * chain (muse_font.c). */
-        lv_obj_t *py = label(item, muse_font_pinyin(), MUSE_THEME_DIM);
-        lv_label_set_text(py, ch->pinyin);
+        /* Pinyin under the card, as the pre-rendered A8 bitmap: the
+         * tone marks drew blank through the font path, images do not
+         * (see muse_tracing_pinyin_art.h). Recolored DIM at runtime,
+         * the word-cards art idiom. */
+        lv_obj_t *py = lv_image_create(item);
+        lv_image_set_src(py, MUSE_TRACING_PINYIN_ART[idx]);
+        lv_obj_set_style_image_recolor(py, lv_color_hex(MUSE_THEME_DIM), 0);
+        lv_obj_set_style_image_recolor_opa(py, LV_OPA_COVER, 0);
         lv_obj_align(py, LV_ALIGN_TOP_MID, 0, TRACING_LIST_NAME_Y);
         lv_obj_remove_flag(py, LV_OBJ_FLAG_CLICKABLE);
         lv_obj_add_event_cb(card, on_card, LV_EVENT_CLICKED,
@@ -563,12 +575,20 @@ void muse_tracing_ui_build_trace(lv_obj_t *page, lv_event_cb_t back_cb)
         lv_obj_remove_flag(line, LV_OBJ_FLAG_CLICKABLE);
         s_lines[i] = line;
     }
-    /* Pinyin line under the grid (the slot the 跟着虚影描一描 hint and
-     * the 第 N/10 个字 counter used to share). */
-    s_pinyin = label(page, muse_font_pinyin(), MUSE_THEME_TEXT);
-    lv_label_set_text(s_pinyin, MUSE_TRACING_TABLE[0].pinyin);
+    /* The slot under the grid: the character's pinyin as an A8 image by
+     * default, the verdict text once an attempt is judged. */
+    s_pinyin_img = lv_image_create(page);
+    lv_image_set_src(s_pinyin_img, MUSE_TRACING_PINYIN_ART[0]);
+    lv_obj_set_style_image_recolor(s_pinyin_img, lv_color_hex(MUSE_THEME_TEXT),
+                                   0);
+    lv_obj_set_style_image_recolor_opa(s_pinyin_img, LV_OPA_COVER, 0);
+    lv_obj_align(s_pinyin_img, LV_ALIGN_TOP_MID, 0, TRACING_PINYIN_Y);
+    lv_obj_remove_flag(s_pinyin_img, LV_OBJ_FLAG_CLICKABLE);
+    s_pinyin = label(page, muse_font_cjk(), MUSE_THEME_TEXT);
+    lv_label_set_text(s_pinyin, "");
     lv_obj_align(s_pinyin, LV_ALIGN_TOP_MID, 0, TRACING_PINYIN_Y);
     lv_obj_remove_flag(s_pinyin, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_flag(s_pinyin, LV_OBJ_FLAG_HIDDEN);
 
     /* DONE card: 50% dim + praise + 再写一次, vertically centred (user
      * decision 2026-11-21). The overlay itself is NOT clickable, so the
@@ -582,14 +602,11 @@ void muse_tracing_ui_build_trace(lv_obj_t *page, lv_event_cb_t back_cb)
     lv_obj_set_style_bg_opa(s_done_ov, LV_OPA_50, 0);
     lv_obj_remove_flag(s_done_ov, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_remove_flag(s_done_ov, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_set_flex_flow(s_done_ov, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_flex_align(s_done_ov, LV_FLEX_ALIGN_CENTER,
-                          LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_set_style_pad_row(s_done_ov, 12, 0);
-    s_done_title = label(s_done_ov, muse_font_cjk(), MUSE_THEME_GOLD);
-    lv_label_set_text(s_done_title, "写得真棒！");
-    lv_obj_remove_flag(s_done_title, LV_OBJ_FLAG_CLICKABLE);
+    /* No result text inside the card: the verdict goes on the pinyin
+     * line under the 田字格, and the button stays dead centre (user
+     * decision 2026-11-21). */
     lv_obj_t *retry = muse_card(s_done_ov, 98, 66, 14);
+    lv_obj_align(retry, LV_ALIGN_CENTER, 0, 0);
     lv_obj_set_style_border_width(retry, 2, 0);
     lv_obj_set_style_border_color(retry, lv_color_hex(MUSE_THEME_ACCENT), 0);
     lv_obj_add_event_cb(retry, on_retry, LV_EVENT_CLICKED, NULL);

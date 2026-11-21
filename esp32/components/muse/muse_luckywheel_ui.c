@@ -139,18 +139,11 @@ static void show_note(const char *text)
 
 static void refresh_hint(void)
 {
-    muse_pet_model_t snap;
-    uint32_t remaining = MUSE_PET_LUCKYWHEEL_DAILY_MAX;
-    if (muse_pet_snapshot(&snap)) {
-        muse_pet_luckywheel_today(&snap, time(NULL), &remaining);
-    }
-    uint32_t used = MUSE_PET_LUCKYWHEEL_DAILY_MAX - remaining;
-    char buf[48];
-    snprintf(buf, sizeof(buf), "每次 -2 金币 · 今日已转 %u/9 次",
-             (unsigned)used);
-    lv_label_set_text(s_hint, buf);
-    lv_obj_set_style_text_color(s_hint, lv_color_hex(MUSE_THEME_DIM), 0);
-    lv_obj_remove_flag(s_hint, LV_OBJ_FLAG_HIDDEN);
+    /* The prompt line is reserved for refusals now (user decision
+     * 2026-11-21: the "每次 -2 金币 · 今日已转 N/9 次" line and the
+     * nine-spins-a-day cap are gone -- the wheel only answers to the
+     * wallet). Hidden on a normal visit. */
+    lv_obj_add_flag(s_hint, LV_OBJ_FLAG_HIDDEN);
 }
 
 static void show_start(void)
@@ -270,16 +263,10 @@ static void start_spin(void)
     if (!free) {
         /* Snapshot gate: the worker is the authority, but the UI must
          * know before it starts the spin -- a spin the worker then
-         * refuses would turn and cancel. Same order as 掷筊: limit
-         * first, then coins. */
+         * refuses would turn and cancel. Only the wallet can refuse now:
+         * the nine-spins-a-day cap is gone (user decision 2026-11-21). */
         muse_pet_model_t snap;
         if (muse_pet_snapshot(&snap)) {
-            uint32_t remaining = 0;
-            muse_pet_luckywheel_today(&snap, time(NULL), &remaining);
-            if (remaining == 0) {
-                show_limit();
-                return;
-            }
             if (snap.coins < MUSE_PET_LUCKYWHEEL_COST) {
                 muse_audio_sfx(MUSE_SFX_BAD);
                 show_note("金币不够（需 2 枚）");
@@ -500,6 +487,8 @@ void muse_luckywheel_ui_fee_refused(void)
     show_note("金币不够（需 2 枚）");
 }
 
+/* Unreachable since 2026-11-21 (no daily cap): kept so the pet feedback
+ * switch still compiles, and harmless if a stale worker sends it. */
 void muse_luckywheel_ui_limit_reached(void)
 {
     if (!s_built) {
