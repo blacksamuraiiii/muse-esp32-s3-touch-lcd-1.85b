@@ -47,3 +47,12 @@ lv_obj_t *muse_page_title(lv_obj_t *parent, const char *text, int y);
  * Call it from the LVGL timer that ticks the game, never from a worker. */
 void muse_float_text(lv_obj_t *parent, const char *text, lv_color_t colour,
                      int cx, int y);
+
+/* Register the end-of-swipe clamp for a horizontal card strip. `pitch` is
+ * the card width plus the column gap. LVGL's START snap does not clamp by
+ * itself, so a flick can leave the strip past the last card and show empty
+ * space on the right. This keeps the snap position, and when the finger
+ * stops within half a card of the end it lands the strip flush against the
+ * right edge (user request 2026-11-21: all horizontal card rows behave the
+ * same). The strip must be a flex ROW scroller with snap_x = START. */
+void muse_strip_snap_clamp(lv_obj_t *strip, int32_t pitch);

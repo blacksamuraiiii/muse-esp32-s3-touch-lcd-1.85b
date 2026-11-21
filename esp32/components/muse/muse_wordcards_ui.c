@@ -555,16 +555,6 @@ static void on_set_row(lv_event_t *e)
     }
 }
 
-/* Snap clamp for the category strip (same as the feed page's
- * on_feed_strip_scroll_end: the snap pass itself does not clamp,
- * so re-issue the current position through scroll_to_x(), which
- * pulls it back to the last reachable snap). */
-static void on_wordcards_sets_strip_scroll_end(lv_event_t *e)
-{
-    lv_obj_t *strip = lv_event_get_target(e);
-    lv_obj_scroll_to_x(strip, lv_obj_get_scroll_x(strip), LV_ANIM_ON);
-}
-
 /* The sets page's top slot says hello by the clock instead of the old
  * "限时免费" (user request 2026-11-21): < 12 = Good Morning, < 18 = Good
  * Afternoon, else Good Evening. The local hour comes from the same RTC
@@ -638,9 +628,8 @@ void muse_wordcards_ui_build_sets(lv_obj_t *page, lv_event_cb_t back_cb,
     lv_obj_set_scrollbar_mode(strip, LV_SCROLLBAR_MODE_OFF);
     lv_obj_set_scroll_snap_x(strip, LV_SCROLL_SNAP_START);
     lv_obj_remove_flag(strip, LV_OBJ_FLAG_SCROLL_ELASTIC);
-    /* ...and the snap pass itself does not clamp (see the callback). */
-    lv_obj_add_event_cb(strip, on_wordcards_sets_strip_scroll_end,
-                        LV_EVENT_SCROLL_END, NULL);
+    /* ...and the snap pass itself does not clamp (see the helper). */
+    muse_strip_snap_clamp(strip, MUSE_WORDCARDS_SETS_CARD + 8);
     for (int s = 0; s < MUSE_WORDCARDS_SETS; s++) {
         if (!muse_wordcards_set_has_art(s)) {
             continue;

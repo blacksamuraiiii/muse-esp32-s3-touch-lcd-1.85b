@@ -109,3 +109,27 @@ void muse_float_text(lv_obj_t *parent, const char *text, lv_color_t colour,
     lv_anim_set_completed_cb(&a, float_text_anim_done);
     lv_anim_start(&a);
 }
+
+/* --- horizontal strip clamp ----------------------------------------- */
+
+static void strip_scroll_end_cb(lv_event_t *e)
+{
+    lv_obj_t *strip = lv_event_get_target(e);
+    int32_t pitch = (int32_t)(intptr_t)lv_event_get_user_data(e);
+    int32_t cur = lv_obj_get_scroll_x(strip);
+    int32_t room = lv_obj_get_scroll_right(strip);
+    if (pitch > 0 && room > 0 && room < pitch / 2) {
+        /* Close enough to the end: land flush right, no gap beside the
+         * last card. */
+        lv_obj_scroll_to_x(strip, cur + room, LV_ANIM_ON);
+    } else {
+        /* Re-issue the position so the snap pass settles on a card. */
+        lv_obj_scroll_to_x(strip, cur, LV_ANIM_ON);
+    }
+}
+
+void muse_strip_snap_clamp(lv_obj_t *strip, int32_t pitch)
+{
+    lv_obj_add_event_cb(strip, strip_scroll_end_cb, LV_EVENT_SCROLL_END,
+                        (void *)(intptr_t)pitch);
+}

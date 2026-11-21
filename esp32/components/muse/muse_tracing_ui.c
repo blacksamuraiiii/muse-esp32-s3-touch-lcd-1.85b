@@ -58,8 +58,8 @@
 #include "muse_widgets.h"
 
 #if CONFIG_MUSE_CJK_FONT
-LV_FONT_DECLARE(muse_font_tracing_48_v1);
-#define TRACING_FONT (&muse_font_tracing_48_v1)
+LV_FONT_DECLARE(muse_font_tracing_kai_48_v1);
+#define TRACING_FONT (&muse_font_tracing_kai_48_v1)
 /* 170 px ghost from the 48 px face. */
 #define TRACING_FONT_SCALE 907
 #else
@@ -392,6 +392,10 @@ void muse_tracing_ui_build_list(lv_obj_t *page, lv_event_cb_t back_cb,
     lv_obj_set_scrollbar_mode(strip, LV_SCROLLBAR_MODE_OFF);
     lv_obj_set_scroll_snap_x(strip, LV_SCROLL_SNAP_START);
     lv_obj_remove_flag(strip, LV_OBJ_FLAG_SCROLL_ELASTIC);
+    /* Same end-of-swipe clamp as every other card row (user request
+     * 2026-11-21): the last card lands flush right instead of leaving a
+     * gap. */
+    muse_strip_snap_clamp(strip, TRACING_LIST_CARD + 8);
 
     for (int idx = 0; idx < (int)MUSE_TRACING_CHARS; idx++) {
         const muse_tracing_char_t *ch = &MUSE_TRACING_TABLE[idx];
