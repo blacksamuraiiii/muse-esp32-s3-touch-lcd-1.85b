@@ -71,11 +71,12 @@
  *     2026-11-16: the -5 cost later became -2, for both the draw and
  *     each 掷筊 toss.)
  *     The subpage is reached from the main page's 今日运势 card
- *     (2026-11-14, mockup v13): it holds two 100x100 cards at
- *     y = 120 (抽签 / 掷筊, icons 80 px, names at y = 228), the
- *     motto "仅供娱乐" at y = 84 (DIM, the learn page's motto slot),
- *     and the coin line at y = 302. 抽签 opens the draw page above;
- *     掷筊 opens the jiaobei board (muse_jiaobei_ui.c).
+ *     (2026-11-14, mockup v13): it holds three 100x100 cards at
+ *     y = 120 (抽签 / 掷筊 / 幸运转盘, icons 64 px, names at y = 228),
+ *     the motto "仅供娱乐" at y = 84 (DIM, the learn page's motto
+ *     slot), and the coin line at y = 302. 抽签 opens the draw page
+ *     above; 掷筊 opens the jiaobei board (muse_jiaobei_ui.c);
+ *     幸运转盘 opens the wheel board (muse_luckywheel_ui.c, 2026-11-20).
  *     The 石头剪刀布 game page is the one exception to the coin-slot
  *     rule: its coin line sits at y = 302 and the "点一张手出拳，每局
  *     -10 金币" cost hint at y = 84 (swapped, 2026-11-01, user request),
@@ -134,6 +135,7 @@
 #include "muse_interact_hand_assets.h"
 #include "muse_fortune_art.h"  /* 抽签 / 掷筊子页图标 (RGB565A8, 2026-11-14; size-trim 2026-11-20) */
 #include "muse_jiaobei_ui.h"  /* 掷筊板 (2026-11-14) */
+#include "muse_luckywheel_ui.h" /* 幸运转盘 (2026-11-20) */
 #include "muse_audio.h"   /* game sound effects */
 #include "muse_font.h"    /* muse_font_cjk() / muse_font_btn(), the one CJK chain (1.5b) */
 #include "muse_theme.h"   /* MUSE_THEME_*, the one colour table (1.5b) */
@@ -178,6 +180,11 @@
 #define IC_RADIUS 18
 #define IC_FEED_CARD 100
 #define IC_FEED_ICON 80
+/* Fortune subpage icons, drawn at 64 px (v8, 2026-11-20): the 80 px
+ * qiantong / jiaobei pictures scale down (204/256); the wheel icon is
+ * stored at 64 px already and is drawn at its native size. */
+#define IC_FORTUNE_ICON_SCALE \
+    (256 * MUSE_FORTUNE_ART_DISPLAY_PX / MUSE_FORTUNE_ART_PX)
 #define IC_GAME_CHOICE 100
 #define IC_HAND_RESULT 130
 #define IC_FORTUNE_CARD_W 300
@@ -226,6 +233,7 @@ enum {
     IC_PAGE_FORTUNE,
     IC_PAGE_FORTUNE_SUB,
     IC_PAGE_JIAOBEI,
+    IC_PAGE_LUCKYWHEEL,
     IC_PAGE_MINIGAME,
     IC_PAGE_SNAKE,
     IC_PAGE_WHACKAMOLE,
@@ -251,7 +259,7 @@ enum {
 
 static lv_obj_t *s_tile;
 static lv_obj_t *s_main_page, *s_feed_page, *s_game_page, *s_fortune_page,
-    *s_fortune_sub_page, *s_jiaobei_page;
+    *s_fortune_sub_page, *s_jiaobei_page, *s_luckywheel_page;
 static lv_obj_t *s_minigame_page, *s_snake_page, *s_whackamole_page,
     *s_goldrain_page, *s_doodle_page, *s_breakout_page, *s_mathpractice_page, *s_tictactoe_page,
     *s_wordcards_page, *s_wordcards_sets_page, *s_quiz_page, *s_learn_page,
@@ -381,17 +389,18 @@ static void show_page(int page)
      * hide list, 2) the show mapping if-chain below, 3) the hide hooks
      * in on_back(), 4) the hide hooks in muse_interact_ui_on_hidden().
      * (A single static page registry driving all four is a follow-up,
-     * not done here -- 2026-11-17 review fix.) Check 20/20 after any
+     * not done here -- 2026-11-17 review fix.) Check 21/21 after any
      * change, from esp32/components/muse:
      *   grep -o "s_[a-z_]*_page" muse_interact_ui.c | sort -u | wc -l
-     *     (= 20 distinct page objects)
+     *     (= 21 distinct page objects)
      *   sed -n '/^static void show_page/,/^    lv_obj_t \*show/p' \
      *       muse_interact_ui.c | grep -c "^    lv_obj_add_flag"
-     *     (= 20 hide lines in this list -- one add_flag per page object;
+     *     (= 21 hide lines in this list -- one add_flag per page object;
      *     the lv_obj_remove_flag below is the one show, not a hide, so
      *     it is not counted). */
     lv_obj_add_flag(s_fortune_sub_page, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(s_jiaobei_page, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(s_luckywheel_page, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(s_minigame_page, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(s_snake_page, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(s_whackamole_page, LV_OBJ_FLAG_HIDDEN);
@@ -412,6 +421,7 @@ static void show_page(int page)
     if (page == IC_PAGE_FORTUNE) show = s_fortune_page;
     if (page == IC_PAGE_FORTUNE_SUB) show = s_fortune_sub_page;
     if (page == IC_PAGE_JIAOBEI) show = s_jiaobei_page;
+    if (page == IC_PAGE_LUCKYWHEEL) show = s_luckywheel_page;
     if (page == IC_PAGE_MINIGAME) show = s_minigame_page;
     if (page == IC_PAGE_SNAKE) show = s_snake_page;
     if (page == IC_PAGE_WHACKAMOLE) show = s_whackamole_page;
@@ -466,7 +476,8 @@ static void on_back(lv_event_t *e)
      * mathpractice, wordcards, quiz) land on the 学习 page; feed is a main-page
      * card, so it still lands on the main page. Fortune is one level
      * deeper since 2026-11-14 (mockup v13): the draw page lands on
-     * the fortune subpage, the jiaobei board lands there too, and the
+     * the fortune subpage, the jiaobei board lands there too, the
+     * luckywheel board lands there too (2026-11-20), and the
      * subpage itself lands on the main page. The 描红 trace page is
      * one level deeper the same way: it lands on the character list,
      * which lands on the 学习 page. Leaving a game page
@@ -479,6 +490,9 @@ static void on_back(lv_event_t *e)
      * return-visit rules. */
     if (s_page == IC_PAGE_JIAOBEI) {
         muse_jiaobei_ui_hide();
+    }
+    if (s_page == IC_PAGE_LUCKYWHEEL) {
+        muse_luckywheel_ui_hide();
     }
     if (s_page == IC_PAGE_SNAKE) {
         muse_snake_ui_hide();
@@ -520,10 +534,11 @@ static void on_back(lv_event_t *e)
         /* One level deeper than the other learning items: back to
          * the character list, not the 学习 page. */
         show_page(IC_PAGE_TRACING_LIST);
-    } else if (s_page == IC_PAGE_FORTUNE || s_page == IC_PAGE_JIAOBEI) {
+    } else if (s_page == IC_PAGE_FORTUNE || s_page == IC_PAGE_JIAOBEI ||
+               s_page == IC_PAGE_LUCKYWHEEL) {
         /* Fortune is one level deeper since 2026-11-14 (mockup v13):
-         * the draw page and the jiaobei board both land on the
-         * fortune subpage, not on the main page. */
+         * the draw page, the jiaobei board and the luckywheel board
+         * all land on the fortune subpage, not on the main page. */
         show_page(IC_PAGE_FORTUNE_SUB);
     } else if (s_page == IC_PAGE_GAME ||
                s_page == IC_PAGE_SNAKE || s_page == IC_PAGE_WHACKAMOLE ||
@@ -1328,6 +1343,24 @@ static void drain_feedback(void)
                 write_pet_caption("互动数据损坏");
             }
             break;
+        case PET_LUCKYWHEEL_SPIN:
+            /* Same shape as PET_JIAOBEI_TOSS: the wheel page words its
+             * own refusals (fee_refused writes the prompt row,
+             * limit_reached pops the toast); PET_OK needs nothing --
+             * the wheel already spins on the request. The face caption
+             * only covers the poor case; the cap case needs none, the
+             * toast itself is the feedback. A refused free re-spin is
+             * banked again by the page, so the "再来一次" is not lost. */
+            if (fb.result == PET_POOR) {
+                muse_luckywheel_ui_fee_refused();
+                write_pet_caption("金币不够，先摸摸 / 喂饭 / 抽运势");
+            } else if (fb.result == PET_CAP) {
+                muse_luckywheel_ui_limit_reached();
+            } else if (fb.result == PET_STORAGE) {
+                muse_luckywheel_ui_storage_error();
+                write_pet_caption("互动数据损坏");
+            }
+            break;
         case PET_FORTUNE:
             /* Any PET_FORTUNE feedback ends the pending state, even a
              * refusal: the card is day-aware now, so a stale "抽取中..."
@@ -1502,6 +1535,13 @@ static void on_open_jiaobei(lv_event_t *e)
     (void)e;
     show_page(IC_PAGE_JIAOBEI);
     muse_jiaobei_ui_show();
+}
+
+static void on_open_luckywheel(lv_event_t *e)
+{
+    (void)e;
+    show_page(IC_PAGE_LUCKYWHEEL);
+    muse_luckywheel_ui_show();
 }
 
 static void on_open_snake(lv_event_t *e)
@@ -2203,17 +2243,20 @@ static void build_game(void)
     lv_obj_align(s_game_hint_lbl, LV_ALIGN_TOP_MID, 0, 84);
 }
 
-/* One card of the fortune subpage (mockup v13, 2026-11-14): the learn
- * page's card-column pattern -- a 100x128 column holding a 100x100
- * card (icon 80 px, centred) and the name 8 px below it, so the name
- * sits at y = 228 when the column starts at y = 120. The difference
- * from the learn cards is the icon: these are RGB565A8 colour pictures
- * (the 135editor qiantong, the red/flat jiaobei pair), stored at the
- * 80 px display size, so they are drawn with no recolour and no scale
- * -- an A8 mask could not carry their colours. Plain RGB565 was NOT
- * used: both icons rely on per-pixel alpha, which RGB565 would paint
- * black (size-trim 2026-11-20). The image is not
- * clickable: the card takes the click. */
+/* One card of the fortune subpage (mockup v13, 2026-11-14; three cards
+ * since the lucky wheel, v8, 2026-11-20): the learn page's card-column
+ * pattern -- a 100x128 column holding a 100x100 card (icon 64 px,
+ * centred) and the name 8 px below it, so the name sits at y = 228
+ * when the column starts at y = 120. The difference from the learn
+ * cards is the icon: these are colour pictures (the 135editor qiantong,
+ * the red/flat jiaobei pair, the wheel itself), drawn at 64 px. The
+ * qiantong / jiaobei pictures are RGB565A8 stored at 80 px (size-trim
+ * 2026-11-20: 2 x 80x80x3 = 38.4 KB, per-pixel alpha kept -- plain
+ * RGB565 would paint their transparent corners black), so they scale
+ * down (204/256); the wheel card icon is ARGB8888 stored at 64 px and
+ * drawn at its native size. No recolour either way: an A8 mask could
+ * not carry their colours. The image is not clickable: the card takes
+ * the click. */
 static void fortune_sub_card(lv_obj_t *parent, int x, int slot, const char *name,
                              lv_event_cb_t cb)
 {
@@ -2229,7 +2272,12 @@ static void fortune_sub_card(lv_obj_t *parent, int x, int slot, const char *name
     lv_obj_t *card = muse_card(item, IC_FEED_CARD, IC_FEED_CARD, IC_RADIUS);
     lv_obj_t *img = lv_image_create(card);
     lv_image_set_src(img, MUSE_FORTUNE_ART[slot]);
-    lv_obj_set_size(img, IC_FEED_ICON, IC_FEED_ICON);
+    lv_obj_set_size(img, MUSE_FORTUNE_ART_DISPLAY_PX,
+                    MUSE_FORTUNE_ART_DISPLAY_PX);
+    if (slot != MUSE_FORTUNE_LUCKYWHEEL) {
+        /* Stored at 80 px, drawn at 64 px (v8). */
+        lv_image_set_scale(img, IC_FORTUNE_ICON_SCALE);
+    }
     lv_obj_center(img);
     lv_obj_remove_flag(img, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(card, cb, LV_EVENT_CLICKED, NULL);
@@ -2240,20 +2288,22 @@ static void build_fortune_sub(void)
 {
     page_header(s_fortune_sub_page, "今日运势", on_back);
     /* Same layout as the learn page (mockup v13): the motto takes the
-     * feed rule line's slot (y = 84, DIM), two cards sit in a row at
+     * feed rule line's slot (y = 84, DIM), three cards sit in a row at
      * y = 120, and the coin line ends the page at y = 302 (TEXT, live
      * via refresh_status, same as the feed and fortune pages). The
      * motto is "仅供娱乐" -- the v12 slot was left empty, the v13
-     * mockup fills it. The cards are centred as a pair (x = 76/184):
-     * 100 px each with an 8 px gap, the pair's centre on the screen's
-     * centreline. */
+     * mockup fills it. The cards are centred as a trio (x = 22/130/
+     * 238): 100 px each with an 8 px gap, the trio's centre on the
+     * screen's centreline. */
     lv_obj_t *motto = label(s_fortune_sub_page, muse_font_cjk(), MUSE_THEME_DIM,
                             "仅供娱乐");
     lv_obj_align(motto, LV_ALIGN_TOP_MID, 0, 84);
-    fortune_sub_card(s_fortune_sub_page, 76, MUSE_FORTUNE_QIAN, "抽签",
+    fortune_sub_card(s_fortune_sub_page, 22, MUSE_FORTUNE_QIAN, "抽签",
                      on_fortune_open);
-    fortune_sub_card(s_fortune_sub_page, 184, MUSE_FORTUNE_JIAOBEI, "掷筊",
+    fortune_sub_card(s_fortune_sub_page, 130, MUSE_FORTUNE_JIAOBEI, "掷筊",
                      on_open_jiaobei);
+    fortune_sub_card(s_fortune_sub_page, 238, MUSE_FORTUNE_LUCKYWHEEL, "幸运转盘",
+                     on_open_luckywheel);
     /* Coin line: the page's last row, same slot as the other pages'
      * (y = 302), so every interaction page ends the same way
      * (2026-11-01, user request "统一页面内容"). A live status, not a
@@ -2354,6 +2404,7 @@ void muse_interact_ui_build(lv_obj_t *tile)
     s_fortune_page = page_group(tile);
     s_fortune_sub_page = page_group(tile);
     s_jiaobei_page = page_group(tile);
+    s_luckywheel_page = page_group(tile);
     s_minigame_page = page_group(tile);
     s_snake_page = page_group(tile);
     s_whackamole_page = page_group(tile);
@@ -2376,6 +2427,7 @@ void muse_interact_ui_build(lv_obj_t *tile)
     build_minigame();
     build_learn();
     muse_jiaobei_ui_build(s_jiaobei_page, on_back);
+    muse_luckywheel_ui_build(s_luckywheel_page, on_back);
     muse_snake_ui_build(s_snake_page, on_back);
     muse_whackamole_ui_build(s_whackamole_page, on_back);
     muse_goldrain_ui_build(s_goldrain_page, on_back);
@@ -2421,6 +2473,7 @@ void muse_interact_ui_on_hidden(void)
     muse_quiz_ui_hide();
     muse_jiaobei_ui_hide();
     muse_tracing_ui_hide();
+    muse_luckywheel_ui_hide();
     show_page(IC_PAGE_MAIN);
 }
 

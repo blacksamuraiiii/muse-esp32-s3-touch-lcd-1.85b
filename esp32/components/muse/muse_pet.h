@@ -83,6 +83,21 @@ bool muse_pet_request_jiaobei_toss(int32_t result);
 bool muse_pet_request_tracing_solve(int char_idx);
 
 /*
+ * Settle one lucky wheel spin with its already-decided result: `result`
+ * is 1 = thanks, 2 = +2, 3 = +5, 4 = +10, 5 = again (the
+ * MUSE_PET_LUCKY_* codes, same numbering as
+ * muse_luckywheel_result_t). `free` marks a re-spin won by landing on
+ * "再来一次": no fee, no daily count. The worker charges the 2 coins
+ * and counts the spin, and pays the prize in the same action, so a
+ * refused spin (PET_POOR / PET_CAP) pays nothing. The UI decides the
+ * result at tap time and passes it here; anything outside 1..5 is a
+ * bare spin (charged and counted, no prize paid), like the console's
+ * muse_pet_request(PET_LUCKYWHEEL_SPIN). Returns false when the worker
+ * is not ready or its queue is full.
+ */
+bool muse_pet_request_luckywheel_spin(int32_t result, bool free);
+
+/*
  * Test only (console `>pet.coins=N`): set the wallet outright, no decay,
  * clamped to 0..MUSE_PET_COINS_MAX. The balance is the one thing about the
  * model that only ever moves through play, so a tester who needs an exact

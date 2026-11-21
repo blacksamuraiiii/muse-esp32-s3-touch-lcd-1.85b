@@ -45,7 +45,7 @@
 #endif
 
 /* Struct layout version. Bump this whenever the layout below changes. */
-#define MUSE_PET_VERSION 7u
+#define MUSE_PET_VERSION 8u
 
 /* Economy constants (design §4). All amounts are whole coins. */
 #define MUSE_PET_COINS_MAX 100u        /* wallet cap: excess is discarded */
@@ -87,6 +87,23 @@
  * than 9 tosses in a day, and that blob must still load on Release
  * (2026-11-17, B2). */
 #define MUSE_PET_JIAOBEI_LEDGER_MAX 999999u
+#define MUSE_PET_LUCKYWHEEL_COST 2u     /* one lucky wheel spin
+                                        * (PET_LUCKYWHEEL_SPIN; user
+                                        * decision 2026-11-20) */
+/* Spins per day. Same Test/Release split as 掷圣杯: the Test build has
+ * no cap, Release keeps 9. The host harnesses build without sdkconfig,
+ * so they always see the Release number and keep testing the cap. */
+#if defined(CONFIG_MUSE_BUILD_TEST) && CONFIG_MUSE_BUILD_TEST
+#define MUSE_PET_LUCKYWHEEL_DAILY_MAX 999999u /* effectively unlimited */
+#else
+#define MUSE_PET_LUCKYWHEEL_DAILY_MAX 9u      /* spins per day (user decision
+                                            * 2026-11-20); the 10th is
+                                            * PET_CAP */
+#endif
+/* Structural upper bound for the lucky wheel ledger
+ * (luckywheel_count), used by muse_pet_model_valid() only -- same
+ * reasoning as MUSE_PET_JIAOBEI_LEDGER_MAX (B2). */
+#define MUSE_PET_LUCKYWHEEL_LEDGER_MAX 999999u
 #define MUSE_PET_DECAY_PER_DAY 20u     /* living cost, per calendar day */
 #define MUSE_PET_FORTUNES 20u          /* fortune cards in muse_pet_text.c */
 
@@ -194,6 +211,8 @@ typedef struct {
     uint32_t tracing_mask;       /* bits 0..9: that character already
                                   * paid today (same index as
                                   * MUSE_TRACING_TABLE) */
+    int32_t luckywheel_day;      /* day of the 幸运大转盘 ledger, -1 = none */
+    uint32_t luckywheel_count;   /* paid spins settled today, 0..9 */
 } muse_pet_model_t;
 
 /* Result codes carried in `arg` by PET_JIAOBEI_TOSS (same numbering as
@@ -204,6 +223,20 @@ typedef struct {
 #define MUSE_PET_JIAOBEI_SHENG 1
 #define MUSE_PET_JIAOBEI_XIAO 2
 #define MUSE_PET_JIAOBEI_YIN 3
+
+/* Result codes carried in `arg` by PET_LUCKYWHEEL_SPIN (same numbering
+ * as muse_luckywheel_result_t -- the model does not include that header,
+ * so the numbers are pinned here). The low byte is the result; the
+ * MUSE_PET_LUCKY_FREE bit marks a free re-spin (won by landing on
+ * "再来一次"): no fee, no daily count. 0 means "no result" (a bare
+ * request, e.g. from the console): the spin is charged and counted,
+ * but no prize is paid. */
+#define MUSE_PET_LUCKY_FREE 0x100
+#define MUSE_PET_LUCKY_THANKS 1
+#define MUSE_PET_LUCKY_COINS_2 2
+#define MUSE_PET_LUCKY_COINS_5 3
+#define MUSE_PET_LUCKY_COINS_10 4
+#define MUSE_PET_LUCKY_AGAIN 5
 
 /* Actions. PET_FEED_* settle identically; see the header note above.
  * PET_DECAY_ACK and PET_RESET are internal only: never sent by UI buttons.
@@ -248,6 +281,19 @@ typedef struct {
  * records nothing: the streak only moves for tosses that settled, and
  * a bare request (arg 0) charges and counts the toss without recording
  * a result. The toss itself is pure consumption with no payout.
+ * PET_LUCKYWHEEL_SPIN settles one lucky wheel spin (user decision
+ * 2026-11-20): MUSE_PET_LUCKYWHEEL_COST coins (2), at most 9 paid
+ * spins a day (MUSE_PET_LUCKYWHEEL_DAILY_MAX). The 10th paid spin of
+ * the day returns PET_CAP and settles nothing; under
+ * MUSE_PET_LUCKYWHEEL_COST it returns PET_POOR. The result rides in
+ * `arg` (MUSE_PET_LUCKY_*): +2 / +5 / +10 pay that many coins through
+ * capped_add (never above the 100-coin wallet), THANKS and AGAIN pay
+ * nothing, and the MUSE_PET_LUCKY_FREE bit marks a free re-spin won
+ * by landing on "再来一次" -- no fee, no daily count, so it can
+ * never hit PET_CAP or PET_POOR. A refused spin records nothing; a
+ * bare request (arg 0) charges and counts the spin without paying a
+ * prize. The prize is always within the 20-coin round ceiling, so no
+ * extra clamp is needed.
  * PET_PLAY_REWARD settles a finished score-based round: arg is the coin
  * amount the UI converted with muse_pet_round_coins(), clamped here to
  * 0..MUSE_PET_ROUND_COIN_HARD_MAX (the wallet, 100 since 2026-11-17, was
@@ -281,6 +327,7 @@ typedef enum {
     PET_PLAY_REWARD,
     PET_JIAOBEI_TOSS,
     PET_TRACING_SOLVE,
+    PET_LUCKYWHEEL_SPIN,
     /* Test only, console `>pet.coins=N`: set the wallet outright. Not
      * reachable from the UI, and the console command is Test-gated like
      * the other mutating pet.* ones. Bypasses decay like PET_RESET. */
@@ -393,6 +440,17 @@ void muse_pet_jiaobei_result_today(const muse_pet_model_t *s, int64_t now,
  */
 void muse_pet_tracing_today(const muse_pet_model_t *s, int64_t now,
                            uint32_t *paid_mask);
+
+/*
+ * Today's 幸运大转盘 ledger, as a UI can read it without duplicating
+ * the day rule: *remaining is how many paid spins are left today
+ * (MUSE_PET_LUCKYWHEEL_DAILY_MAX minus today's settled count, or the
+ * full 9 when no spin has been settled today). Free re-spins do not
+ * count against it. Derived from the snapshot; nothing is written.
+ * The pointer may be NULL.
+ */
+void muse_pet_luckywheel_today(const muse_pet_model_t *s, int64_t now,
+                               uint32_t *remaining);
 
 /* Settle one calendar day's living cost into `s` (idempotent for a given day).
  * No-op when uncalibrated, and never moves decay_day backwards on rollback. */
