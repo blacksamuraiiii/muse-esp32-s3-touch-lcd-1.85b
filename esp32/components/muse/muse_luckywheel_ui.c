@@ -72,6 +72,7 @@ static lv_obj_t *s_page;
 static lv_obj_t *s_back;
 static lv_obj_t *s_title;
 static lv_obj_t *s_wheel;
+static lv_obj_t *s_wheel_box; /* round clip box around the disc */
 static lv_obj_t *s_pointer;
 static lv_obj_t *s_overlay; /* transparent full-page layer, START + RESULT */
 static lv_obj_t *s_dim;     /* 50% black child of the overlay, RESULT only */
@@ -160,6 +161,12 @@ static void show_start(void)
     lv_obj_remove_flag(s_overlay, LV_OBJ_FLAG_HIDDEN);
     lv_label_set_text(s_btn_line1, "开始");
     lv_label_set_text(s_btn_line2, "");
+    /* One line only on the START card, so centre it in the button. The
+     * two-line layout (top +8 / bottom -8) belongs to the result cards,
+     * where the fee line sits under the title (user report 2026-11-21:
+     * "开始" sat high in the button). */
+    lv_obj_align(s_btn_line1, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_add_flag(s_btn_line2, LV_OBJ_FLAG_HIDDEN);
     lv_obj_remove_flag(s_btn, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(s_hud, LV_OBJ_FLAG_HIDDEN);
     refresh_hint();
@@ -172,6 +179,10 @@ static void show_result(void)
     lv_label_set_text(s_title, "游戏结束");
     lv_obj_remove_flag(s_dim, LV_OBJ_FLAG_HIDDEN);
     lv_obj_remove_flag(s_overlay, LV_OBJ_FLAG_HIDDEN);
+    /* Back to the two-line layout: the title line on top, the fee or
+     * prize line under it. */
+    lv_obj_align(s_btn_line1, LV_ALIGN_TOP_MID, 0, 8);
+    lv_obj_remove_flag(s_btn_line2, LV_OBJ_FLAG_HIDDEN);
     lv_obj_remove_flag(s_btn, LV_OBJ_FLAG_HIDDEN);
     lv_obj_remove_flag(s_hud, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(s_hint, LV_OBJ_FLAG_HIDDEN);
@@ -321,14 +332,28 @@ void muse_luckywheel_ui_build(lv_obj_t *parent, lv_event_cb_t back_cb)
     s_back = muse_back_button(s_page, back_cb);
     s_title = muse_page_title(s_page, "幸运转盘", LW_TITLE_Y);
 
-    /* The disc: one RGB565 image, pivot at its centre. The corners
-     * outside the disc are black, the same as the page, so no alpha
-     * channel is needed. */
-    s_wheel = lv_image_create(s_page);
+    /* The disc: one RGB565 image, pivot at its centre, inside a round
+     * clip box. The corners outside the disc are opaque black, and a
+     * spinning 240 px square sweeps a 340 px circle -- it painted over
+     * the purple title while turning (user report 2026-11-21). LVGL's
+     * clip_corner only clips an object's CHILDREN, so the image is a
+     * child of a circle-radius box: the sweep is cut at the rim and the
+     * title stays clean. */
+    s_wheel_box = lv_obj_create(s_page);
+    lv_obj_remove_style_all(s_wheel_box);
+    lv_obj_set_size(s_wheel_box, MUSE_LUCKYWHEEL_ART_WHEEL_PX,
+                    MUSE_LUCKYWHEEL_ART_WHEEL_PX);
+    lv_obj_set_pos(s_wheel_box, LW_WHEEL_X, LW_WHEEL_Y);
+    lv_obj_set_style_radius(s_wheel_box, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_clip_corner(s_wheel_box, true, 0);
+    lv_obj_remove_flag(s_wheel_box, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_remove_flag(s_wheel_box, LV_OBJ_FLAG_CLICKABLE);
+
+    s_wheel = lv_image_create(s_wheel_box);
     lv_image_set_src(s_wheel, &muse_luckywheel_art_wheel);
     lv_obj_set_size(s_wheel, MUSE_LUCKYWHEEL_ART_WHEEL_PX,
                     MUSE_LUCKYWHEEL_ART_WHEEL_PX);
-    lv_obj_set_pos(s_wheel, LW_WHEEL_X, LW_WHEEL_Y);
+    lv_obj_set_pos(s_wheel, 0, 0);
     lv_image_set_pivot(s_wheel, MUSE_LUCKYWHEEL_ART_WHEEL_PX / 2,
                        MUSE_LUCKYWHEEL_ART_WHEEL_PX / 2);
     lv_image_set_rotation(s_wheel, 0);
@@ -355,6 +380,12 @@ void muse_luckywheel_ui_build(lv_obj_t *parent, lv_event_cb_t back_cb)
     lv_obj_set_style_radius(s_overlay, 0, 0);
     lv_obj_set_style_pad_all(s_overlay, 0, 0);
     lv_obj_remove_flag(s_overlay, LV_OBJ_FLAG_SCROLLABLE);
+    /* Transparent and NOT clickable: it is a drawing layer only. While
+     * it was clickable this full-page box swallowed every tap, so "<"
+     * (created before it) never fired -- the back arrow did nothing
+     * (user report 2026-11-21). The centre button below is a child of
+     * it and keeps its own clickable flag. */
+    lv_obj_remove_flag(s_overlay, LV_OBJ_FLAG_CLICKABLE);
 
     s_dim = lv_obj_create(s_overlay);
     lv_obj_set_size(s_dim, 360, 360);
@@ -364,6 +395,9 @@ void muse_luckywheel_ui_build(lv_obj_t *parent, lv_event_cb_t back_cb)
     lv_obj_set_style_border_width(s_dim, 0, 0);
     lv_obj_set_style_radius(s_dim, 0, 0);
     lv_obj_remove_flag(s_dim, LV_OBJ_FLAG_SCROLLABLE);
+    /* The dim is a look only: a clickable full-page child would swallow
+     * the taps that belong to the button and to "<". */
+    lv_obj_remove_flag(s_dim, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_flag(s_dim, LV_OBJ_FLAG_HIDDEN);
 
     /* Centre button, snake geometry: 98x66 at (131,147), CARD fill,

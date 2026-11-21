@@ -97,6 +97,7 @@ static lv_obj_t *s_opt[MUSE_QUIZ_OPTIONS];
 static lv_obj_t *s_opt_img[MUSE_QUIZ_OPTIONS];
 static lv_obj_t *s_opt_zh[MUSE_QUIZ_OPTIONS];
 static lv_obj_t *s_over_ov;
+static lv_obj_t *s_start_ov; /* 开始 card, START only */
 static lv_obj_t *s_back;
 static lv_obj_t *s_name;
 static lv_obj_t *s_hud;
@@ -228,7 +229,10 @@ static void refresh_display(void)
     }
     /* HUD: score + time while playing, gross payout at OVER. */
     char hud_buf[48];
-    if (s_game.phase == MUSE_QUIZ_OVER) {
+    if (s_game.phase == MUSE_QUIZ_START) {
+        /* Nothing to count yet: the START card owns the screen. */
+        hud_buf[0] = '\0';
+    } else if (s_game.phase == MUSE_QUIZ_OVER) {
         snprintf(hud_buf, sizeof(hud_buf), "本局 %u 分，+%u 金币",
                  (unsigned)s_game.score, (unsigned)s_round_coins);
         lv_obj_set_style_text_color(s_hud, lv_color_hex(MUSE_THEME_GOLD),
@@ -245,11 +249,19 @@ static void refresh_display(void)
      * OX page's result-title idiom does not apply here -- the result
      * lives in the HUD line, and the OVER card carries no title). */
     set_label(s_name, "英语口语");
-    /* Overlays: only the OVER card exists. */
+    /* Overlays: the START card while a round has not begun, the OVER
+     * card once it ends (user request 2026-11-21: entering 英语口语 used
+     * to start a round and speak at once -- the page now waits for a
+     * tap, like the lucky wheel). */
     if (s_game.phase == MUSE_QUIZ_OVER) {
         lv_obj_remove_flag(s_over_ov, LV_OBJ_FLAG_HIDDEN);
     } else {
         lv_obj_add_flag(s_over_ov, LV_OBJ_FLAG_HIDDEN);
+    }
+    if (s_start_ov != NULL && s_game.phase == MUSE_QUIZ_START) {
+        lv_obj_remove_flag(s_start_ov, LV_OBJ_FLAG_HIDDEN);
+    } else if (s_start_ov != NULL) {
+        lv_obj_add_flag(s_start_ov, LV_OBJ_FLAG_HIDDEN);
     }
     /* The speaker and the option cards only take input while playing. */
     bool playing = (s_game.phase == MUSE_QUIZ_PLAYING);
@@ -413,6 +425,19 @@ static void on_restart(lv_event_t *e)
     begin_game(true);
 }
 
+/* The START card's button: begin the first round. Nothing else on the
+ * page starts a round now, so entering 英语口语 no longer speaks a word
+ * and starts the clock by itself (user request 2026-11-21). */
+static void on_start(lv_event_t *e)
+{
+    (void)e;
+    if (s_game.phase != MUSE_QUIZ_START) {
+        return;
+    }
+    begin_game(false);
+    refresh_display();
+}
+
 /* --- page construction -------------------------------------------- */
 
 static lv_obj_t *overlay(lv_obj_t *page)
@@ -499,6 +524,15 @@ void muse_quiz_ui_build(lv_obj_t *page, lv_event_cb_t back_cb)
         s_opt_zh[i] = zh;
     }
 
+    /* START overlay: dim + 开始 only. Created before the OVER card so
+     * the two are independent siblings; they never show together. */
+    s_start_ov = overlay(page);
+    lv_obj_t *start_btn = centre_btn(s_start_ov, 131, 147);
+    lv_obj_t *start_lb = label(start_btn, muse_font_cjk(), MUSE_THEME_TEXT);
+    lv_label_set_text(start_lb, "开始");
+    lv_obj_center(start_lb);
+    lv_obj_add_event_cb(start_btn, on_start, LV_EVENT_CLICKED, NULL);
+
     /* OVER overlay: dim + 再来一局 button only (UI polish 2026-11-01).
      * No price line under it -- this game is free. The result title
      * lives in the HUD line, above the dim, so the overlay itself
@@ -537,7 +571,9 @@ void muse_quiz_ui_build(lv_obj_t *page, lv_event_cb_t back_cb)
 void muse_quiz_ui_show(void)
 {
     if (s_game.phase == MUSE_QUIZ_START) {
-        begin_game(false);
+        /* Wait on the 开始 card: no auto-start, no first word spoken on
+         * entering the page (user request 2026-11-21). */
+        refresh_display();
         return;
     }
     if (s_game.phase == MUSE_QUIZ_PLAYING) {

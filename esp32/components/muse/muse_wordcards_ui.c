@@ -13,7 +13,7 @@
  * the set icon (80 px, first word's picture recoloured with its own
  * colour) in the card, the set title split into two lines under it
  * (Chinese Noto 16, English Montserrat 14), no count text -- and
- * the hint "限时免费" pinned at y=84, the coin line at y=302 like
+ * the greeting line ("Good Morning") pinned at y=84, the coin line at y=302 like
  * every other interaction page. The first three cards sit centred;
  * the fourth shows a sliver at the right edge, inviting a swipe.
  * (v5's four fixed 80x80 cards in one row were drawn and then
@@ -57,6 +57,9 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <string.h>
+#include <time.h>
+
+#include "muse_rtc.h" /* the sets page's greeting reads the wall clock */
 
 #include "esp_log.h"
 
@@ -142,6 +145,8 @@ static muse_wordcards_open_set_cb_t s_open_set_cb;
  * refresh_status() through muse_wordcards_ui_set_coins() (display
  * only: the game stays free). */
 static lv_obj_t *s_sets_coins;
+static lv_obj_t *s_sets_greeting; /* "Good Morning" slot, y = 84 */
+static lv_timer_t *s_greet_timer;
 
 /* Category-page geometry (mockup v6, user decision 2026-11-17): the
  * feed page's horizontal strip, not a fixed row -- four 100x100
@@ -560,6 +565,38 @@ static void on_wordcards_sets_strip_scroll_end(lv_event_t *e)
     lv_obj_scroll_to_x(strip, lv_obj_get_scroll_x(strip), LV_ANIM_ON);
 }
 
+/* The sets page's top slot says hello by the clock instead of the old
+ * "限时免费" (user request 2026-11-21): < 12 = Good Morning, < 18 = Good
+ * Afternoon, else Good Evening. The local hour comes from the same RTC
+ * clock the rest of the UI reads (localtime_r honours
+ * CONFIG_MUSE_TIMEZONE); with no valid clock it stays on Morning rather
+ * than print something wrong. The 60 s timer keeps it right while the
+ * page sits open across noon or 18:00. */
+static void refresh_greeting(void)
+{
+    if (s_sets_greeting == NULL) {
+        return;
+    }
+    int hour = 9;
+    time_t now = 0;
+    if (muse_rtc_now(&now)) {
+        struct tm lt;
+        if (localtime_r(&now, &lt) != NULL) {
+            hour = lt.tm_hour;
+        }
+    }
+    const char *text = hour < 12 ? "Good Morning"
+                       : hour < 18 ? "Good Afternoon"
+                                   : "Good Evening";
+    set_label(s_sets_greeting, text);
+}
+
+static void on_greet_tick(lv_timer_t *timer)
+{
+    (void)timer;
+    refresh_greeting();
+}
+
 void muse_wordcards_ui_build_sets(lv_obj_t *page, lv_event_cb_t back_cb,
                                   muse_wordcards_open_set_cb_t open_cb)
 {
@@ -572,9 +609,12 @@ void muse_wordcards_ui_build_sets(lv_obj_t *page, lv_event_cb_t back_cb,
      * ("限时免费"), because the third row took its old y=232 slot --
      * with the cards in one row there is no column to scroll, so it
      * is pinned here. */
-    lv_obj_t *hint = label(page, muse_font_cjk(), MUSE_THEME_DIM);
-    lv_label_set_text(hint, "限时免费");
-    lv_obj_align(hint, LV_ALIGN_TOP_MID, 0, 84);
+    s_sets_greeting = label(page, muse_font_cjk(), MUSE_THEME_DIM);
+    refresh_greeting();
+    lv_obj_align(s_sets_greeting, LV_ALIGN_TOP_MID, 0, 84);
+    if (s_greet_timer == NULL) {
+        s_greet_timer = lv_timer_create(on_greet_tick, 60000, NULL);
+    }
     /* Horizontal strip, the feed page's idiom (mockup v6): one row
      * with all four sets, swipe left/right to choose. A single
      * horizontal scroller (flex row, snap per card, scrollbar off)

@@ -12,6 +12,22 @@
 #if CONFIG_MUSE_CJK_FONT
 LV_FONT_DECLARE(muse_font_cjk_noto_16)
 LV_FONT_DECLARE(muse_font_sym_16)
+LV_FONT_DECLARE(muse_font_pinyin_16)
+
+/* End of the chain: the tone-marked vowels (ā á ǎ à, ǐ, ǒ, ǔ, ǖ ...).
+ * They live in Latin Extended-A, which the Noto face does not carry and
+ * the DejaVu symbol cut does not either -- without this link the 语文练习
+ * pinyin lines printed "tian" and "shui" with the vowel missing
+ * (2026-11-21). 28 glyphs, 13.7 KB, see tools/muse/gen_pinyin_font.sh. */
+static const lv_font_t *pinyin_face(void)
+{
+    static lv_font_t font;
+    if (!font.get_glyph_dsc) {
+        font = muse_font_pinyin_16;
+        font.fallback = NULL;
+    }
+    return &font;
+}
 
 /* Last link: the symbol tail the Noto face lacks. Noto covers CJK +
  * fullwidth + ASCII + Latin-1 (since the 2026-11-06 unification), so
@@ -30,7 +46,7 @@ static const lv_font_t *icon_face(void)
     static lv_font_t font;
     if (!font.get_glyph_dsc) {
         font = lv_font_montserrat_16;
-        font.fallback = NULL;
+        font.fallback = pinyin_face();
     }
     return &font;
 }

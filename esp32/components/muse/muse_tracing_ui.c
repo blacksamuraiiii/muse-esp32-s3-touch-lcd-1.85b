@@ -70,19 +70,22 @@ LV_FONT_DECLARE(muse_font_tracing_48_v1);
 #define TRACING_FONT_SCALE 2720
 #endif
 
-/* List page geometry (mockup v1). */
-#define TRACING_LIST_HINT_Y 84
-#define TRACING_LIST_CARD 104
-#define TRACING_LIST_GAP 8
-#define TRACING_LIST_PAGE_W (2 * TRACING_LIST_CARD + TRACING_LIST_GAP)
-#define TRACING_LIST_PAGE_PITCH (TRACING_LIST_PAGE_W + TRACING_LIST_GAP)
-#define TRACING_LIST_STRIP_Y 108
-#define TRACING_LIST_STRIP_H (2 * TRACING_LIST_CARD + TRACING_LIST_GAP)
-#define TRACING_LIST_PAD 72 /* (360 - 216) / 2: pages centred */
-#define TRACING_LIST_DOTS_Y 340
-#define TRACING_LIST_DOTS_PITCH 16
-#define TRACING_LIST_DOT_D 8
-#define TRACING_LIST_PAGES 3
+/* List page geometry (user decision 2026-11-21, second pass: the card
+ * holds the character only and the pinyin sits UNDER it, the 英语单词
+ * sets page's idiom, with the coin line at y = 302 below). One 1x10 row:
+ * ten 34 px cards with a 2 px gutter fill the width (10 x 34 + 9 x 2 =
+ * 358, x0 = 1), the row centred vertically at y = 126. The 48 px glyph
+ * face is drawn scaled to 28 px inside the card; the 16 px pinyin line
+ * is drawn scaled to 12 px under it, aligned out of the card's bottom
+ * edge so it is never clipped by the card. */
+#define TRACING_LIST_CARD_W 34
+#define TRACING_LIST_CARD_H 76
+#define TRACING_LIST_GAP 2
+#define TRACING_LIST_X0 1
+#define TRACING_LIST_Y0 126
+#define TRACING_LIST_COINS_Y 302
+#define TRACING_LIST_GLYPH_SCALE 149  /* 48 px face -> 28 px */
+#define TRACING_LIST_PINYIN_SCALE 192 /* 16 px face -> 12 px */
 
 /* Trace page geometry (mockup v1). */
 #define TRACING_GRID_X 66
@@ -115,9 +118,8 @@ LV_FONT_DECLARE(muse_font_tracing_48_v1);
 #define TRACING_UI_TICK_MS 50
 
 static lv_obj_t *s_list_page;
-static lv_obj_t *s_list_strip;
-static lv_obj_t *s_list_dots[TRACING_LIST_PAGES];
-static lv_obj_t *s_list_checks[MUSE_TRACING_CHARS];
+static lv_obj_t *s_list_glyphs[MUSE_TRACING_CHARS];
+static lv_obj_t *s_list_coins;
 static muse_tracing_open_char_cb_t s_open_cb;
 
 static lv_obj_t *s_trace_page;
@@ -351,28 +353,6 @@ static void on_card(lv_event_t *e)
     }
 }
 
-static void on_strip_scroll_end(lv_event_t *e)
-{
-    lv_obj_t *strip = lv_event_get_target(e);
-    /* Snap clamp (same as the word-cards category strip: the snap
-     * pass itself does not clamp, so re-issue the current position
-     * through scroll_to_x(), which pulls it back to the last
-     * reachable snap). */
-    lv_obj_scroll_to_x(strip, lv_obj_get_scroll_x(strip), LV_ANIM_ON);
-    int page = (lv_obj_get_scroll_x(strip) + TRACING_LIST_PAGE_PITCH / 2) /
-               TRACING_LIST_PAGE_PITCH;
-    if (page < 0) {
-        page = 0;
-    } else if (page >= TRACING_LIST_PAGES) {
-        page = TRACING_LIST_PAGES - 1;
-    }
-    for (int i = 0; i < TRACING_LIST_PAGES; i++) {
-        lv_obj_set_style_bg_color(
-            s_list_dots[i],
-            lv_color_hex(i == page ? MUSE_THEME_TEXT : MUSE_THEME_DIM), 0);
-    }
-}
-
 void muse_tracing_ui_build_list(lv_obj_t *page, lv_event_cb_t back_cb,
                                 muse_tracing_open_char_cb_t open_cb)
 {
@@ -380,88 +360,47 @@ void muse_tracing_ui_build_list(lv_obj_t *page, lv_event_cb_t back_cb,
     s_open_cb = open_cb;
     muse_back_button(page, back_cb);
     muse_page_title(page, "语文练习", 44);
-    lv_obj_t *hint = label(page, muse_font_cjk(), MUSE_THEME_DIM);
-    lv_label_set_text(hint, "点一个字，开始描红");
-    lv_obj_align(hint, LV_ALIGN_TOP_MID, 0, TRACING_LIST_HINT_Y);
-    /* Horizontal strip, the word-cards category idiom: one row of
-     * 2x2 pages, swipe left/right, snap per page, scrollbar off,
-     * hard edge while dragging. */
-    lv_obj_t *strip = lv_obj_create(page);
-    lv_obj_remove_style_all(strip);
-    lv_obj_set_size(strip, 360, TRACING_LIST_STRIP_H);
-    lv_obj_align(strip, LV_ALIGN_TOP_MID, 0, TRACING_LIST_STRIP_Y);
-    lv_obj_set_flex_flow(strip, LV_FLEX_FLOW_ROW);
-    lv_obj_set_flex_align(strip, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START,
-                          LV_FLEX_ALIGN_START);
-    lv_obj_set_style_pad_left(strip, TRACING_LIST_PAD, 0);
-    lv_obj_set_style_pad_right(strip, TRACING_LIST_PAD, 0);
-    lv_obj_set_style_pad_column(strip, TRACING_LIST_GAP, 0);
-    lv_obj_set_scroll_dir(strip, LV_DIR_HOR);
-    lv_obj_set_scrollbar_mode(strip, LV_SCROLLBAR_MODE_OFF);
-    lv_obj_set_scroll_snap_x(strip, LV_SCROLL_SNAP_START);
-    lv_obj_remove_flag(strip, LV_OBJ_FLAG_SCROLL_ELASTIC);
-    lv_obj_add_event_cb(strip, on_strip_scroll_end, LV_EVENT_SCROLL_END,
-                        NULL);
-    s_list_strip = strip;
-    for (int p = 0; p < TRACING_LIST_PAGES; p++) {
-        lv_obj_t *item = lv_obj_create(strip);
-        lv_obj_remove_style_all(item);
-        lv_obj_set_size(item, TRACING_LIST_PAGE_W, TRACING_LIST_STRIP_H);
-        lv_obj_remove_flag(item, LV_OBJ_FLAG_SCROLLABLE);
-        for (int slot = 0; slot < 4; slot++) {
-            int idx = p * 4 + slot;
-            if (idx >= (int)MUSE_TRACING_CHARS) {
-                break;
-            }
-            int x = (slot % 2) * (TRACING_LIST_CARD + TRACING_LIST_GAP);
-            int y = (slot / 2) * (TRACING_LIST_CARD + TRACING_LIST_GAP);
-            lv_obj_t *card = muse_card(item, TRACING_LIST_CARD,
-                                       TRACING_LIST_CARD, 14);
-            lv_obj_set_pos(card, x, y);
-            const muse_tracing_char_t *ch = &MUSE_TRACING_TABLE[idx];
-            /* The character, native 48 px (no scale): the list is
-             * the one place the face is drawn at its own size. */
-            lv_obj_t *glyph = label(card, TRACING_FONT, MUSE_THEME_TEXT);
-            lv_label_set_text(glyph, ch->utf8);
-            lv_obj_align(glyph, LV_ALIGN_CENTER, 0, -10);
-            lv_obj_remove_flag(glyph, LV_OBJ_FLAG_CLICKABLE);
-            /* Pinyin carries tone marks (tiān, shuǐ): Noto draws
-             * them, Montserrat has none, so this line must use the
-             * CJK face -- never the Montserrat the English names use. */
-            lv_obj_t *py = label(card, muse_font_cjk(), MUSE_THEME_DIM);
-            lv_label_set_text(py, ch->pinyin);
-            lv_obj_align(py, LV_ALIGN_BOTTOM_MID, 0, -10);
-            lv_obj_remove_flag(py, LV_OBJ_FLAG_CLICKABLE);
-            /* Green tick when this character already paid today
-             * (same ledger as the reward; refreshed by
-             * muse_tracing_ui_refresh_list()). */
-            lv_obj_t *tick = label(card, muse_font_cjk(), MUSE_THEME_OK);
-            lv_label_set_text(tick, "✓");
-            lv_obj_align(tick, LV_ALIGN_TOP_RIGHT, -6, 4);
-            lv_obj_remove_flag(tick, LV_OBJ_FLAG_CLICKABLE);
-            lv_obj_add_flag(tick, LV_OBJ_FLAG_HIDDEN);
-            s_list_checks[idx] = tick;
-            lv_obj_add_event_cb(card, on_card, LV_EVENT_CLICKED,
-                                (void *)(intptr_t)idx);
-        }
+    /* One row of ten (user decision 2026-11-21): the same single-row
+     * idiom as 英语口语. Reading order is the table order,
+     * 天 地 人 日 月 山 川 木 水 火. */
+    for (int idx = 0; idx < (int)MUSE_TRACING_CHARS; idx++) {
+        int x = TRACING_LIST_X0 + idx * (TRACING_LIST_CARD_W + TRACING_LIST_GAP);
+        lv_obj_t *card = muse_card(page, TRACING_LIST_CARD_W,
+                                   TRACING_LIST_CARD_H, 10);
+        lv_obj_set_pos(card, x, TRACING_LIST_Y0);
+        const muse_tracing_char_t *ch = &MUSE_TRACING_TABLE[idx];
+        /* The card holds the character only. The 48 px face is scaled to
+         * 28 px: at native size the glyph is wider than the card. Pivot
+         * in percent (LV_PCT) -- a bare 50 means 50 px, which is what
+         * threw the trace-page ghost out of the 田字格. */
+        lv_obj_t *glyph = label(card, TRACING_FONT, MUSE_THEME_TEXT);
+        lv_label_set_text(glyph, ch->utf8);
+        lv_obj_set_style_transform_scale(glyph, TRACING_LIST_GLYPH_SCALE, 0);
+        lv_obj_set_style_transform_pivot_x(glyph, LV_PCT(50), 0);
+        lv_obj_set_style_transform_pivot_y(glyph, LV_PCT(50), 0);
+        lv_obj_center(glyph);
+        lv_obj_remove_flag(glyph, LV_OBJ_FLAG_CLICKABLE);
+        s_list_glyphs[idx] = glyph;
+        /* Pinyin UNDER the card (the 英语单词 sets page's idiom), as a
+         * sibling aligned to the card's bottom edge so the card's round
+         * corners cannot clip it. Tone marks come from the Latin
+         * Extended-A tail in the CJK chain (muse_font.c). */
+        lv_obj_t *py = label(page, muse_font_cjk(), MUSE_THEME_DIM);
+        lv_label_set_text(py, ch->pinyin);
+        lv_obj_set_style_transform_scale(py, TRACING_LIST_PINYIN_SCALE, 0);
+        lv_obj_set_style_transform_pivot_x(py, LV_PCT(50), 0);
+        lv_obj_set_style_transform_pivot_y(py, LV_PCT(50), 0);
+        lv_obj_align_to(py, card, LV_ALIGN_OUT_BOTTOM_MID, 0, 6);
+        lv_obj_remove_flag(py, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_add_event_cb(card, on_card, LV_EVENT_CLICKED,
+                            (void *)(intptr_t)idx);
     }
-    /* One dot per page, y=340 (mockup v1). The list page has no coin
-     * line: the dots own the bottom slot, and the balance is one
-     * level up on the 学习 page. */
-    for (int i = 0; i < TRACING_LIST_PAGES; i++) {
-        lv_obj_t *dot = lv_obj_create(page);
-        lv_obj_remove_style_all(dot);
-        lv_obj_set_size(dot, TRACING_LIST_DOT_D, TRACING_LIST_DOT_D);
-        lv_obj_set_style_bg_color(
-            dot,
-            lv_color_hex(i == 0 ? MUSE_THEME_TEXT : MUSE_THEME_DIM), 0);
-        lv_obj_set_style_bg_opa(dot, LV_OPA_COVER, 0);
-        lv_obj_set_style_radius(dot, LV_RADIUS_CIRCLE, 0);
-        lv_obj_align(dot, LV_ALIGN_TOP_MID,
-                     (i - 1) * TRACING_LIST_DOTS_PITCH,
-                     TRACING_LIST_DOTS_Y);
-        s_list_dots[i] = dot;
-    }
+    /* Coin line, the 英语单词 sets page's slot (y = 302): the balance
+     * lives one level up on the 学习 page too, but the list reads better
+     * with it, and it costs one label. */
+    s_list_coins = label(page, muse_font_cjk(), MUSE_THEME_TEXT);
+    lv_label_set_text(s_list_coins, "金币 --/100");
+    lv_obj_align(s_list_coins, LV_ALIGN_TOP_MID, 0, TRACING_LIST_COINS_Y);
     muse_tracing_ui_refresh_list();
 }
 
@@ -472,18 +411,27 @@ void muse_tracing_ui_refresh_list(void)
     }
     muse_pet_model_t snap;
     uint32_t paid = 0;
-    if (muse_pet_snapshot(&snap)) {
+    bool have = muse_pet_snapshot(&snap);
+    if (have) {
         muse_pet_tracing_today(&snap, time(NULL), &paid);
     }
+    if (s_list_coins != NULL) {
+        char buf[32];
+        snprintf(buf, sizeof(buf), "金币 %u/100",
+                 (unsigned)(have ? snap.coins : 0));
+        lv_label_set_text(s_list_coins, buf);
+    }
     for (int i = 0; i < (int)MUSE_TRACING_CHARS; i++) {
-        if (!s_list_checks[i]) {
+        if (!s_list_glyphs[i]) {
             continue;
         }
-        if ((paid & (1u << (uint32_t)i)) != 0) {
-            lv_obj_clear_flag(s_list_checks[i], LV_OBJ_FLAG_HIDDEN);
-        } else {
-            lv_obj_add_flag(s_list_checks[i], LV_OBJ_FLAG_HIDDEN);
-        }
+        /* Paid today: the glyph turns gold. The 34 px card has no room
+         * for the ✓ the old 104 px card carried. */
+        lv_obj_set_style_text_color(
+            s_list_glyphs[i],
+            lv_color_hex((paid & (1u << (uint32_t)i)) != 0 ? MUSE_THEME_GOLD
+                                                          : MUSE_THEME_TEXT),
+            0);
     }
 }
 
@@ -565,8 +513,13 @@ void muse_tracing_ui_build_trace(lv_obj_t *page, lv_event_cb_t back_cb)
     lv_label_set_text(s_ghost, MUSE_TRACING_TABLE[0].utf8);
     lv_obj_set_style_text_opa(s_ghost, TRACING_GHOST_OPA, 0);
     lv_obj_set_style_transform_scale(s_ghost, TRACING_FONT_SCALE, 0);
-    lv_obj_set_style_transform_pivot_x(s_ghost, 50, 0);
-    lv_obj_set_style_transform_pivot_y(s_ghost, 50, 0);
+    /* Pivot in percent: 50/50 is the label's centre. The raw values are
+     * pixels (or LV_PCT), NOT tenths of a percent -- the first cut passed
+     * 50/50, which LVGL read as 50 px, i.e. past the 48 px box's bottom
+     * right corner, and the ghost zoomed out towards the top-left and
+     * left the 田字格 (user report 2026-11-21). */
+    lv_obj_set_style_transform_pivot_x(s_ghost, LV_PCT(50), 0);
+    lv_obj_set_style_transform_pivot_y(s_ghost, LV_PCT(50), 0);
     /* The label is centred on the grid by its own box: the grid is
      * centred on the page, so LV_ALIGN_CENTER lands the label's
      * centre on the grid's centre. (The label's box is the 48 px em
