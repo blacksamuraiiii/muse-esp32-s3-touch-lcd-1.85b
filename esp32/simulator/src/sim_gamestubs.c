@@ -207,7 +207,9 @@ const lv_image_dsc_t *const MUSE_LEARN_ART[MUSE_LEARN_COUNT] = {
     &STUB_DSC_NAME, &STUB_DSC_NAME, &STUB_DSC_NAME, &STUB_DSC_NAME,
 };
 const uint32_t MUSE_LEARN_ART_COLOR[MUSE_LEARN_COUNT] = {
-    0xff7a59, 0xf6cb4b, 0x8ec9ff, 0xff8fb3,
+    /* 2026-11-22 learn-card art swap: 语文 vermilion -> bamboo so the
+     * red apple owns the warm slot; words light blue -> apple red. */
+    0x7bcf9e, 0xf6cb4b, 0xff4136, 0xff8fb3,
 };
 const lv_image_dsc_t *const MUSE_MAIN_GRID_ART[MUSE_MAIN_GRID_COUNT] = {
     &STUB_DSC_NAME, &STUB_DSC_NAME, &STUB_DSC_NAME, &STUB_DSC_NAME,
