@@ -1,9 +1,9 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 /*
- * muse_quiz_ui.c -- 英语口语（听力练习）subpage, see muse_quiz_ui.h.
+ * muse_quiz_ui.c -- 英语听力subpage, see muse_quiz_ui.h.
  *
  * Layout (mockup 2026-11-11 v6, 360x360 round screen, dark theme like
- * the other games): the title "英语口语" sits in the top crescent
+ * the other games): the title "英语听力" sits in the top crescent
  * (y=38, the same slot and ACCENT colour the math page uses); the
  * speaker button is a transparent 84x84 circle centred at (180,122)
  * with a white LV_SYMBOL_VOLUME_MAX in Montserrat 28 scaled ~1.5x --
@@ -250,7 +250,7 @@ static void refresh_display(void)
      * lives in the HUD line, and the OVER card carries no title). */
     set_label(s_name, "英语听力");
     /* Overlays: the START card while a round has not begun, the OVER
-     * card once it ends (user request 2026-11-21: entering 英语口语 used
+     * card once it ends (user request 2026-11-21: entering 英语听力 used
      * to start a round and speak at once -- the page now waits for a
      * tap, like the lucky wheel). */
     if (s_game.phase == MUSE_QUIZ_OVER) {
@@ -428,7 +428,7 @@ static void on_restart(lv_event_t *e)
 }
 
 /* The START card's button: begin the first round. Nothing else on the
- * page starts a round now, so entering 英语口语 no longer speaks a word
+ * page starts a round now, so entering 英语听力 no longer speaks a word
  * and starts the clock by itself (user request 2026-11-21). */
 static void on_start(lv_event_t *e)
 {

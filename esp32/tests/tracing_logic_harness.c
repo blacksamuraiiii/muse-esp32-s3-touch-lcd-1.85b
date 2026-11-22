@@ -8,9 +8,16 @@
  *     graded against that character's reference strokes -- the
  *     skeleton centrelines of its 170 px Noto glyph, measured from
  *     the rendered pixels (muse_tracing.c's table);
- *   - a stroke is covered when 70% of its resampled points have a
- *     traced point within 16 px; the character is done when every
- *     stroke is covered. No stroke-order check;
+ *   - grading is the overall coverage (covered samples / all
+ *     samples): >= 50% passes, >= 90% earns the praise line and
+ *     the 2-coin reward, 50..89 is "继续加油". No stroke-order
+ *     check; per-stroke coverage is only a diagnostic, and the
+ *     harness treats a stroke as covered at 60% (its own literal,
+ *     HARNESS_STROKE_COVERED_PCT -- production defines no such
+ *     threshold any more, M-8);
+ *   - the pass/praise tiers straddle (M-10): the first prefix of a
+ *     full trace of 天 reaching 50% is DONE without praise, the
+ *     one point shorter is still TRACING; same at 90% for praise.
  *   - a traced point farther than 28 px from every sample is stray;
  *     once 40 points are down and more than 35% of them are stray,
  *     the attempt is wrong (描错标红重来);
@@ -28,6 +35,14 @@
 #include <string.h>
 
 #include "muse_tracing.h"
+
+/* "Covered" for one stroke, harness-only: production grades on the
+ * overall coverage (PASS_PCT 50 / PRAISE_PCT 90) and defines no
+ * per-stroke threshold any more (MUSE_TRACING_COVER_FRAC was deleted
+ * with the 1.5.4e review, M-8). The harness still needs a per-stroke
+ * notion to assert "this stroke is done, that one is not", so it
+ * keeps its own 60%. */
+#define HARNESS_STROKE_COVERED_PCT 60u
 
 static const uint32_t WANT_CODEPOINTS[MUSE_TRACING_CHARS] = {
     0x5929, 0x5730, 0x4EBA, 0x65E5, 0x6708,
@@ -90,6 +105,51 @@ static void scribble_top(muse_tracing_t *t, int points)
     }
 }
 
+/* Record (don't feed) the points trace_char() would feed for one
+ * character, in the same order: 2 px steps along each reference
+ * stroke's polyline. The buffer holds 4096; 天 feeds a few hundred. */
+static int collect_char_points(int idx, muse_tracing_point_t *buf, int cap)
+{
+    int count = 0;
+    const muse_tracing_stroke_t *strokes = muse_tracing_strokes(idx, &count);
+    assert(strokes != NULL && count > 0);
+    int n = 0;
+    for (int i = 0; i < count; i++) {
+        const muse_tracing_stroke_t *s = &strokes[i];
+        for (int j = 0; j + 1 < s->n; j++) {
+            int x0 = s->pts[j].x, y0 = s->pts[j].y;
+            int x1 = s->pts[j + 1].x, y1 = s->pts[j + 1].y;
+            int dx = x1 - x0, dy = y1 - y0;
+            int steps = dx * dx + dy * dy;
+            int m = 1;
+            while (m * m * 4 < steps) {
+                m++;
+            }
+            for (int k = 0; k <= m; k++) {
+                assert(n < cap);
+                buf[n].x = (int16_t)(x0 + dx * k / m);
+                buf[n].y = (int16_t)(y0 + dy * k / m);
+                n++;
+            }
+        }
+    }
+    return n;
+}
+
+/* Grade one prefix of a full trace: fresh attempt, first `n` fed
+ * points, then grade(). Returns the score; *phase is the verdict. */
+static uint8_t grade_prefix(muse_tracing_t *t,
+                            const muse_tracing_point_t *pts, int n,
+                            muse_tracing_phase_t *phase)
+{
+    assert(muse_tracing_set_char(t, 0));
+    for (int i = 0; i < n; i++) {
+        muse_tracing_add_point(t, pts[i].x, pts[i].y);
+    }
+    *phase = muse_tracing_grade(t);
+    return t->score_pct;
+}
+
 int main(void)
 {
     muse_tracing_t t;
@@ -131,7 +191,7 @@ int main(void)
         (void)muse_tracing_strokes(idx, &count);
         for (int s = 0; s < count; s++) {
             assert(muse_tracing_stroke_coverage(&t, s) >=
-                   MUSE_TRACING_COVER_FRAC);
+                   HARNESS_STROKE_COVERED_PCT);
         }
         /* DONE is terminal for the attempt: further points are
          * ignored, not graded. */
@@ -150,12 +210,12 @@ int main(void)
     trace_stroke(&t, &strokes[0]);
     assert(t.phase == MUSE_TRACING_TRACING);
     assert(muse_tracing_stroke_coverage(&t, 0) >=
-           MUSE_TRACING_COVER_FRAC);
+           HARNESS_STROKE_COVERED_PCT);
     /* Stroke 1 shares the top horizontal's junction with stroke 0,
      * so its first sample is covered by stroke 0's end -- but the
      * stroke as a whole is far from covered. */
     assert(muse_tracing_stroke_coverage(&t, 1) <
-           MUSE_TRACING_COVER_FRAC);
+           HARNESS_STROKE_COVERED_PCT);
     /* Incremental == full rescan (2026-11-21 review P1-2): grade()
      * rebuilds the coverage from scratch, so the state it leaves must
      * equal the incremental state the mid-trace reads showed. Any
@@ -238,6 +298,61 @@ int main(void)
     scribble_top(&t, 10);
     assert(muse_tracing_grade(&t) == MUSE_TRACING_TRACING);
     assert(t.phase == MUSE_TRACING_TRACING);
+
+    /* Pass/praise boundary straddle (1.5.4e review M-10): the two
+     * tiers are MUSE_TRACING_PASS_PCT 50 and MUSE_TRACING_PRAISE_PCT
+     * 90. Exact 49/50/89/90 scores are not directly constructible --
+     * one stored point covers ~9 samples, so the score jumps in
+     * steps of a few percent -- so the test straddles each tier
+     * instead: replay prefixes of a full trace of 天, find the first
+     * prefix that reaches the tier, and assert the decision flips
+     * between that prefix and the one point shorter. Praise is
+     * score_pct >= PRAISE_PCT (the UI reads score_pct to tell a
+     * plain pass from a praise pass). */
+    assert(MUSE_TRACING_PASS_PCT == 50u);
+    assert(MUSE_TRACING_PRAISE_PCT == 90u);
+    {
+        static muse_tracing_point_t fed[4096];
+        int total = collect_char_points(0, fed, 4096);
+        assert(total > 0);
+        /* A full trace ends at 100% (every sample covered). */
+        muse_tracing_phase_t phase = MUSE_TRACING_IDLE;
+        assert(grade_prefix(&t, fed, total, &phase) == 100);
+        assert(phase == MUSE_TRACING_DONE);
+        /* Find the first prefix reaching each tier. */
+        int first_pass = -1, first_praise = -1;
+        for (int n = 0; n <= total; n++) {
+            uint8_t score = grade_prefix(&t, fed, n, &phase);
+            if (first_pass < 0 && score >= MUSE_TRACING_PASS_PCT) {
+                first_pass = n;
+            }
+            if (first_praise < 0 && score >= MUSE_TRACING_PRAISE_PCT) {
+                first_praise = n;
+            }
+            if (first_pass >= 0 && first_praise >= 0) {
+                break;
+            }
+        }
+        assert(first_pass > 0 && first_praise > first_pass);
+        /* Below 50: still tracing, no pass, no praise. */
+        uint8_t below = grade_prefix(&t, fed, first_pass - 1, &phase);
+        assert(below < MUSE_TRACING_PASS_PCT);
+        assert(phase == MUSE_TRACING_TRACING);
+        /* At 50: DONE, but below 90, so a plain pass, no praise. */
+        uint8_t at = grade_prefix(&t, fed, first_pass, &phase);
+        assert(at >= MUSE_TRACING_PASS_PCT);
+        assert(at < MUSE_TRACING_PRAISE_PCT);
+        assert(phase == MUSE_TRACING_DONE);
+        /* Below 90: DONE, still no praise. */
+        below = grade_prefix(&t, fed, first_praise - 1, &phase);
+        assert(below >= MUSE_TRACING_PASS_PCT);
+        assert(below < MUSE_TRACING_PRAISE_PCT);
+        assert(phase == MUSE_TRACING_DONE);
+        /* At 90: DONE with praise. */
+        at = grade_prefix(&t, fed, first_praise, &phase);
+        assert(at >= MUSE_TRACING_PRAISE_PCT);
+        assert(phase == MUSE_TRACING_DONE);
+    }
 
     printf("ok\n");
     return 0;

@@ -790,6 +790,10 @@ void muse_doodle_ui_show(void)
      * Without this a pause followed by leaving the page left the sensor off,
      * and 继续 restarted the ticks with tilt dead. */
     muse_imu_wake();
+    /* M-19: clear a stale refusal note before the refresh, or a
+     * "金币不够" from a receipt that landed while the page was hidden
+     * would still be up on return (the snake page already did this). */
+    hide_note();
     refresh_display();
 }
 
@@ -800,6 +804,7 @@ void muse_doodle_ui_hide(void)
         lv_timer_pause(s_timer);
     }
     s_press_active = false;
+    hide_note();
     /* Off-screen: the accelerometer goes back to sleep (the 金币雨
      * page's discipline). A return visit wakes it again on 开始. */
     muse_imu_sleep();

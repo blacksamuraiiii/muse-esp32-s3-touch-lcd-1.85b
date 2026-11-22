@@ -10,14 +10,18 @@ in `muse_font.c` (`muse_font_cjk()` / `muse_font_caption()` /
   antialiased, taken from upstream's `muse_font_cjk_noto_16.c`
   (upstream's `gen_cjk_noto_font.sh`, GB2312 6763 hanzi + CJK
   punctuation and fullwidth forms, plus ASCII 0x20-0x7E and Latin-1
-  0xA0-0xFF since the unification, 7242 glyphs, 721,254 bytes of
-  (RLE-compressed) bitmap data, 793,430 bytes of flash all in, measured
-  by compiling the file on the host -- the same measure as the old
-  7431 glyphs / 875,719 bitmap / 970,327 flash. Size-trim 2026-11-20:
-  compression + kana removed (0x3040-0x30FF, 189 glyphs; CJK
-  punctuation 0x3000-0x303F kept) + kerning removed (--no-kerning),
-  saving 176,897 bytes of flash: bitmap -154,465, kerning tables
-  -20,798, glyph descriptors -1,512, kana cmaps -122.)
+  0xA0-0xFF since the unification, 7,243 glyphs, 858,283 bytes of
+  bitmap data, ~930 KB of flash all in -- the same measure as the old
+  7,432 glyphs / 875,719 bitmap / 970,327 flash, less the 39,868 B
+  trim below. Size-trim 2026-11-20: kana removed (0x3040-0x30FF, 189
+  glyphs; CJK punctuation 0x3000-0x303F kept) + kerning removed
+  (--no-kerning), saving ~39,868 bytes of linked flash: bitmap
+  -17,436, kerning tables -20,798, glyph descriptors -1,512, kana
+  cmaps -122. Compression was tried the same day and rolled back:
+  LVGL's RLE decode cursor is a global singleton, so two draw units
+  decompressing glyphs at once corrupt each other (the full forensics
+  are in `notes/踩坑记录.md` entry 0) -- the face ships uncompressed,
+  and the 176,897 B saving the compressed plan quoted never landed.)
   It replaces Source Han Sans SC Regular level-1 (3755 hanzi) + the
   Unifont fallback below. The trade is coverage, not looks: a hanzi
   outside GB2312 (a GBK name character like 燊堃喆, which Unifont used
@@ -37,16 +41,17 @@ in `muse_font.c` (`muse_font_cjk()` / `muse_font_caption()` /
   the caption band 72 px and pushed Muse up into the READY label).
   The pin is applied by `tools/muse/gen_cjk_noto_font.sh` itself on every
   run, so re-running the script keeps it.
-- `muse_font_tracing_48_v1.c` — the 描红 ghost face (2026-11-20): Noto
-  Sans SC Medium at 48 px, 4bpp, cut down to the ten first-grade
+- `muse_font_tracing_kai_48_v1.c` — the 描红 ghost face (2026-11-20,
+  face switched to 霞鹜文楷 Medium 2026-11-21): LXGW WenKai Medium at
+  48 px, 4bpp, cut down to the ten first-grade
   characters the trace page draws (天 地 人 日 月 山 川 木 水 火,
-  9,542 bytes of bitmap data, ~9.8 KB of flash all in -- the same
+  8,797 bytes of bitmap data, ~9.8 KB of flash all in -- the same
   ~340 B of overhead the clock's 48 px digit subset measured). The
   list page draws it at its own 48 px; the trace page scales it to
   170 px at runtime (lv_obj_set_style_transform_scale, 907), because
   a 170 px subset is ~115.9 KB and does not fit the ~50 KB free in
   the 4 MB app slot at 1.5.4b. Regenerate with
-  `tools/muse/gen_tracing_font.sh` (lv_font_conv@1.5.2, the pin that
+  `tools/muse/gen_tracing_font.sh` (lv_font_conv@1.5.3, the pin that
   generated the committed file). Only built with
   `CONFIG_MUSE_CJK_FONT`; the trace UI falls back to the 16 px chain
   on boards without it.
@@ -67,7 +72,7 @@ in `muse_font.c` (`muse_font_cjk()` / `muse_font_caption()` /
   Montserrat Medium 48 px 4bpp with lv_font_conv@1.5.3 (0x30-0x3a:
   digits + colon, 11 glyphs, ~4.8 KB of bitmap data; the generation
   command and the source/license note are in the file's header comment,
-  regenerate with `tools/muse/gen_clock_font.sh`). Montserrat is licensed
+  regenerate with `bash tools/muse/gen_clock_font.sh`). Montserrat is licensed
   under the SIL Open Font License 1.1. It is not part of the CJK chain:
   the ring page's `s_ring_time` is its only user, and it only ever draws
   `"%02d:%02d"`. The full 48 px Montserrat face is ~128 KB (unverified)

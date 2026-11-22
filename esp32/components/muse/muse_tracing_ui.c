@@ -137,6 +137,21 @@ static lv_obj_t *s_pinyin_img; /* the pinyin bitmap, same slot */
 static lv_obj_t *s_done_ov;   /* 再写一次 card, DONE only */
 static uint32_t s_last_touch_ms;
 static lv_timer_t *s_timer;
+/* Point count at the last settle grade (E-2): the grade's only input
+ * is the stored points, so an unchanged count means an unchanged
+ * verdict and the timer skips the full rescan. UINT32_MAX forces the
+ * first grade of an attempt; reset at every fresh attempt (open_char,
+ * on_retry, the wrong-flash reset in on_timer). */
+static uint32_t s_graded_point_count = 0xFFFFFFFFu;
+/* The DONE verdict line is showing praise ("写得真棒！") and the
+ * worker's answer to the PET_TRACING_SOLVE it sent has not landed
+ * yet: drain_feedback clears this through
+ * muse_tracing_ui_reward_settled() (E-1). While set, a PET_OK
+ * receipt appends "+2 分" to the line; PET_CAP (same character
+ * already paid today) leaves the bare praise. Cleared whenever the
+ * verdict leaves (show_pinyin) and once the payout line is written,
+ * so a late receipt can never rewrite a fresh attempt. */
+static bool s_verdict_praise;
 
 /* PSRAM (P2-4, see the esp_attr.h note): add_point() reads its samples
  * once per stored point (~320 reads) and the settle timer's grade()
@@ -174,6 +189,13 @@ static void ink_clear(void)
     for (int i = 0; i < TRACING_UI_MAX_LINES; i++) {
         if (s_lines[i]) {
             lv_obj_add_flag(s_lines[i], LV_OBJ_FLAG_HIDDEN);
+            /* E-4: a wrong flash left the lines red (show_wrong); a
+             * fresh attempt starts white again. Resetting every line
+             * here -- not just the ones drawn so far -- covers the
+             * lines a previous attempt already used, which ink_begin
+             * reuses from index 0. */
+            lv_obj_set_style_line_color(s_lines[i],
+                                        lv_color_hex(MUSE_THEME_TEXT), 0);
         }
         s_line_off[i] = 0;
         s_line_n[i] = 0;
@@ -249,6 +271,7 @@ static void ink_add(int x, int y)
 static void show_pinyin(void)
 {
     int idx = s_char_idx >= 0 ? s_char_idx : 0;
+    s_verdict_praise = false; /* the verdict (if any) just left */
     lv_image_set_src(s_pinyin_img, MUSE_TRACING_PINYIN_ART[idx]);
     lv_obj_remove_flag(s_pinyin_img, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(s_pinyin, LV_OBJ_FLAG_HIDDEN);
@@ -288,18 +311,43 @@ static void on_done(void)
         (void)muse_pet_request_tracing_solve(s_char_idx);
     }
     /* The verdict takes the pinyin slot under the 田字格 (user decision
-     * 2026-11-21): praise prints the payout, a pass only encourages.
-     * The copy is the user's: "写得真棒！+2 分" / "还需努力！" -- the
+     * 2026-11-21): praise prints "写得真棒！" -- WITHOUT the payout,
+     * for now. The worker's receipt decides that (E-1, 2026-11-22):
+     * PET_OK paid the 2 coins, so drain_feedback appends "+2 分"
+     * through muse_tracing_ui_reward_settled(); PET_CAP (the same
+     * character already paid today) leaves the bare praise, so a
+     * repeat trace can never claim coins it did not earn. A pass
+     * only encourages ("还需努力！", no payout at either tier). The
+     * copy is the user's: "写得真棒！+2 分" / "还需努力！" -- the
      * payout itself is the 2 coins the worker pays. */
     lv_obj_add_flag(s_pinyin_img, LV_OBJ_FLAG_HIDDEN);
     lv_obj_remove_flag(s_pinyin, LV_OBJ_FLAG_HIDDEN);
-    lv_label_set_text(s_pinyin, praise ? "写得真棒！+2 分" : "还需努力！");
+    lv_label_set_text(s_pinyin, praise ? "写得真棒！" : "还需努力！");
+    s_verdict_praise = praise;
     lv_obj_set_style_text_color(
         s_pinyin, lv_color_hex(praise ? MUSE_THEME_GOLD : MUSE_THEME_TEXT), 0);
     /* One sound per verdict, the quiz's own good/bad pair (user request
      * 2026-11-21): rising for 写得真棒, falling for 还需努力. */
     muse_audio_sfx(praise ? MUSE_SFX_GOOD : MUSE_SFX_BAD);
     show_praise();
+}
+
+/* The worker's answer to the PET_TRACING_SOLVE the DONE verdict sent
+ * (drain_feedback calls this with fb.result == PET_OK): the 2 coins
+ * were paid, so the praise line grows its "+2 分". A PET_CAP receipt
+ * (paid == false: the same character already paid today) leaves the
+ * bare praise. No-op when the verdict is gone (再写一次, another
+ * character, left the page) or already settled: a late receipt must
+ * never rewrite a fresh attempt. Safe in the LVGL task; no-op before
+ * the trace page is built. */
+void muse_tracing_ui_reward_settled(bool paid)
+{
+    if (!paid || !s_verdict_praise || !s_pinyin ||
+        s_trace.phase != MUSE_TRACING_DONE) {
+        return;
+    }
+    lv_label_set_text(s_pinyin, "写得真棒！+2 分");
+    s_verdict_praise = false;
 }
 
 /* The timer only ages the wrong flash (50 ms steps) and clears the
@@ -313,6 +361,7 @@ static void on_timer(lv_timer_t *timer)
         muse_tracing_tick(&s_trace, TRACING_UI_TICK_MS);
         if (s_trace.phase == MUSE_TRACING_TRACING) {
             muse_tracing_reset(&s_trace);
+            s_graded_point_count = 0xFFFFFFFFu;
             ink_clear();
             show_pinyin();
         }
@@ -323,11 +372,22 @@ static void on_timer(lv_timer_t *timer)
      * not be told 描错了 (user report 2026-11-21). */
     if (s_trace.phase == MUSE_TRACING_TRACING &&
         lv_tick_get() - s_last_touch_ms >= TRACING_UI_SETTLE_MS) {
-        muse_tracing_grade(&s_trace);
-        if (s_trace.phase == MUSE_TRACING_DONE) {
-            on_done();
-        } else if (s_trace.phase == MUSE_TRACING_WRONG) {
-            show_wrong();
+        /* E-2: only re-grade when a point landed since the last grade.
+         * The timer used to run the full O(points x samples) rescan
+         * every 50 ms tick while the pen rested (512 points is ~110k
+         * dist2 per tick, 20/s, for nothing -- the attempt had not
+         * changed). The stored point count is the grade's only input
+         * (coverage and stray share both derive from the stored
+         * points, and the sample set is fixed per character), so an
+         * unchanged count means an unchanged verdict. */
+        if (s_trace.point_count != s_graded_point_count) {
+            s_graded_point_count = s_trace.point_count;
+            muse_tracing_grade(&s_trace);
+            if (s_trace.phase == MUSE_TRACING_DONE) {
+                on_done();
+            } else if (s_trace.phase == MUSE_TRACING_WRONG) {
+                show_wrong();
+            }
         }
     }
 }
@@ -534,6 +594,7 @@ static void on_retry(lv_event_t *e)
     (void)e;
     lv_obj_add_flag(s_done_ov, LV_OBJ_FLAG_HIDDEN);
     muse_tracing_reset(&s_trace);
+    s_graded_point_count = 0xFFFFFFFFu;
     ink_clear();
     show_pinyin();
 }
@@ -660,6 +721,7 @@ void muse_tracing_ui_open_char(int idx)
     s_char_idx = idx;
     s_reward_sent = false;
     muse_tracing_set_char(&s_trace, idx);
+    s_graded_point_count = 0xFFFFFFFFu;
     ink_clear();
     const muse_tracing_char_t *ch = &MUSE_TRACING_TABLE[idx];
     lv_label_set_text(s_ghost, ch->utf8);

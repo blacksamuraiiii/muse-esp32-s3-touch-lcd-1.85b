@@ -58,3 +58,4 @@ local.properties
 # so treat it as leaked and generate a fresh one:
 #   espsecure.py generate_signing_key --version 2 dev_signing_key.pem
 dev_signing_key.pem
+*.pem

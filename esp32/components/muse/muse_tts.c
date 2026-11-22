@@ -433,7 +433,7 @@ static void client_lock_give(void)
  * while the user can press BOOT at any moment, and a reply can be speaking
  * when a card page opens, so the three rules below are what keep one
  * perform -- and one cleanup -- on the socket at a time:
- *  - this entry refuses (-1) while a reply fetch is running (s_busy), a
+ *  - this entry refuses (-2) while a reply fetch is running (s_busy), a
  *    probe is running, or another fetch holds the client lock; the caller
  *    marks the word failed and retries on re-entry, so a refusal is silent;
  *  - the perform itself runs under the client lock, which also serialises
@@ -588,7 +588,11 @@ static bool fetch_once(const char *url, int timeout_ms)
     int64_t t0 = esp_timer_get_time();
     esp_err_t err = esp_http_client_perform(c);
     int status = esp_http_client_get_status_code(c);
-    s_last_status = status;
+    /* A failed perform has no status: clear it, so a stale 429 from an
+     * earlier request cannot steer the retry delay (M-16). fetch()
+     * only takes the 1500 ms rate-limit pause when this request
+     * really answered 429. */
+    s_last_status = (err == ESP_OK) ? status : 0;
     int64_t body = esp_http_client_get_content_length(c);
     bool ok = false;
     if (err != ESP_OK) {

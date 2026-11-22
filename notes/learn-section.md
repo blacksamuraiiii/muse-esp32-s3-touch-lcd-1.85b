@@ -12,12 +12,12 @@
   效果图 `~/workspace/main-grid-mockup-v3.png`。
 - 学习是子页，页标题「学习」，三张卡片（2026-11-12 用户拍板 v6，
   见下方“## 三张卡片改版”一节；三行纵列已删）：数学练习 / 英语单词 /
-  英语口语。标语「好好学习，天天向上」y=84（DIM），底行金币数 y=302
+  英语听力。标语「好好学习，天天向上」y=84（DIM），底行金币数 y=302
   （TEXT）。效果图 `~/workspace/learn-page-mockup-v6.png`。
 - 改名只改 UI 文案（列表名 + 页标题），代码名 `muse_mathpractice` /
   `muse_wordcards` 不动。学习里三项全部免费（用户 2026-11-12 定）：
   数学练习入场费取消（原来收 10 金币、0 金币变灰），英语单词免费，
-  英语口语免费；数学兑付不变、最多 +20。
+  英语听力免费；数学兑付不变、最多 +20。
 
 ## 图标（game-icons，CC BY 3.0；A8 128×128 master，运行时重着色白）
 
@@ -39,11 +39,11 @@
   标题）；`main_button()` 随旧三行列表一起删了。
 - 学习页：新 `IC_PAGE_LEARN` + `build_learn()`（小游戏列表同款纵列）；
   `on_open_learn()` 开页；返回一律走 `on_back()`。
-- 入口迁移：小游戏列表删「英语口语」行（B 流临时入口）；学习页
-  「英语口语」行复用同一 `muse_quiz_ui_build` / `s_quiz_page`，只改入口，
+- 入口迁移：小游戏列表删「英语听力」行（B 流临时入口）；学习页
+  「英语听力」行复用同一 `muse_quiz_ui_build` / `s_quiz_page`，只改入口，
   quiz 模块不动。数学练习与英语单词两行同样从小游戏列表挪过来，
   只改名（加减练习 → 数学练习、单词练习 → 英语单词），模块不动。
-- 返回：数学练习 / 英语口语 / 单词分类页的 `<` 回学习页（不再回小游戏
+- 返回：数学练习 / 英语听力 / 单词分类页的 `<` 回学习页（不再回小游戏
   列表）；卡片页 → 分类页不变；其余六个小游戏回小游戏列表不变。
 - `refresh_status()`：主页面板的三行文案（喂饭已领满 / 今日运势等级）
   随副行一起删了；金币行与小游戏变灰逻辑不变；数学练习的变灰标签
@@ -73,7 +73,7 @@
 - 图标（game-icons，CC BY 3.0；A8 128×128 master，运行时按卡重着色，
   单词卡片同款做法——主网格是全白，这里每张卡一个色）：
   数学练习 `delapouite/calculator.svg` 金 #f6cb4b（= `MUSE_THEME_GOLD`）、
-  英语单词 `lorc/open-book.svg` 浅蓝 #8ec9ff、英语口语
+  英语单词 `lorc/open-book.svg` 浅蓝 #8ec9ff、英语听力
   `delapouite/microphone.svg` 粉 #ff8fb3。生成器
   `~/workspace/learn-cards-art-gen.py`（同一管线，IoU 验收 ≥0.99，
   实测 0.9924–0.9998）。Art 表 `muse_learn_art.{c,h}` + 3 个 master

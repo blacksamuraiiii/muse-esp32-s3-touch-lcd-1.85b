@@ -98,8 +98,10 @@ CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
 # OTA image signing WITHOUT hardware secure boot. The build signs the app with
 # the RSA-3072 key below (Secure Boot v2 app-signing scheme); esp_https_ota
 # verifies the signature on every update, so only images signed by this key can
-# be installed. dev_signing_key.pem is a SHARED DEV KEY checked into the repo —
-# replace it with a secret release key (kept out of git) before shipping.
+# be installed. The key is NOT in the repo: dev_signing_key.pem is gitignored
+# (the old copy was published in the public history, treat it as leaked).
+# Generate a fresh one before the first build, see esp32/AGENTS.md for the
+# command.
 CONFIG_SECURE_SIGNED_APPS_NO_SECURE_BOOT=y
 CONFIG_SECURE_SIGNED_APPS_RSA_SCHEME=y
 CONFIG_SECURE_SIGNED_ON_UPDATE_NO_SECURE_BOOT=y

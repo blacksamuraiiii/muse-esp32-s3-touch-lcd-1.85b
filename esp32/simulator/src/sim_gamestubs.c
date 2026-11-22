@@ -112,7 +112,6 @@ void muse_luckywheel_ui_build(lv_obj_t *parent, lv_event_cb_t back_cb)
 void muse_luckywheel_ui_show(void) {}
 STUB0(muse_luckywheel_ui_hide)
 STUB0(muse_luckywheel_ui_fee_refused)
-STUB0(muse_luckywheel_ui_limit_reached)
 STUB0(muse_luckywheel_ui_storage_error)
 
 void muse_mathpractice_ui_build(lv_obj_t *page, lv_event_cb_t back_cb)
@@ -172,6 +171,10 @@ void muse_tracing_ui_build_trace(lv_obj_t *page, lv_event_cb_t back_cb)
 void muse_tracing_ui_open_char(int idx) { (void)idx; }
 void muse_tracing_ui_refresh_list(void) {}
 STUB0(muse_tracing_ui_hide)
+/* E-1 (1.5.4e review, 2026-11-22): the interact page's drain calls this on
+ * the PET_TRACING_SOLVE receipt; the stub trace pages never show a verdict,
+ * so it is a no-op -- but the link needs it. */
+void muse_tracing_ui_reward_settled(bool paid) { (void)paid; }
 
 STUB0(muse_alarm_ui_tick)
 
@@ -204,11 +207,11 @@ const lv_image_dsc_t *const MUSE_LEARN_ART[MUSE_LEARN_COUNT] = {
     &STUB_DSC_NAME, &STUB_DSC_NAME, &STUB_DSC_NAME, &STUB_DSC_NAME,
 };
 const uint32_t MUSE_LEARN_ART_COLOR[MUSE_LEARN_COUNT] = {
-    0x9b8cff, 0xff9bd2, 0x9bd2ff, 0x9bff9b,
+    0xff7a59, 0xf6cb4b, 0x8ec9ff, 0xff8fb3,
 };
 const lv_image_dsc_t *const MUSE_MAIN_GRID_ART[MUSE_MAIN_GRID_COUNT] = {
     &STUB_DSC_NAME, &STUB_DSC_NAME, &STUB_DSC_NAME, &STUB_DSC_NAME,
 };
 const uint32_t MUSE_MAIN_GRID_ART_COLOR[MUSE_MAIN_GRID_COUNT] = {
-    0x9b8cff, 0xff9bd2, 0x9bd2ff, 0x9bff9b,
+    0xa77dff, 0xff8fb3, 0x8ec9ff, 0x6ff0bf,
 };

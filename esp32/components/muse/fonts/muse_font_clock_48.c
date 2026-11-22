@@ -7,7 +7,7 @@
  * (lvgl/scripts/built_in_font/); Montserrat is licensed under the
  * SIL Open Font License 1.1. Subset: 48 px, 0x30-0x3a (digits +
  * colon, 11 glyphs), ~4.8 KB. Regenerate with
- * tools/muse/gen_clock_font.sh. */
+ * `bash tools/muse/gen_clock_font.sh`. */
 
 #ifdef LV_LVGL_H_INCLUDE_SIMPLE
 #include "lvgl.h"

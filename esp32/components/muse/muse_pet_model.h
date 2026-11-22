@@ -90,16 +90,11 @@
 #define MUSE_PET_LUCKYWHEEL_COST 2u     /* one lucky wheel spin
                                         * (PET_LUCKYWHEEL_SPIN; user
                                         * decision 2026-11-20) */
-/* Spins per day. Same Test/Release split as 掷圣杯: the Test build has
- * no cap, Release keeps 9. The host harnesses build without sdkconfig,
- * so they always see the Release number and keep testing the cap. */
-#if defined(CONFIG_MUSE_BUILD_TEST) && CONFIG_MUSE_BUILD_TEST
-#define MUSE_PET_LUCKYWHEEL_DAILY_MAX 999999u /* effectively unlimited */
-#else
-#define MUSE_PET_LUCKYWHEEL_DAILY_MAX 9u      /* spins per day (user decision
-                                            * 2026-11-20); the 10th is
-                                            * PET_CAP */
-#endif
+/* No daily cap any more (user decision 2026-11-21): the wheel spins as
+ * long as the wallet pays. The old MUSE_PET_LUCKYWHEEL_DAILY_MAX (9u,
+ * Test 999999u) was deleted with muse_pet_luckywheel_today() when the
+ * cap went away (1.5.4e review M-3): nothing enforced it any more, and
+ * the count is only a ledger now. */
 /* Structural upper bound for the lucky wheel ledger
  * (luckywheel_count), used by muse_pet_model_valid() only -- same
  * reasoning as MUSE_PET_JIAOBEI_LEDGER_MAX (B2). */
@@ -212,7 +207,8 @@ typedef struct {
                                   * paid today (same index as
                                   * MUSE_TRACING_TABLE) */
     int32_t luckywheel_day;      /* day of the 幸运大转盘 ledger, -1 = none */
-    uint32_t luckywheel_count;   /* paid spins settled today, 0..9 */
+    uint32_t luckywheel_count;   /* paid spins settled today (ledger only,
+                                    * no cap since 2026-11-21) */
 } muse_pet_model_t;
 
 /* Result codes carried in `arg` by PET_JIAOBEI_TOSS (same numbering as
@@ -441,16 +437,6 @@ void muse_pet_jiaobei_result_today(const muse_pet_model_t *s, int64_t now,
 void muse_pet_tracing_today(const muse_pet_model_t *s, int64_t now,
                            uint32_t *paid_mask);
 
-/*
- * Today's 幸运大转盘 ledger, as a UI can read it without duplicating
- * the day rule: *remaining is how many paid spins are left today
- * (MUSE_PET_LUCKYWHEEL_DAILY_MAX minus today's settled count, or the
- * full 9 when no spin has been settled today). Free re-spins do not
- * count against it. Derived from the snapshot; nothing is written.
- * The pointer may be NULL.
- */
-void muse_pet_luckywheel_today(const muse_pet_model_t *s, int64_t now,
-                               uint32_t *remaining);
 
 /* Settle one calendar day's living cost into `s` (idempotent for a given day).
  * No-op when uncalibrated, and never moves decay_day backwards on rollback. */
