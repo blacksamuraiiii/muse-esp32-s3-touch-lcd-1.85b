@@ -7,7 +7,7 @@
 > 内容以**面向 Windows 用户**的分步操作为主（上游文档只写了 macOS / Linux）。
 >
 > 正式版 **1.5.3**，测试版 **1.5.4f**（当前开发版，`esp32/version.txt`）；发布件见
-> [Releases](https://github.com/blacksamuraiiii/muse-esp32-s3-touch-lcd-1.85b/releases)。
+> [Releases](https://github.com/blacksamuraiiii/muse-gadget-waveshare-1.85b/releases)。
 >
 > **风险提示**：本项目由「黑客为黑客」而写，纯属好玩。刷入自定义固件可能导致开发板变砖、
 > 保修失效。一切后果自负。请务必先完成[第 4 步：备份原厂固件](#第-4-步备份原厂固件)。
@@ -173,7 +173,7 @@ Muse Gadgets 是 Meta 开源的一套**自建设备（DIY Gadget）**方案：
 **说人话**：刷完之后，你手上这块 1.85 寸圆屏手表/徽章就变成一个可以按住说话、
 Muse 用文字（字幕）回答、还能显示图片的语音小助手。
 
-本项目（`blacksamuraiiii/muse-esp32-s3-touch-lcd-1.85b`）在 Meta 官方 SDK 基础上，
+本项目（`blacksamuraiiii/muse-gadget-waveshare-1.85b`，2026-11-22 由 `muse-esp32-s3-touch-lcd-1.85b` 更名而来，旧链接自动重定向）在 Meta 官方 SDK 基础上，
 **新增了对微雪 ESP32-S3-Touch-LCD-1.85B 这块板子的移植支持**。
 
 ---

@@ -31,7 +31,7 @@ static const char *TAG = "ota.github";
 /* Override with -DOTA_GH_MANIFEST_URL=... when forking under another account. */
 #ifndef OTA_GH_MANIFEST_URL
 #define OTA_GH_MANIFEST_URL \
-    "https://github.com/blacksamuraiiii/muse-esp32-s3-touch-lcd-1.85b/releases/latest/download/latest.json"
+    "https://github.com/blacksamuraiiii/muse-gadget-waveshare-1.85b/releases/latest/download/latest.json"
 #endif
 
 #define OTA_GH_BODY_MAX 4096
