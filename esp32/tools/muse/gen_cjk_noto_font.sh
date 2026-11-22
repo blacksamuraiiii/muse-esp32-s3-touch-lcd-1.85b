@@ -20,12 +20,25 @@
 # 16 px; Montserrat stays only for the clock, keypad, pairing code and
 # LVGL icons). Needs curl, python3 and npx.
 #
-# Size-trim 2026-11-20: the font is generated COMPRESSED (lv_font_conv's
-# RLE, decoded by LVGL at runtime -- no code change), WITHOUT kana
+# Size-trim 2026-11-20: the font is generated WITHOUT kana
 # (0x3040-0x30FF; the UI prints no Japanese, and the 0x3000-0x303F CJK
 # punctuation stays) and WITHOUT kerning (--no-kerning: Latin kerning
 # pairs cost ~20 KB and the 16 px UI never relied on them). Re-running
 # this script reproduces the shipped file byte-for-byte.
+#
+# COMPRESSSION STAYS OFF (2026-11-21, 1.5.4e): the compressed variant
+# saved ~131 KB of app slot and its bitmaps decode CORRECTLY on a
+# single draw unit (same-scenario double build vs the 1.5.4d face:
+# 1,761 differing bytes, all accountable to --no-kerning and the GB2312
+# table). But LVGL's RLE decoder keeps its position state in a GLOBAL
+# singleton (lv_font_fmt_txt.c: LV_GLOBAL_DEFAULT()->font_fmt_rle, fed
+# by rle_init/rle_next), so two SW draw units decompressing glyphs
+# concurrently step on each other -- on the real board (draw units = 2)
+# that showed up as glyphs rendering smudged one moment and right the
+# next. LV_USE_FONT_COMPRESSED stays unset in devices/sdkconfig.muse
+# and simulator/lv_conf.h. Revisit only with an upstream fix (a
+# per-call decoder state) verified by a bit-exact same-scenario double
+# build AND a concurrent-decompress test.
 set -eu
 
 HERE="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -52,6 +65,7 @@ print(",".join(hex(c) for c in sorted(cps)))')
 EXTRA="0x7B4A"
 npx -y lv_font_conv@1.5.3 --font "$TMP/noto.otf" --size 16 --bpp 4 \
     --format lvgl --lv-font-name muse_font_cjk_noto_16 --no-kerning \
+    --no-compress \
     -r 0x20-0x7E -r 0xA0-0xFF -r 0x3000-0x303F -r 0xFF00-0xFFEF -r "$HANZI" -r "$EXTRA" -o "$TMP/font.c"
 sed -e 's|#include "lvgl/lvgl.h"|#include "lvgl.h"|' -e "s|$TMP/||g" "$TMP/font.c" > "$OUT"
 # Pin the line box to 20/5 (see fonts/README.md): Noto's own metrics are

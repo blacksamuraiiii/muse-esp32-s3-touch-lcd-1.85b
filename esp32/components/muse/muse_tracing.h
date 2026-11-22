@@ -145,6 +145,17 @@ typedef struct {
     uint8_t score_pct;       /* overall coverage at the last grade, 0..100 */
     /* Per-stroke coverage, percent, for the UI and the harness. */
     uint8_t stroke_cover[MUSE_TRACING_MAX_STROKES];
+    /* Incremental coverage bookkeeping (2026-11-21 review P1-2): coverage
+     * is monotone within an attempt (points only accumulate), so each
+     * stored point only needs to mark the samples it newly covers --
+     * O(sample_count) per point instead of the full O(points x samples)
+     * rescan refresh_coverage() used to do per point. grade() still
+     * runs the full rescan once as the judging authority, so a bug in
+     * the incremental path cannot change a verdict. */
+    uint16_t stroke_total[MUSE_TRACING_MAX_STROKES]; /* samples per stroke */
+    uint16_t stroke_covered_count[MUSE_TRACING_MAX_STROKES]; /* covered samples per stroke */
+    uint16_t sample_total;                           /* all samples, 0 = none */
+    uint8_t sample_covered_flag[(MUSE_TRACING_MAX_SAMPLES + 7) / 8]; /* 1 = covered */
     uint32_t wrong_ms; /* ms left of the wrong flash, 0 = not flashing */
 } muse_tracing_t;
 

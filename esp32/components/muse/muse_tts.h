@@ -111,17 +111,30 @@ void muse_tts_cancel(void);
  * audio from the same bridge with `&word=1` and want the bytes untouched, so
  * they reuse the keep-alive client instead of opening a second one (a fresh
  * handshake costs 3.5-4.3 s on this board). One perform at a time, enforced
- * with the client lock (B1): this refuses with -1 while a reply fetch is
+ * with the client lock (B1): this refuses with -2 while a reply fetch is
  * running, a probe is running, or another fetch holds the socket, instead
  * of performing alongside it; the caller marks the word failed and retries
  * on re-entry. The reply worker waits on the same lock, so a card fetch
- * that started first only delays the reply by one request. Returns 1 =
- * HTTP 200 with the body delivered to `sink`, 0 = another status code,
- * -1 = refused (busy) or transport failure (the socket has been dropped;
- * the caller may retry once and will pay one handshake). */
+ * that started first only delays the reply by one request. */
 typedef void (*muse_tts_raw_sink_t)(const uint8_t *data, size_t len, void *ctx);
+/* Returns 1 = fetched OK, 0 = endpoint answered non-200 (socket dropped),
+ * -1 = transport failure (socket dropped; the caller may treat the whole
+ * batch as unreachable), -2 = REFUSED, not a failure: the reply fetch,
+ * the prewarm probe or another raw fetch held the shared connection, so
+ * nothing is known about the network -- the caller fails only the
+ * current word and must not burn the one tap-retry (N3, 2026-11-21).
+ * A NULL sink is a caller bug and also returns -1. */
 int muse_tts_fetch_raw(const char *url, int timeout_ms,
                        muse_tts_raw_sink_t sink, void *ctx);
+
+/* True when muse_tts_fetch_raw() would refuse (-2) right now: the reply
+ * fetch, the prewarm probe or another raw fetch owns the connection.
+ * For a UI thread that wants to know BEFORE it marks a one-shot retry
+ * as spent (N2/N3, 2026-11-21 review): cheap, never blocks, and the
+ * booleans are single-byte reads across tasks, same as the alarm ring
+ * flag. A false here is advisory -- the window until the actual fetch
+ * can still race, and muse_tts_fetch_raw() remains the authority. */
+bool muse_tts_fetch_raw_blocked(void);
 
 /* Drop the kept-alive socket. A fetch that stopped mid-body leaves unread bytes
  * on it, so whoever knows that happened calls this; the next request

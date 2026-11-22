@@ -278,6 +278,16 @@ static int fetch_one(const muse_wc_fetch_list_t *list, int idx,
         if (s_fetch_abort || gen != list->cur_gen(list->ctx)) {
             return 0; /* superseded: the bookkeeping ignores the mark */
         }
+        if (r == -2) {
+            /* Refused, not failed (N3): the reply fetch or the prewarm
+             * probe holds the shared connection right now. Retry an
+             * instant later would pay the same refusal, so fail only
+             * this word -- never the rest of the list, and never the
+             * whole-batch "host unreachable" branch below. */
+            ESP_LOGW(TAG, "word %s: connection busy (reply/probe), word only",
+                     list->en[idx]);
+            return 0;
+        }
         if (r != -1) {
             break;
         }
@@ -649,6 +659,22 @@ bool muse_wordcards_audio_fetch_one_quiz(muse_quiz_t *g, int i)
     list.single_slot = i;
     muse_wordcards_audio_prefetch_list(&list);
     return s_fetch_task != NULL || s_fetch_wanted;
+}
+
+bool muse_wordcards_audio_single_ok_now(void)
+{
+    /* The two conditions a single tap-retry cannot survive having spent
+     * (N2/N3, 2026-11-21 review): the internal-RAM floor the fetch task
+     * itself enforces (a task started below the floor skips, fails the
+     * word FAILED and the one-shot retry mark is gone), and a shared
+     * connection owned by the reply fetch or the prewarm probe (the raw
+     * fetch refuses). Checking here lets the retry paths leave the mark
+     * intact for the next tap instead of burning it on a certainty. */
+    size_t largest_int = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL);
+    if (largest_int < WC_MIN_INTERNAL_FOR_TLS) {
+        return false;
+    }
+    return !muse_tts_fetch_raw_blocked();
 }
 
 void muse_wordcards_audio_prefetch_abort(void)

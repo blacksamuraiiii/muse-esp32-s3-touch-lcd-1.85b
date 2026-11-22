@@ -359,8 +359,10 @@ static void drain_pending_audio(void)
          * while the single fetch runs, so the tick plays it when it
          * turns READY. A fetch that could not even start puts the
          * word back to FAILED and drops the mark instead of waiting
-         * forever. */
-        if (muse_quiz_retry_failed_audio(&s_game, s_game.q)) {
+         * forever. The N2/N3 pre-check (2026-11-21 review) runs
+         * BEFORE the mark is spent, same as the word cards' drain. */
+        if (muse_wordcards_audio_single_ok_now() &&
+            muse_quiz_retry_failed_audio(&s_game, s_game.q)) {
             if (!muse_wordcards_audio_fetch_one_quiz(&s_game, s_game.q)) {
                 muse_quiz_cache_failed(&s_game, s_game.q, s_game.quiz_gen);
                 muse_quiz_clear_pending_audio(&s_game);

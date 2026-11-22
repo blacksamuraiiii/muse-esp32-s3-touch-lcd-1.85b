@@ -61,10 +61,19 @@ static const char *TAG = "muse.tts";
 #define TTS_HTTP_TIMEOUT_MS 8000
 /* The reply's first request is the one the listener is waiting for: give up
  * on it this soon instead, so a stalled connect or a service that has not
- * started answering costs three seconds before the retry, not eight. Once
- * the headers are in, the rest of the body gets the full timeout again. */
-#define TTS_HTTP_FIRST_MS 3000
+ * started answering fails fast. 5000 since 2026-11-21 (review N4): the
+ * measured cold handshake on this board is 3.5-4.3 s, so the old 3000 ms
+ * budget made every prewarm that did not land time out and pay the retry
+ * handshake on top -- 5000 covers the measured range and only delays the
+ * error when the service is really down (the body keeps the full 8000
+ * once the headers are in). */
+#define TTS_HTTP_FIRST_MS 5000
 #define TTS_RETRY_DELAY_MS 150
+/* N1 (2026-11-21 review): the nginx limiter in front of the bridge is
+ * 60 r/m -- it releases one request per second, so a 429 is not "gone",
+ * it is "come back after the next slot". 1500 ms clears the slot with
+ * margin without stalling the reply audibly longer than a handshake. */
+#define TTS_RATE_LIMIT_RETRY_MS 1500
 
 static StreamBufferHandle_t s_ring;   /* storage in PSRAM: internal RAM is the scarce one */
 static TaskHandle_t s_task;           /* one long-lived worker; its stack lives in PSRAM */
@@ -105,6 +114,7 @@ static uint8_t s_prefix[TTS_PREFIX_BYTES];
 static size_t s_prefix_n;
 static bool s_payload_open;   /* the prefix passed: bytes go to the ring now */
 static bool s_payload_bad;    /* the prefix failed: drop the rest, do not retry */
+static int s_last_status;     /* last response status (429 handling, N1) */
 
 static esp_http_client_handle_t s_client;
 static volatile bool s_prewarm;          /* the connection probe is running: ignore its body */
@@ -134,7 +144,13 @@ static bool s_raw_active;
  * and pay a full timeout before the retry re-handshakes. */
 #define TTS_IDLE_DROP_US (45 * 1000 * 1000)
 #define TTS_PREWARM_TIMEOUT_MS 6000
-#define TTS_PREWARM_STACK 8192
+/* 12288 since 2026-11-21 (review N5): this task runs the same
+ * TCP+TLS+certificate-chain work as tts_task (12288) and the speech
+ * probe (10240, whose comment reads "8 KB was enough on paper and not
+ * in practice") -- it was the only 8192 left. The stack is in PSRAM,
+ * so the extra 4 KB costs nothing scarce; the high-water mark is
+ * logged after each successful probe. */
+#define TTS_PREWARM_STACK 12288
 
 static bool mp3_prefix_ok(const uint8_t *p, size_t n)
 {
@@ -437,13 +453,17 @@ int muse_tts_fetch_raw(const char *url, int timeout_ms,
     }
     /* Refuse rather than queue behind a fetch in flight: a reply fetch can
      * run for the whole reply, and the cards must never stall it, nor be
-     * stalled by it. */
+     * stalled by it. The refusal is -2, NOT a transport failure (N3,
+     * 2026-11-21 review): "the connection is busy right now" says nothing
+     * about the network, so the caller must fail only the current word --
+     * treating it like -1 abandoned the whole card list (and burned the
+     * one tap-retry) whenever a reply or the prewarm probe held the line. */
     if (!client_lock_take(0)) {
-        return -1;
+        return -2;
     }
     if (s_busy || s_prewarm || s_prewarm_task || s_raw_active) {
         client_lock_give();
-        return -1;
+        return -2;
     }
     if (s_drop_pending) {
         /* A release asked for a fresh socket while one was held: honour it
@@ -488,6 +508,16 @@ int muse_tts_fetch_raw(const char *url, int timeout_ms,
     }
     client_lock_give();
     return result;
+}
+
+bool muse_tts_fetch_raw_blocked(void)
+{
+    /* Advisory, from another task (the LVGL thread): the same booleans
+     * muse_tts_fetch_raw() refuses on, read without the lock. Single-byte
+     * reads do not tear, and a stale-by-milliseconds answer only leaves
+     * the actual refusal path to handle it (the retry mark is spent but
+     * the word just fails FAILED and the next tap can retry). */
+    return s_busy || s_prewarm || s_prewarm_task || s_raw_active;
 }
 
 void muse_tts_release_client(void)
@@ -558,6 +588,7 @@ static bool fetch_once(const char *url, int timeout_ms)
     int64_t t0 = esp_timer_get_time();
     esp_err_t err = esp_http_client_perform(c);
     int status = esp_http_client_get_status_code(c);
+    s_last_status = status;
     int64_t body = esp_http_client_get_content_length(c);
     bool ok = false;
     if (err != ESP_OK) {
@@ -610,7 +641,9 @@ static bool fetch_once(const char *url, int timeout_ms)
 /* One retry, but only when nothing reached the decoder. A 502 carries an error
  * page that counts as bytes yet never opened the payload, so it is retried;
  * re-requesting after a partial stream instead would feed the decoder the same
- * audio twice. */
+ * audio twice. A 429 (nginx rate limit, N1 2026-11-21 review) waits longer
+ * before the retry: the limiter releases one request per second, so a 150 ms
+ * re-bang just pays a second refusal. */
 static bool fetch(const char *url, int timeout_ms)
 {
     s_short_wait = timeout_ms < TTS_HTTP_TIMEOUT_MS;
@@ -620,8 +653,11 @@ static bool fetch(const char *url, int timeout_ms)
         return true;
     }
     if (!s_payload_open && !s_abort && s_fetch_gen == s_gen) {
-        ESP_LOGW(TAG, "nothing decoded (%u bytes), retrying once", (unsigned)s_bytes);
-        vTaskDelay(pdMS_TO_TICKS(TTS_RETRY_DELAY_MS));
+        int delay = s_last_status == 429 ? TTS_RATE_LIMIT_RETRY_MS
+                                         : TTS_RETRY_DELAY_MS;
+        ESP_LOGW(TAG, "nothing decoded (%u bytes, status %d), retrying in %d ms",
+                 (unsigned)s_bytes, s_last_status, delay);
+        vTaskDelay(pdMS_TO_TICKS(delay));
         if (fetch_once(url, TTS_HTTP_TIMEOUT_MS)) {
             return true;
         }
@@ -856,6 +892,13 @@ static void prewarm_task(void *arg)
                 s_client_last_us = esp_timer_get_time();
                 ESP_LOGI(TAG, "prewarm: connection ready in %d ms",
                          (int)((esp_timer_get_time() - t0) / 1000));
+                /* N5 (2026-11-21 review): the probe used to run on the
+                 * only 8 KB stack among the TLS tasks; now that it shares
+                 * the 12 KB class, log the headroom so the next resize is
+                 * data, not guesswork. uxTaskGetStackHighWaterMark works
+                 * for WithCaps tasks too; it is in bytes on ESP-IDF. */
+                ESP_LOGI(TAG, "prewarm: stack high-water %u B",
+                         (unsigned)uxTaskGetStackHighWaterMark(NULL));
             }
         }
         if (s_drop_pending) {
@@ -878,12 +921,19 @@ void muse_tts_prewarm(void)
      * first speak and never cleared, so after the first reply every prewarm
      * returned here and the 45 s idle drop below never ran.) */
     if (muse_tts_active() || s_prewarm_task) {
+        /* N4 (2026-11-21 review): a skipped prewarm is why the first
+         * chunk then pays a fresh 3.5-4.3 s handshake -- say so, once,
+         * instead of leaving it to be inferred from the chunk's own
+         * timeout line. */
+        ESP_LOGI(TAG, "prewarm skipped: %s",
+                 s_prewarm_task ? "probe already running" : "reply fetch active");
         return;
     }
     /* A card fetch sets no s_busy, so only touch the socket while holding
      * the client lock -- and do not wait for it: a fetch in flight means
      * the socket is warm anyway. */
     if (!client_lock_take(0)) {
+        ESP_LOGI(TAG, "prewarm skipped: card fetch holds the connection");
         return;
     }
     if (s_drop_pending) {

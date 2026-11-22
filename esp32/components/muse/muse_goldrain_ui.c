@@ -306,7 +306,7 @@ static bool charge_for_game(void)
         muse_audio_sfx(MUSE_SFX_BAD);
         return false;
     }
-    if (!muse_pet_request(PET_FEE)) {
+    if (!muse_pet_request_fee(MUSE_PET_FEE_TAG_GOLDRAIN)) {
         show_note("互动未就绪");
         return false;
     }

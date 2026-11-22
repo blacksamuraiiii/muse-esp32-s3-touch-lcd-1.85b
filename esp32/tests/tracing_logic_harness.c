@@ -156,6 +156,36 @@ int main(void)
      * stroke as a whole is far from covered. */
     assert(muse_tracing_stroke_coverage(&t, 1) <
            MUSE_TRACING_COVER_FRAC);
+    /* Incremental == full rescan (2026-11-21 review P1-2): grade()
+     * rebuilds the coverage from scratch, so the state it leaves must
+     * equal the incremental state the mid-trace reads showed. Any
+     * drift means the O(sample_count) per-point path disagrees with
+     * the judging authority. The verdict itself may legitimately be
+     * DONE here: stroke 0 is the long one and its 16 px cover radius
+     * reaches into the neighbours, so a fully traced first stroke can
+     * already sit at MUSE_TRACING_PASS_PCT. */
+    {
+        uint8_t mid_cover[MUSE_TRACING_MAX_STROKES];
+        memcpy(mid_cover, t.stroke_cover, sizeof(mid_cover));
+        uint8_t mid_score = t.score_pct;
+        uint16_t mid_covered = t.sample_covered;
+        uint8_t mid_flags[sizeof(t.sample_covered_flag)];
+        memcpy(mid_flags, t.sample_covered_flag, sizeof(mid_flags));
+        (void)muse_tracing_grade(&t);
+        assert(memcmp(mid_cover, t.stroke_cover, sizeof(mid_cover)) == 0);
+        assert(mid_score == t.score_pct);
+        assert(mid_covered == t.sample_covered);
+        assert(memcmp(mid_flags, t.sample_covered_flag,
+                      sizeof(mid_flags)) == 0);
+        /* And the verdict from the full rescan agrees with the
+         * incremental score the mid-trace already computed. */
+        if (t.phase == MUSE_TRACING_DONE) {
+            assert(mid_score >= MUSE_TRACING_PASS_PCT);
+        } else {
+            assert(t.phase == MUSE_TRACING_TRACING);
+            assert(mid_score < MUSE_TRACING_PASS_PCT);
+        }
+    }
 
     /* A scribble far from the glyph is wrong: 40+ points, almost all
      * stray. The flash ages out with the tick and the phase returns

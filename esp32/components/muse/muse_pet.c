@@ -629,8 +629,15 @@ static void worker(void *arg)
              * 1.5b: send with a 100 ms timeout and drop on timeout
              * instead of TamaMe's portMAX_DELAY (the UI tick drains every
              * frame, so a drop means the consumer stopped, not that the
-             * state is wrong; the next snapshot refresh still lands). */
-            muse_pet_feedback_t feedback = {action, result, state.fortune};
+             * state is wrong; the next snapshot refresh still lands).
+             * The command's arg is echoed verbatim (2026-11-21 review
+             * P1-1): PET_FEE carries the paying game's tag. */
+            muse_pet_feedback_t feedback = {
+                .action = action,
+                .result = result,
+                .fortune = state.fortune,
+                .arg = cmd.arg,
+            };
             if (xQueueSend(s_feedback, &feedback, pdMS_TO_TICKS(100)) != pdTRUE) {
                 ESP_LOGW(TAG, "feedback dropped (queue full)");
             }
@@ -693,6 +700,15 @@ bool muse_pet_request(muse_pet_action_t action)
         return false;
     }
     return request_cmd(action, 0);
+}
+
+bool muse_pet_request_fee(int32_t tag)
+{
+    /* 2026-11-21 review P1-1: the tag rides the command's arg and is
+     * echoed back in the receipt (worker_task), so muse_interact_ui.c
+     * can route a refusal to the page that paid for the round instead
+     * of whatever tile happens to be visible when the receipt lands. */
+    return request_cmd(PET_FEE, tag);
 }
 
 bool muse_pet_decay_ack(int32_t day)

@@ -250,6 +250,18 @@ size_t heap_caps_get_free_size(uint32_t caps)
     return heap_caps_get_total_size(caps);
 }
 
+/* 2026-11-21: the frame-gap stall probe in muse_ui.c reads the largest
+ * block for its warning line; a healthy constant keeps it quiet. */
+size_t heap_caps_get_largest_free_block(uint32_t caps)
+{
+    return heap_caps_get_free_size(caps);
+}
+
+size_t heap_caps_get_minimum_free_size(uint32_t caps)
+{
+    return heap_caps_get_free_size(caps);
+}
+
 #if !defined(__APPLE__)
 size_t muse_sim_strlcpy(char *destination, const char *source, size_t size)
 {

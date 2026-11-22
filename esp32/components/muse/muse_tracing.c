@@ -164,23 +164,44 @@ static void rebuild_samples(muse_tracing_t *t)
     const muse_tracing_stroke_t *strokes = muse_tracing_strokes(t->char_idx, &count);
     t->sample_count = 0;
     if (strokes == NULL) {
+        t->sample_total = 0;
+        memset(t->stroke_total, 0, sizeof(t->stroke_total));
         return;
     }
     for (int i = 0; i < count; i++) {
         resample_stroke(t, &strokes[i], (uint8_t)i);
     }
+    /* Per-stroke and total sample counts, cached for the incremental
+     * coverage path (2026-11-21 review P1-2): add_point() needs the
+     * denominators without rescanning. Also a fresh attempt starts
+     * from zero coverage, so clear the whole state here -- set_char()
+     * and reset() both funnel through this. */
+    memset(t->stroke_total, 0, sizeof(t->stroke_total));
+    for (uint16_t i = 0; i < t->sample_count; i++) {
+        uint8_t s = t->sample_stroke[i];
+        if (s < MUSE_TRACING_MAX_STROKES) {
+            t->stroke_total[s]++;
+        }
+    }
+    t->sample_total = t->sample_count;
+    t->sample_covered = 0;
+    memset(t->stroke_cover, 0, sizeof(t->stroke_cover));
+    memset(t->stroke_covered_count, 0, sizeof(t->stroke_covered_count));
+    memset(t->sample_covered_flag, 0, sizeof(t->sample_covered_flag));
+    t->score_pct = 0;
 }
 
-/* Recompute per-stroke coverage from the stored points: a sample
- * is covered when any stored point is within
- * MUSE_TRACING_COVER_DIST_PX of it. Coverage is monotone (points
- * only accumulate), and the pass is bounded (<= 512 points x
- * <= 320 samples), so recomputing on each point is cheaper than
- * keeping incremental state in the struct. */
+/* Full rescan: the judging authority. Rebuilds the per-sample covered
+ * flags from the stored points, then recomputes every percent from
+ * them, so grade() cannot drift from the incremental path even if
+ * one ever disagreed. Cost O(points x samples), called once per
+ * grade (the pen has rested), never per point. */
 static void refresh_coverage(muse_tracing_t *t)
 {
     int count = 0;
     (void)muse_tracing_strokes(t->char_idx, &count);
+    memset(t->sample_covered_flag, 0, sizeof(t->sample_covered_flag));
+    memset(t->stroke_covered_count, 0, sizeof(t->stroke_covered_count));
     t->sample_covered = 0;
     uint16_t sample_total = 0;
     for (int s = 0; s < (int)MUSE_TRACING_MAX_STROKES; s++) {
@@ -198,6 +219,8 @@ static void refresh_coverage(muse_tracing_t *t)
             for (uint32_t p = 0; p < t->point_count; p++) {
                 if (dist2(t->samples[i].x, t->samples[i].y,
                           t->points[p].x, t->points[p].y) <= cover2) {
+                    t->sample_covered_flag[i >> 3] |=
+                        (uint8_t)(1u << (i & 7));
                     covered++;
                     break;
                 }
@@ -205,6 +228,7 @@ static void refresh_coverage(muse_tracing_t *t)
         }
         if (total > 0) {
             t->stroke_cover[s] = (uint8_t)(covered * 100u / total);
+            t->stroke_covered_count[s] = covered;
             t->sample_covered += covered;
             sample_total += total;
         }
@@ -215,6 +239,47 @@ static void refresh_coverage(muse_tracing_t *t)
                        ? (uint8_t)((uint32_t)t->sample_covered * 100u /
                                    sample_total)
                        : 0;
+}
+
+/* Incremental coverage for one stored point (2026-11-21 review P1-2):
+ * coverage is monotone within an attempt (points only accumulate and
+ * the sample set is fixed after set_char), so a new point only needs
+ * to mark the samples it newly covers -- O(sample_count), one pass.
+ * The per-stroke percents and the overall score follow from the
+ * monotonically growing counters; grade() still runs the full rescan
+ * (refresh_coverage) before judging, so the verdict authority is
+ * unchanged. */
+static void note_point_coverage(muse_tracing_t *t, int x, int y)
+{
+    if (t->sample_total == 0) {
+        return;
+    }
+    const int cover2 =
+        MUSE_TRACING_COVER_DIST_PX * MUSE_TRACING_COVER_DIST_PX;
+    bool any = false;
+    for (uint16_t i = 0; i < t->sample_count; i++) {
+        if (t->sample_covered_flag[i >> 3] & (uint8_t)(1u << (i & 7))) {
+            continue;   /* already covered by an earlier point */
+        }
+        if (dist2(t->samples[i].x, t->samples[i].y, x, y) > cover2) {
+            continue;
+        }
+        t->sample_covered_flag[i >> 3] |= (uint8_t)(1u << (i & 7));
+        uint8_t s = t->sample_stroke[i];
+        if (s < MUSE_TRACING_MAX_STROKES) {
+            t->stroke_covered_count[s]++;
+            t->stroke_cover[s] = (uint8_t)(
+                (uint32_t)t->stroke_covered_count[s] * 100u /
+                t->stroke_total[s]);
+        }
+        t->sample_covered++;
+        any = true;
+    }
+    if (!any) {
+        return;
+    }
+    t->score_pct = (uint8_t)((uint32_t)t->sample_covered * 100u /
+                             t->sample_total);
 }
 
 /* Grade the attempt: DONE when every stroke is covered, WRONG when the
@@ -306,9 +371,13 @@ muse_tracing_phase_t muse_tracing_add_point(muse_tracing_t *t, int x, int y)
     if (stray) {
         t->stray_count++;
     }
-    /* Coverage is kept current; grading waits for the UI's settle timer
-     * (see muse_tracing_grade). */
-    refresh_coverage(t);
+    /* Coverage is kept current incrementally (note_point_coverage,
+     * O(sample_count) per point -- 2026-11-21 review P1-2: the full
+     * O(point_count x sample_count) rescan per point cost up to
+     * ~160k distance checks on the late strokes, which showed up as
+     * pen lag); grading waits for the UI's settle timer and runs the
+     * full rescan once (see muse_tracing_grade). */
+    note_point_coverage(t, x, y);
     return t->phase;
 }
 

@@ -230,6 +230,10 @@ static void luckywheel_roll(muse_pet_model_t *s, int32_t day)
 void muse_pet_luckywheel_today(const muse_pet_model_t *s, int64_t now,
                                uint32_t *remaining)
 {
+    /* No consumer since the 2026-11-21 no-cap decision (the UI's
+     * "N/9" hint line went with it); kept for the ledger view only.
+     * Reports the pre-cap-style remaining against
+     * MUSE_PET_LUCKYWHEEL_DAILY_MAX, which nothing enforces any more. */
     bool calibrated = false;
     int32_t day = muse_pet_day(now, &calibrated);
     (void)calibrated; /* the ledger is day-based only, see luckywheel_roll() */

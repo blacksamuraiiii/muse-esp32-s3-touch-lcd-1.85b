@@ -452,36 +452,33 @@ int main(void)
     assert(m.jiaobei_count == 50);
     assert(m.jiaobei_streak == 50);
 
-    /* --- luckywheel: MUSE_PET_LUCKYWHEEL_COST a paid spin, at most 9
-     * a day (user decision 2026-11-20, mockup v7); the prize rides in
-     * `arg` (MUSE_PET_LUCKY_*): +2 / +5 / +10 pay that many coins,
+    /* --- luckywheel: MUSE_PET_LUCKYWHEEL_COST a paid spin; NO daily cap
+     * any more (user decision 2026-11-21, landed with 1.5.4d's 7625c22:
+     * the wheel spins as long as the wallet pays -- luckywheel_count
+     * is kept for the ledger only and never refuses). The prize rides
+     * in `arg` (MUSE_PET_LUCKY_*): +2 / +5 / +10 pay that many coins,
      * THANKS and AGAIN pay nothing. */
     muse_pet_model_init(&m);
     m.coins = 100;
-    muse_pet_luckywheel_today(&m, day_now(d1), &remaining);
-    assert(remaining == 9);
     for (int i = 0; i < 9; i++) {
         assert(apply(&m, PET_LUCKYWHEEL_SPIN, d1, MUSE_PET_LUCKY_THANKS) == PET_OK);
     }
     assert(m.coins == 100 - 9 * MUSE_PET_LUCKYWHEEL_COST);
     assert(m.luckywheel_day == d1);
     assert(m.luckywheel_count == 9);
-    muse_pet_luckywheel_today(&m, day_now(d1), &remaining);
-    assert(remaining == 0);
-    /* The 10th paid spin of the day: PET_CAP, and nothing changes. */
-    assert(apply(&m, PET_LUCKYWHEEL_SPIN, d1, MUSE_PET_LUCKY_COINS_10) == PET_CAP);
-    assert(m.coins == 100 - 9 * MUSE_PET_LUCKYWHEEL_COST);
-    assert(m.luckywheel_count == 9);
+    /* The 10th paid spin of the day still spins: PET_OK, charged and
+     * counted (the old 9-a-day cap went with 2026-11-21's decision). */
+    assert(apply(&m, PET_LUCKYWHEEL_SPIN, d1, MUSE_PET_LUCKY_COINS_10) == PET_OK);
+    assert(m.coins == 100 - 10 * MUSE_PET_LUCKYWHEEL_COST + 10);
+    assert(m.luckywheel_count == 10);
     /* A new day rolls the ledger (the living cost is settled first). */
     assert(apply(&m, PET_LUCKYWHEEL_SPIN, d2, MUSE_PET_LUCKY_THANKS) == PET_OK);
-    assert(m.coins == 100 - 10 * MUSE_PET_LUCKYWHEEL_COST - MUSE_PET_DECAY_PER_DAY);
+    assert(m.coins == 100 - 11 * MUSE_PET_LUCKYWHEEL_COST + 10 - MUSE_PET_DECAY_PER_DAY);
     assert(m.luckywheel_day == d2);
     assert(m.luckywheel_count == 1);
-    muse_pet_luckywheel_today(&m, day_now(d2), &remaining);
-    assert(remaining == 8);
     /* Clock rollback never re-grants spins. */
     assert(apply(&m, PET_LUCKYWHEEL_SPIN, d2 - 1, MUSE_PET_LUCKY_THANKS) == PET_OK);
-    assert(m.coins == 100 - 11 * MUSE_PET_LUCKYWHEEL_COST - MUSE_PET_DECAY_PER_DAY);
+    assert(m.coins == 100 - 12 * MUSE_PET_LUCKYWHEEL_COST + 10 - MUSE_PET_DECAY_PER_DAY);
     assert(m.luckywheel_day == d2);
     assert(m.luckywheel_count == 2);
     /* Under the price a spin is refused and settles nothing. */
@@ -528,16 +525,13 @@ int main(void)
                  MUSE_PET_LUCKY_FREE | MUSE_PET_LUCKY_COINS_10) == PET_OK);
     assert(m.coins == 10);
     assert(m.luckywheel_count == 0);
-    muse_pet_luckywheel_today(&m, day_now(d1), &remaining);
-    assert(remaining == 9);
-    /* A free spin never hits the cap either: 9 paid spins used up,
-     * the free one still settles. */
+    /* A free spin pays and never counts, paid or not (no cap any more,
+     * so "never hits the cap" is now just "still settles"). */
     muse_pet_model_init(&m);
     m.coins = 100;
     for (int i = 0; i < 9; i++) {
         assert(apply(&m, PET_LUCKYWHEEL_SPIN, d1, MUSE_PET_LUCKY_THANKS) == PET_OK);
     }
-    assert(apply(&m, PET_LUCKYWHEEL_SPIN, d1, MUSE_PET_LUCKY_COINS_10) == PET_CAP);
     assert(apply(&m, PET_LUCKYWHEEL_SPIN, d1,
                  MUSE_PET_LUCKY_FREE | MUSE_PET_LUCKY_COINS_5) == PET_OK);
     assert(m.coins == 100 - 9 * MUSE_PET_LUCKYWHEEL_COST + 5);
@@ -556,21 +550,21 @@ int main(void)
     m.luckywheel_day = -2;
     assert(!muse_pet_model_valid(&m));
     /* ... but a Test build's ledger still loads on Release (B2): a
-     * count above 9 is structurally fine, and the day is still
-     * capped -- the 51st paid spin is PET_CAP. */
+     * count above 9 is structurally fine, and with the cap gone
+     * (2026-11-21) the 51st paid spin of that day still settles. */
     muse_pet_model_init(&m);
     m.coins = 100;
     m.luckywheel_day = d1;
     m.luckywheel_count = 50;
     assert(muse_pet_model_valid(&m));
-    assert(apply(&m, PET_LUCKYWHEEL_SPIN, d1, MUSE_PET_LUCKY_THANKS) == PET_CAP);
-    assert(m.coins == 100);
-    assert(m.luckywheel_count == 50);
+    assert(apply(&m, PET_LUCKYWHEEL_SPIN, d1, MUSE_PET_LUCKY_THANKS) == PET_OK);
+    assert(m.coins == 100 - MUSE_PET_LUCKYWHEEL_COST);
+    assert(m.luckywheel_count == 51);
     /* ... while a free spin still settles on that same day. */
     assert(apply(&m, PET_LUCKYWHEEL_SPIN, d1,
                  MUSE_PET_LUCKY_FREE | MUSE_PET_LUCKY_COINS_2) == PET_OK);
     assert(m.coins == MUSE_PET_COINS_MAX); /* +2 capped at the wallet */
-    assert(m.luckywheel_count == 50);
+    assert(m.luckywheel_count == 51);
 
     /* --- a v4 blob's stored 5 counts as paid, never topped up --------- */
     muse_pet_model_init(&m);

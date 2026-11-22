@@ -58,6 +58,12 @@
 #define LV_FONT_UNSCII_8 1
 #define LV_FONT_UNSCII_16 1
 #define LV_FONT_DEFAULT &lv_font_montserrat_20
+/* Compressed-font decoding stays OFF: the 1.5.4e first flash tried a
+ * compressed CJK face, and LVGL 9.5's decoder produced wrong (smudged)
+ * bitmap content for it -- the face was regenerated uncompressed
+ * instead (tools/muse/gen_cjk_noto_font.sh, 2026-11-21). Keep this 0
+ * in sync with CONFIG_LV_USE_FONT_COMPRESSED in devices/sdkconfig.muse. */
+#define LV_USE_FONT_COMPRESSED 0
 
 #define LV_USE_THEME_DEFAULT 1
 #define LV_THEME_DEFAULT_DARK 1

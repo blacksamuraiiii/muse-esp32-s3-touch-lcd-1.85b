@@ -49,6 +49,14 @@
 #include <string.h>
 #include <time.h>
 
+#include "esp_attr.h" /* EXT_RAM_BSS_ATTR: the ink pool and the trace
+                        * state live in PSRAM (7.6 KB of internal DRAM
+                        * back, 2026-11-21 review P2-4). Access cost is
+                        * a few dozen bytes per touch event on the LVGL
+                        * thread -- the incremental coverage pass reads
+                        * ~320 samples once per point, well inside a
+                        * frame budget at PSRAM latencies. */
+
 #include "muse_audio.h"    /* verdict sounds, same two as the quiz */
 #include "muse_font.h"
 #include "muse_pet.h"
@@ -130,7 +138,10 @@ static lv_obj_t *s_done_ov;   /* 再写一次 card, DONE only */
 static uint32_t s_last_touch_ms;
 static lv_timer_t *s_timer;
 
-static muse_tracing_t s_trace;
+/* PSRAM (P2-4, see the esp_attr.h note): add_point() reads its samples
+ * once per stored point (~320 reads) and the settle timer's grade()
+ * rescans -- both fine at PSRAM latency on the LVGL thread. */
+static EXT_RAM_BSS_ATTR muse_tracing_t s_trace;
 static int s_char_idx = 0;
 static bool s_reward_sent;
 
@@ -138,7 +149,9 @@ static bool s_reward_sent;
  * points are s_pool[line_off .. line_off + line_n - 1]; the pool
  * only ever grows within an attempt (reset() zeroes it). */
 static lv_obj_t *s_lines[TRACING_UI_MAX_LINES];
-static lv_point_precise_t s_pool[TRACING_UI_POOL_POINTS];
+/* PSRAM (P2-4): written a few dozen bytes per touch event, read once
+ * per tick by the line renderer -- comfortable at PSRAM latency. */
+static EXT_RAM_BSS_ATTR lv_point_precise_t s_pool[TRACING_UI_POOL_POINTS];
 static uint16_t s_pool_used;
 static uint8_t s_line_count;
 static int s_line_off[TRACING_UI_MAX_LINES];
@@ -453,7 +466,10 @@ void muse_tracing_ui_refresh_list(void)
     }
     if (s_list_coins != NULL) {
         char buf[32];
-        snprintf(buf, sizeof(buf), "金币 %u/100",
+        /* No snapshot: show the placeholder, not a made-up 0 -- the
+         * wallet's real balance is simply unknown (same wording as the
+         * other status lines' "--"). */
+        snprintf(buf, sizeof(buf), have ? "金币 %u/100" : "金币 --/100",
                  (unsigned)(have ? snap.coins : 0));
         lv_label_set_text(s_list_coins, buf);
     }

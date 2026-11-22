@@ -281,11 +281,11 @@ typedef struct {
  * records nothing: the streak only moves for tosses that settled, and
  * a bare request (arg 0) charges and counts the toss without recording
  * a result. The toss itself is pure consumption with no payout.
- * PET_LUCKYWHEEL_SPIN settles one lucky wheel spin (user decision
- * 2026-11-20): MUSE_PET_LUCKYWHEEL_COST coins (2), at most 9 paid
- * spins a day (MUSE_PET_LUCKYWHEEL_DAILY_MAX). The 10th paid spin of
- * the day returns PET_CAP and settles nothing; under
- * MUSE_PET_LUCKYWHEEL_COST it returns PET_POOR. The result rides in
+ * PET_LUCKYWHEEL_SPIN settles one lucky wheel spin: MUSE_PET_LUCKYWHEEL_COST
+ * coins (2) per paid spin, and NO daily cap any more (user decision
+ * 2026-11-21, landed with 1.5.4d: the wheel spins as long as the wallet
+ * pays; luckywheel_count is kept for the ledger only and never refuses).
+ * Under MUSE_PET_LUCKYWHEEL_COST it returns PET_POOR. The result rides in
  * `arg` (MUSE_PET_LUCKY_*): +2 / +5 / +10 pay that many coins through
  * capped_add (never above the 100-coin wallet), THANKS and AGAIN pay
  * nothing, and the MUSE_PET_LUCKY_FREE bit marks a free re-spin won

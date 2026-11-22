@@ -48,6 +48,15 @@ CONFIG_LV_FONT_MONTSERRAT_16=y
 CONFIG_LV_FONT_MONTSERRAT_20=y
 CONFIG_LV_FONT_MONTSERRAT_28=y
 CONFIG_LV_FONT_DEFAULT_MONTSERRAT_20=y
+# The regenerated CJK face (gen_cjk_noto_font.sh, 2026-11-20 spec; landed
+# 2026-11-21) is UNCOMPRESSED on purpose: a compressed variant saved
+# ~131 KB more, but LVGL's RLE decoder keeps its position state in a
+# global singleton (font_fmt_rle), and the board's two SW draw units
+# decompressing glyphs concurrently smudged characters on 2026-11-21
+# (single-unit decode was bit-exact, so the encoding was fine -- only
+# the concurrency was not). LV_USE_FONT_COMPRESSED therefore stays off
+# here and in simulator/lv_conf.h; see gen_cjk_noto_font.sh's header.
+CONFIG_LV_USE_FONT_COMPRESSED=n
 CONFIG_LV_THEME_DEFAULT_DARK=y
 # Print LVGL's warnings to the console, including the expression of a failed
 # assert just before components/muse/CMakeLists.txt's handler aborts.

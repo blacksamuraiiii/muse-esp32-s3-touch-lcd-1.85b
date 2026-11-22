@@ -1255,43 +1255,56 @@ static void drain_feedback(void)
             }
             break;
         case PET_FEE:
-            if (fb.result == PET_POOR) {
-                /* Snapshot was stale: the 10 coins were never deducted,
-                 * so there is nothing to refund -- cancel the game
-                 * (which was only a start of a never-settled game).
-                 * Snake, whack-a-mole, goldrain, doodle, breakout and
-                 * tictactoe share PET_FEE; all six expose a cancel
-                 * hook, so route by the visible page so a refusal for
-                 * one game never touches another's overlay. */
-                if (s_page == IC_PAGE_WHACKAMOLE) {
-                    muse_whackamole_ui_fee_refused();
-                } else if (s_page == IC_PAGE_DOODLE) {
-                    muse_doodle_ui_fee_refused();
-                } else if (s_page == IC_PAGE_SNAKE) {
+            /* The receipt carries the paying game's MUSE_PET_FEE_TAG_*
+             * in arg (muse_pet_request_fee, 2026-11-21 review P1-1):
+             * route by the tag, so a snake fee that settles after the
+             * player already moved to whack-a-mole resets the snake
+             * round, not the whack-a-mole one. Tag 0 (an untagged fee,
+             * e.g. from a stale build path) keeps the 1.5.3 fallback
+             * of routing by the visible page. POOR and STORAGE both
+             * cancel the never-settled round; PET_OK means the fee
+             * went through and the game already started. */
+            if (fb.result == PET_POOR || fb.result == PET_STORAGE) {
+                switch (fb.arg) {
+                case MUSE_PET_FEE_TAG_SNAKE:
                     muse_snake_ui_fee_refused();
-                } else if (s_page == IC_PAGE_GOLDRAIN) {
-                    muse_goldrain_ui_fee_refused();
-                } else if (s_page == IC_PAGE_BREAKOUT) {
-                    muse_breakout_ui_fee_refused();
-                } else if (s_page == IC_PAGE_TICTACTOE) {
-                    muse_tictactoe_ui_fee_refused();
-                }
-                write_pet_caption("金币不够，先摸摸 / 喂饭 / 抽运势");
-            } else if (fb.result == PET_STORAGE) {
-                if (s_page == IC_PAGE_WHACKAMOLE) {
+                    break;
+                case MUSE_PET_FEE_TAG_WHACKAMOLE:
                     muse_whackamole_ui_fee_refused();
-                } else if (s_page == IC_PAGE_DOODLE) {
+                    break;
+                case MUSE_PET_FEE_TAG_DOODLE:
                     muse_doodle_ui_fee_refused();
-                } else if (s_page == IC_PAGE_SNAKE) {
-                    muse_snake_ui_fee_refused();
-                } else if (s_page == IC_PAGE_GOLDRAIN) {
+                    break;
+                case MUSE_PET_FEE_TAG_GOLDRAIN:
                     muse_goldrain_ui_fee_refused();
-                } else if (s_page == IC_PAGE_BREAKOUT) {
+                    break;
+                case MUSE_PET_FEE_TAG_BREAKOUT:
                     muse_breakout_ui_fee_refused();
-                } else if (s_page == IC_PAGE_TICTACTOE) {
+                    break;
+                case MUSE_PET_FEE_TAG_TICTACTOE:
                     muse_tictactoe_ui_fee_refused();
+                    break;
+                default:
+                    if (s_page == IC_PAGE_WHACKAMOLE) {
+                        muse_whackamole_ui_fee_refused();
+                    } else if (s_page == IC_PAGE_DOODLE) {
+                        muse_doodle_ui_fee_refused();
+                    } else if (s_page == IC_PAGE_SNAKE) {
+                        muse_snake_ui_fee_refused();
+                    } else if (s_page == IC_PAGE_GOLDRAIN) {
+                        muse_goldrain_ui_fee_refused();
+                    } else if (s_page == IC_PAGE_BREAKOUT) {
+                        muse_breakout_ui_fee_refused();
+                    } else if (s_page == IC_PAGE_TICTACTOE) {
+                        muse_tictactoe_ui_fee_refused();
+                    }
+                    break;
                 }
-                write_pet_caption("互动数据损坏");
+                if (fb.result == PET_POOR) {
+                    write_pet_caption("金币不够，先摸摸 / 喂饭 / 抽运势");
+                } else {
+                    write_pet_caption("互动数据损坏");
+                }
             }
             /* PET_OK: deduction confirmed; the game already started, so
              * nothing more to do here. */

@@ -17,12 +17,29 @@
 #include <stdint.h>
 
 /* Feedback for one settled action. `fortune` is the current fortune index
- * (meaningful for PET_FORTUNE results; otherwise the last drawn index). */
+ * (meaningful for PET_FORTUNE results; otherwise the last drawn index).
+ * `arg` echoes the command's arg verbatim (2026-11-21 review P1-1): for
+ * PET_FEE it is the requesting game's MUSE_PET_FEE_TAG_*, so the receipt
+ * routes to the page that paid even if the player has moved on to
+ * another tile in the meantime; 0 for actions that carry no arg. */
 typedef struct {
     muse_pet_action_t action;
     muse_pet_result_t result;
     uint32_t fortune;
+    int32_t arg;
 } muse_pet_feedback_t;
+
+/* Who paid a PET_FEE (the value the fee receipt carries in arg; the
+ * interacting pages each pass their own). Tags are stable numbers, not
+ * page indices, so the routing in muse_interact_ui.c never has to agree
+ * with its internal page enum. 0 is reserved: a fee without a tag routes
+ * by the visible page as before (the 1.5.3 fallback). */
+#define MUSE_PET_FEE_TAG_SNAKE      1
+#define MUSE_PET_FEE_TAG_WHACKAMOLE 2
+#define MUSE_PET_FEE_TAG_DOODLE     3
+#define MUSE_PET_FEE_TAG_GOLDRAIN   4
+#define MUSE_PET_FEE_TAG_BREAKOUT   5
+#define MUSE_PET_FEE_TAG_TICTACTOE  6
 
 /*
  * Start the worker (idempotent). Never blocks and never aborts the app:
@@ -48,6 +65,12 @@ bool muse_pet_storage_error(void);
  * instead of waiting (design §6.2).
  */
 bool muse_pet_request(muse_pet_action_t action);
+
+/* Queue a PET_FEE on behalf of one game, tagged with that game's
+ * MUSE_PET_FEE_TAG_* so the settled receipt routes to the paying page
+ * even after a page switch (2026-11-21 review P1-1). The tag is echoed
+ * back verbatim in muse_pet_feedback_t.arg. */
+bool muse_pet_request_fee(int32_t tag);
 
 /* Start a game round with its already-decided outcome: >0 win (+5 coins),
  * <0 loss (-5), 0 draw (no change). Returns false when the worker is not

@@ -123,6 +123,17 @@ bool muse_wordcards_audio_fetch_one(muse_wordcards_t *g, int i);
  * FETCHING through muse_quiz_retry_failed_audio. */
 bool muse_wordcards_audio_fetch_one_quiz(muse_quiz_t *g, int i);
 
+/* Advisory "would a single tap-retry fetch even start right now?"
+ * (N2/N3, 2026-11-21 review): false when the internal-RAM floor
+ * (WC_MIN_INTERNAL_FOR_TLS) is not met, or when the reply fetch /
+ * prewarm probe owns the shared connection. The retry paths call this
+ * BEFORE marking their one-shot retry as spent, so a refused moment
+ * leaves the retry intact for the next tap. Cheap and never blocks;
+ * a race between this check and the fetch is handled by the fetch
+ * itself (a refusal fails only that word).
+ */
+bool muse_wordcards_audio_single_ok_now(void);
+
 /* Abort a prefetch in flight (leaving the tile / restarting). Marks
  * already fetched are kept; a fetch from the old generation is
  * ignored by the bookkeeping. */
