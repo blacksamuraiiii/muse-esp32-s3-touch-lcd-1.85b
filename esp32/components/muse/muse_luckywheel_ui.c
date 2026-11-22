@@ -55,12 +55,11 @@
 #define LW_BTN_W 98
 #define LW_BTN_H 66
 #define LW_BTN_RADIUS 14
-#define LW_LIMIT_W 280
-#define LW_LIMIT_H 84
-#define LW_LIMIT_MS 2000
 
-/* Limit toast, 掷筊 format ("今日掷筊次数已用完"). */
-#define LW_LIMIT_TEXT "今日转盘次数已用完"
+/* No daily cap any more (user decision 2026-11-21): the limit toast
+ * (LW_LIMIT_TEXT / show_limit / muse_luckywheel_ui_limit_reached)
+ * went away with the cap (1.5.4e review M-3). A refused spin is only
+ * ever poor-coins or storage, both shown on the prompt row. */
 
 typedef enum {
     LW_STAGE_START = 0,
@@ -81,10 +80,7 @@ static lv_obj_t *s_btn_line1;
 static lv_obj_t *s_btn_line2;
 static lv_obj_t *s_hud;
 static lv_obj_t *s_hint;
-static lv_obj_t *s_limit_overlay; /* full-page dim + centred box, modal */
-static lv_obj_t *s_limit_label;
 static lv_timer_t *s_timer;
-static uint32_t s_limit_since; /* lv_tick_get() when the toast showed, 0 = hidden */
 static lw_stage_t s_stage = LW_STAGE_START;
 static uint32_t s_angle10; /* current disc angle, 0..3599 */
 static uint32_t s_spin_start10;
@@ -106,30 +102,9 @@ static lv_obj_t *mk_label(lv_obj_t *parent, const lv_font_t *font,
     return l;
 }
 
-static void hide_limit(void)
-{
-    lv_obj_add_flag(s_limit_overlay, LV_OBJ_FLAG_HIDDEN);
-    s_limit_since = 0;
-}
-
-static void show_limit(void)
-{
-    lv_label_set_text(s_limit_label, LW_LIMIT_TEXT);
-    lv_obj_remove_flag(s_limit_overlay, LV_OBJ_FLAG_HIDDEN);
-    s_limit_since = lv_tick_get();
-}
-
-static void on_limit_tap(lv_event_t *e)
-{
-    (void)e;
-    /* Any tap on the prompt (box or dim) dismisses it; the tap never
-     * reaches the page underneath, so it cannot start a spin. */
-    hide_limit();
-}
-
-/* The prompt row (y=304) doubles as the note row: a refusal reason
- * replaces the "每次 -2 金币 · 今日已转 N/9 次" line until the next
- * visit, in DANGER. */
+/* The prompt row (y=304) is the refusal row: a refusal reason shows
+ * there in DANGER until the next visit (the old "每次 -2 金币 ·
+ * 今日已转 N/9 次" line went with the daily cap, 2026-11-21). */
 static void show_note(const char *text)
 {
     lv_label_set_text(s_hint, text);
@@ -234,10 +209,6 @@ static void finish_spin(void)
 static void on_tick(lv_timer_t *t)
 {
     (void)t;
-    if (s_limit_since != 0 &&
-        lv_tick_get() - s_limit_since >= LW_LIMIT_MS) {
-        hide_limit();
-    }
     if (s_stage != LW_STAGE_SPINNING) {
         return;
     }
@@ -412,38 +383,6 @@ void muse_luckywheel_ui_build(lv_obj_t *parent, lv_event_cb_t back_cb)
     s_hint = mk_label(s_overlay, muse_font_cjk(), MUSE_THEME_DIM, "");
     lv_obj_align(s_hint, LV_ALIGN_TOP_MID, 0, LW_HINT_Y);
 
-    /* Limit toast (掷筊 prompt geometry): full-page dim + centred
-     * 280x84 box. Created last so it sits on top of everything,
-     * including "<" (a modal: while it is up, any tap dismisses it,
-     * and it goes away on its own after ~2 s). Hidden until the day's
-     * spins run out. */
-    s_limit_overlay = lv_obj_create(s_page);
-    lv_obj_set_size(s_limit_overlay, 360, 360);
-    lv_obj_set_pos(s_limit_overlay, 0, 0);
-    lv_obj_set_style_bg_opa(s_limit_overlay, LV_OPA_50, 0);
-    lv_obj_set_style_bg_color(s_limit_overlay, lv_color_hex(MUSE_THEME_BG), 0);
-    lv_obj_set_style_border_width(s_limit_overlay, 0, 0);
-    lv_obj_set_style_radius(s_limit_overlay, 0, 0);
-    lv_obj_set_style_pad_all(s_limit_overlay, 0, 0);
-    lv_obj_remove_flag(s_limit_overlay, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_event_cb(s_limit_overlay, on_limit_tap, LV_EVENT_CLICKED, NULL);
-    lv_obj_add_flag(s_limit_overlay, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_t *box = lv_obj_create(s_limit_overlay);
-    lv_obj_set_size(box, LW_LIMIT_W, LW_LIMIT_H);
-    lv_obj_align(box, LV_ALIGN_CENTER, 0, 0);
-    lv_obj_set_style_bg_color(box, lv_color_hex(MUSE_THEME_CARD), 0);
-    lv_obj_set_style_bg_opa(box, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_width(box, 2, 0);
-    lv_obj_set_style_border_color(box, lv_color_hex(MUSE_THEME_ACCENT), 0);
-    lv_obj_set_style_radius(box, LW_BTN_RADIUS, 0);
-    lv_obj_set_style_pad_all(box, 0, 0);
-    lv_obj_remove_flag(box, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_remove_flag(box, LV_OBJ_FLAG_CLICKABLE);
-    s_limit_label = mk_label(box, muse_font_cjk(), MUSE_THEME_TEXT,
-                             LW_LIMIT_TEXT);
-    lv_obj_center(s_limit_label);
-    lv_obj_remove_flag(s_limit_label, LV_OBJ_FLAG_CLICKABLE);
-
     /* One timer for the page, paused until shown (掷筊 pattern). */
     s_timer = lv_timer_create(on_tick, MUSE_LUCKYWHEEL_TICK_MS, NULL);
     lv_timer_pause(s_timer);
@@ -461,7 +400,6 @@ void muse_luckywheel_ui_show(void)
      * the page with one banked loses it, same as leaving any game
      * mid-round. */
     s_pending_free = false;
-    hide_limit();
     show_start();
     lv_timer_resume(s_timer);
 }
@@ -472,7 +410,6 @@ void muse_luckywheel_ui_hide(void)
         return;
     }
     lv_timer_pause(s_timer);
-    hide_limit();
     s_pending_free = false;
     show_start();
 }
@@ -485,17 +422,6 @@ void muse_luckywheel_ui_fee_refused(void)
     cancel_spin();
     muse_audio_sfx(MUSE_SFX_BAD);
     show_note("金币不够（需 2 枚）");
-}
-
-/* Unreachable since 2026-11-21 (no daily cap): kept so the pet feedback
- * switch still compiles, and harmless if a stale worker sends it. */
-void muse_luckywheel_ui_limit_reached(void)
-{
-    if (!s_built) {
-        return;
-    }
-    cancel_spin();
-    show_limit();
 }
 
 void muse_luckywheel_ui_storage_error(void)

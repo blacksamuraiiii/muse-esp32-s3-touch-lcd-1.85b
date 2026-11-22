@@ -28,7 +28,7 @@
  *     main page's exact grid (140x95, rows y=80/185, x=35/185, 56 px
  *     icons + titles inside the cards); coin line at y=302 (TEXT,
  *     refreshed by refresh_status()). Order is the user's: 语文练习
- *     first, then 数学练习, 英语单词, 英语口语. All four are free
+ *     first, then 数学练习, 英语单词, 英语听力. All four are free
  *     (user decision 2026-11-12, 学习全部免费): no entry fee, no
  *     dimming. Back lands on the main page; the four items' own back
  *     arrows land here, not on the mini-game list (the 描红 trace
@@ -450,7 +450,7 @@ bool muse_interact_ui_swipe_locked(void)
     /* Any interaction subpage: 喂食, 今日运势, 学习, 小游戏 (the minigame
      * list) and the seven game boards (石头剪刀布 / 贪吃蛇 / 打地鼠 /
      * 金币雨 / 毛毛跳跃 / OX棋 / 打砖块) plus the four learning items
-     * (语文练习 / 数学练习 / 英语单词 / 英语口语, reached through the
+     * (语文练习 / 数学练习 / 英语单词 / 英语听力, reached through the
      * 学习 page), the word-cards category page and the two 描红 pages.
      * Only the main page swipes, right to the face. A subpage leaves
      * through its "<" back arrow, one level up; BOOT is the exception,
@@ -1310,12 +1310,19 @@ static void drain_feedback(void)
              * nothing more to do here. */
             break;
         case PET_PLAY_REWARD:
-        case PET_TRACING_SOLVE:
             /* Mini-game payouts. Every game page prints its own result line
-             * (the snake / whack OVER cards, the trace page's
-             * "写得真棒！"), so the face caption is deliberately
-             * left alone -- it is not on screen while a
+             * (the snake / whack OVER cards), so the face caption is
+             * deliberately left alone -- it is not on screen while a
              * game is being played anyway. */
+            break;
+        case PET_TRACING_SOLVE:
+            /* The trace page printed the bare praise at grade time; the
+             * receipt decides the payout line (E-1, 2026-11-22): PET_OK
+             * paid the 2 coins, so the line grows "+2 分"; PET_CAP (the
+             * same character already paid today) leaves the bare praise.
+             * The page itself guards against a receipt that lands after
+             * the verdict is gone. The face caption stays untouched. */
+            muse_tracing_ui_reward_settled(fb.result == PET_OK);
             break;
         case PET_JIAOBEI_TOSS:
             /* The jiaobei board words its own refusals on the page
@@ -1337,17 +1344,16 @@ static void drain_feedback(void)
             break;
         case PET_LUCKYWHEEL_SPIN:
             /* Same shape as PET_JIAOBEI_TOSS: the wheel page words its
-             * own refusals (fee_refused writes the prompt row,
-             * limit_reached pops the toast); PET_OK needs nothing --
-             * the wheel already spins on the request. The face caption
-             * only covers the poor case; the cap case needs none, the
-             * toast itself is the feedback. A refused free re-spin is
-             * banked again by the page, so the "再来一次" is not lost. */
+             * own refusals (fee_refused writes the prompt row); PET_OK
+             * needs nothing -- the wheel already spins on the request.
+             * The face caption only covers the poor case. There is no
+             * PET_CAP branch any more: the daily cap went away with
+             * 1.5.4d (M-3), so a refused spin can only be poor-coins or
+             * storage. A refused free re-spin is banked again by the
+             * page, so the "再来一次" is not lost. */
             if (fb.result == PET_POOR) {
                 muse_luckywheel_ui_fee_refused();
                 write_pet_caption("金币不够，先摸摸 / 喂饭 / 抽运势");
-            } else if (fb.result == PET_CAP) {
-                muse_luckywheel_ui_limit_reached();
             } else if (fb.result == PET_STORAGE) {
                 muse_luckywheel_ui_storage_error();
                 write_pet_caption("互动数据损坏");
@@ -1475,7 +1481,7 @@ static void on_open_wordcards_set(int set)
     muse_wordcards_ui_show();
 }
 
-/* The 学习 page's "英语口语" row opens the quiz page directly
+/* The 学习 page's "英语听力" row opens the quiz page directly
  * (moved here from the minigame list in the 1.5.3a A flow -- only
  * the entry moved, the quiz module itself did not). */
 static void on_open_quiz(lv_event_t *e)
@@ -1625,7 +1631,7 @@ static void build_learn(void)
      * the grid now uses, and the main page has no motto either, so
      * the two pages now differ only by the coin line (and the back
      * arrow, which a top-level page never has). Order is the user's:
-     * 语文练习 first, then 数学练习, 英语单词, 英语口语. All four
+     * 语文练习 first, then 数学练习, 英语单词, 英语听力. All four
      * are free (user decision 2026-11-12, 学习全部免费): no entry
      * fee, no dimming. */
     learn_card(s_learn_page, IC_GRID_X0, IC_GRID_Y0, MUSE_LEARN_TRACING,
@@ -1979,34 +1985,26 @@ static void build_minigame(void)
      * 金币雨, 毛毛跳跃, OX棋, 打砖块 last (added 2026-11-18, after
      * OX棋 so the existing six keep their order). The three learning games moved
      * to the 学习 page in the 1.5.3a A flow (数学练习 / 英语单词 /
-     * 英语口语, renamed the same day from 加减练习 / 单词练习).
+     * 英语听力, renamed the same day from 加减练习 / 单词练习).
      * 凑十法练习 was fused into
      * 加减练习 the same day (one game, two kinds of question), so it is
      * gone from the list and from the tree. 数独 was ARCHIVED the same
      * date (the 360px round screen is too small to read its 6x6 grid or
-     * tap its cells comfortably) and its code DELETED 2026-11-20
-     * (size-trim: muse_sudoku.c, muse_sudoku_ui.c, muse_sudoku.h,
-     * muse_sudoku_ui.h, IC_PAGE_SUDOKU, on_open_sudoku, the sudoku
-     * page object). NOTE: do not write the page object's variable
-     * name here -- the show_page self-check above counts
-     * s_*_page tokens in this file, and a mention would throw it off.
-     * To restore it, fetch the four files from git history -- the last
-     * commit that has them is main 59f7d3b (1.5.4b):
-     *   git show 59f7d3b:esp32/components/muse/muse_sudoku.c > \
-     *       esp32/components/muse/muse_sudoku.c
-     *   git show 59f7d3b:esp32/components/muse/muse_sudoku_ui.c > \
-     *       esp32/components/muse/muse_sudoku_ui.c
-     *   git show 59f7d3b:esp32/components/muse/muse_sudoku.h > \
-     *       esp32/components/muse/muse_sudoku.h
-     *   git show 59f7d3b:esp32/components/muse/muse_sudoku_ui.h > \
-     *       esp32/components/muse/muse_sudoku_ui.h
-     * then re-add the CMakeLists entries, the IC_PAGE_SUDOKU page (hide
-     * list, show mapping, on_back/on_hidden hide hooks), a
-     * minigame_card() call below (in the order it belongs), the
-     * on_open_sudoku handler, the s_mg_sudoku_lbl dimming line in
-     * refresh_status() (plus its sudoku_paid lookup), and re-add
-     * *s_mg_sudoku_lbl to the label declaration near the top of this
-     * file. The pet-model sudoku ledger (muse_pet_model.c/h,
+     * tap its cells comfortably) and its code was taken out of the build
+     * 2026-11-20 (size-trim: the CMakeLists entries, IC_PAGE_SUDOKU,
+     * on_open_sudoku and the sudoku page object were removed; the four
+     * source files stay in the tree, only uncompiled -- E-5). NOTE: do
+     * not write the page object's variable name here -- the show_page
+     * self-check above counts s_*_page tokens in this file, and a
+     * mention would throw it off. To restore it, the four files are
+     * already in the tree (no git show needed -- they were never
+     * deleted, only uncompiled); just re-add the CMakeLists entries,
+     * the IC_PAGE_SUDOKU page (hide list, show mapping, on_back/
+     * on_hidden hide hooks), a minigame_card() call below (in the
+     * order it belongs), the on_open_sudoku handler, the
+     * s_mg_sudoku_lbl dimming line in refresh_status() (plus its
+     * sudoku_paid lookup), and re-add *s_mg_sudoku_lbl to the label
+     * declaration near the top of this file. The pet-model sudoku ledger (muse_pet_model.c/h,
      * PET_SUDOKU_ENTRY/SOLVE) was NOT deleted -- NVS compatibility --
      * so a restored page works against the existing ledger. See also
      * esp32/notes/20261120-数独删除说明.md. */

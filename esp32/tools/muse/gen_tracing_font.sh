@@ -2,8 +2,8 @@
 # Regenerate fonts/muse_font_tracing_kai_48_v1.c -- the 语文练习 trace
  * page's big ghost character and the character list's 48 px face.
 #
-# Why a cut-down face instead of the full 48 px Noto: the full 48 px
-# Noto Sans SC is far over 100 KB and the 1.85B's app slot has ~50 KB
+# Why a cut-down face instead of the full 48 px 霞鹜文楷: the full 48 px
+# LXGW WenKai Medium is far over 100 KB and the 1.85B's app slot has ~50 KB
 # free. The trace page only draws the ten first-grade characters
 # (天地人日月山川木水火), so ten glyphs at 4bpp, ~9.8 KB, is all it
 # needs. A 170 px subset would be ~115.9 KB and does not fit at all,
@@ -51,8 +51,8 @@ npx --yes lv_font_conv@1.5.3 \
 
 # lv_font_conv writes the font path it was given into the header's Opts
 # line; replace it with the bare file name so the output is reproducible
-# on any machine, and record the source + license next to it (Noto Sans
-# CJK is SIL OFL 1.1; the committed file must carry that note, see
+# on any machine, and record the source + license next to it (LXGW WenKai
+# is SIL OFL 1.1; the committed file must carry that note, see
 # components/muse/fonts/README.md).
 python3 - "$OUT" "$(basename "$FONT")" <<'EOF'
 import re, sys

@@ -1,4 +1,4 @@
-/* Host harness for 英语口语 / 听力练习 (1.5.3a B2, mockup v6).
+/* Host harness for 英语听力 (1.5.3a B2, mockup v6).
  * Builds with plain cc on the host (same pattern as
  * wordcards_harness.c):
  *   cc -std=c11 -O2 -Wall -Wextra -Werror -fsanitize=address,undefined \

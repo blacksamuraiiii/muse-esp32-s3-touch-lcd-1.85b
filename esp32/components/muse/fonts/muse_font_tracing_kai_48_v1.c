@@ -1,8 +1,16 @@
 /*******************************************************************************
  * Size: 48 px
  * Bpp: 4
- * Opts: --font /tmp/lxgwx/usr/share/fonts/truetype/lxgw-wenkai/LXGWWenKai-Medium.ttf --range 0x5929,0x5730,0x4eba,0x65e5,0x6708,0x5c71,0x5ddd,0x6728,0x6c34,0x706b --size 48 --bpp 4 --format lvgl --lv-include lvgl.h --no-compress --no-prefilter --lv-font-name muse_font_tracing_kai_48_v1 -o components/muse/fonts/muse_font_tracing_kai_48_v1.c
+ * Opts: --font LXGWWenKai-Medium.ttf --range 0x5929,0x5730,0x4eba,0x65e5,0x6708,0x5c71,0x5ddd,0x6728,0x6c34,0x706b --size 48 --bpp 4 --format lvgl --lv-include lvgl.h --no-compress --no-prefilter --lv-font-name muse_font_tracing_kai_48_v1 -o components/muse/fonts/muse_font_tracing_kai_48_v1.c
  ******************************************************************************/
+/* Source: LXGW WenKai Medium (霞鹜文楷 Medium), SIL Open Font
+ * License 1.1. 楷体 rather than 黑体 because the trace page
+ * teaches handwriting (user decision 2026-11-21); Medium because
+ * the thin faces read too light as a faint ghost.
+ * Subset: 48 px, 10 glyphs (0x5929,0x5730,0x4eba,
+ * 0x65e5,0x6708,0x5c71,0x5ddd,0x6728,0x6c34,0x706b -- 天 地 人 日
+ * 月 山 川 木 水 火), ~9.8 KB. Regenerate with
+ * tools/muse/gen_tracing_font.sh. */
 
 #ifdef LV_LVGL_H_INCLUDE_SIMPLE
 #include "lvgl.h"

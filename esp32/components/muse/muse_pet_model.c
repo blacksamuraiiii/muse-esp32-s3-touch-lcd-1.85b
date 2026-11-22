@@ -227,24 +227,6 @@ static void luckywheel_roll(muse_pet_model_t *s, int32_t day)
     s->luckywheel_count = 0;
 }
 
-void muse_pet_luckywheel_today(const muse_pet_model_t *s, int64_t now,
-                               uint32_t *remaining)
-{
-    /* No consumer since the 2026-11-21 no-cap decision (the UI's
-     * "N/9" hint line went with it); kept for the ledger view only.
-     * Reports the pre-cap-style remaining against
-     * MUSE_PET_LUCKYWHEEL_DAILY_MAX, which nothing enforces any more. */
-    bool calibrated = false;
-    int32_t day = muse_pet_day(now, &calibrated);
-    (void)calibrated; /* the ledger is day-based only, see luckywheel_roll() */
-    if (remaining) {
-        bool same_day = s->luckywheel_day != -1 && s->luckywheel_day == day;
-        uint32_t used = same_day ? s->luckywheel_count : 0;
-        *remaining = used >= MUSE_PET_LUCKYWHEEL_DAILY_MAX
-                          ? 0
-                          : MUSE_PET_LUCKYWHEEL_DAILY_MAX - used;
-    }
-}
 
 /* The day's fortune card, a pure function of the day number (user
  * decision 2026-11-14): the same day always draws the same card, on any
@@ -577,12 +559,12 @@ muse_pet_result_t muse_pet_model_apply(muse_pet_model_t *s, muse_pet_action_t ac
 
     if (action == PET_LUCKYWHEEL_SPIN) {
         /* One lucky wheel spin (user decision 2026-11-20): a paid spin
-         * costs MUSE_PET_LUCKYWHEEL_COST, at most
-         * MUSE_PET_LUCKYWHEEL_DAILY_MAX a day. The ledger rolls like
-         * 掷筊's (no calibrated clock required: "at most 9 a day" must
-         * hold on a board with no RTC too). The cap is checked first:
-         * a player with coins but no spins left gets PET_CAP, not
-         * PET_POOR. The result rides in `arg` (MUSE_PET_LUCKY_*):
+         * costs MUSE_PET_LUCKYWHEEL_COST. No daily cap any more (user
+         * decision 2026-11-21): the wheel spins as long as the wallet
+         * pays -- the old 9-a-day cap and its PET_CAP are gone (M-3).
+         * The ledger still rolls like 掷筊's (no calibrated clock
+         * required) and counts every paid spin for the record. The
+         * result rides in `arg` (MUSE_PET_LUCKY_*):
          * +2 / +5 / +10 pay through capped_add, THANKS and AGAIN pay
          * nothing, and the MUSE_PET_LUCKY_FREE bit marks a free
          * re-spin won by landing on "再来一次" -- no fee, no daily

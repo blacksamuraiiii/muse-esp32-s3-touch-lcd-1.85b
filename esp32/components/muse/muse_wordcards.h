@@ -208,6 +208,12 @@ void muse_wordcards_clear_pending_audio(muse_wordcards_t *g);
  * speaker sets a fresh mark and earns a fresh retry. */
 bool muse_wordcards_retry_failed_audio(muse_wordcards_t *g, int i);
 
+/* Hand the one tap retry back (M-17): the fetch task calls this when
+ * a single-word retry died at the internal-RAM floor without ever
+ * reaching the network. Clears only the retry flag; the word stays
+ * FAILED, so the next tap can retry it. */
+void muse_wordcards_refund_retry(muse_wordcards_t *g);
+
 /* --- prefetch cache bookkeeping (the fetch itself lives in
  * muse_wordcards_audio.c) --- */
 

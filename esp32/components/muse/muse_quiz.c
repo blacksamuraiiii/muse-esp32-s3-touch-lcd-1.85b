@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 /*
- * muse_quiz.c -- 英语口语（听力练习）logic, see muse_quiz.h.
+ * muse_quiz.c -- 英语听力logic, see muse_quiz.h.
  *
  * The round deals 5 questions up front (a partial Fisher-Yates over
  * the 20-word pool, so no answer repeats inside a round) and each
@@ -238,6 +238,19 @@ bool muse_quiz_retry_failed_audio(muse_quiz_t *g, int i)
     g->cache_bytes[i] = 0;
     g->audio_pending_retried = true;
     return true;
+}
+
+/* Hand the one tap retry back (M-17): the fetch task calls this when
+ * a single-word retry failed at the internal-RAM floor without ever
+ * reaching the network -- the retry the tap spent was never really
+ * used, so the next tap may retry the word again. Clears only the
+ * retry flag; the word stays FAILED. */
+void muse_quiz_refund_retry(muse_quiz_t *g)
+{
+    if (!g) {
+        return;
+    }
+    g->audio_pending_retried = false;
 }
 
 const muse_wordcards_word_t *muse_quiz_current_answer(

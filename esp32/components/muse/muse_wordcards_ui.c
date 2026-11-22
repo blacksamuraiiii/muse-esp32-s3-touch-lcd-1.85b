@@ -741,6 +741,10 @@ void muse_wordcards_ui_build(lv_obj_t *page, lv_event_cb_t back_cb)
     lv_obj_set_scrollbar_mode(s_strip, LV_SCROLLBAR_MODE_OFF);
     lv_obj_set_scroll_snap_x(s_strip, LV_SCROLL_SNAP_START);
     lv_obj_remove_flag(s_strip, LV_OBJ_FLAG_SCROLL_ELASTIC);
+    /* Same end-of-swipe clamp as the sets strip (E-3): the last page
+     * lands flush right instead of leaving a gap, like the 学习页 and
+     * the minigame list. Pitch is one page plus the inter-page gap. */
+    muse_strip_snap_clamp(s_strip, MUSE_WORDCARDS_PAGE_W + MUSE_WORDCARDS_GAP);
 
     /* Cards: a 116x116 CARD rounded rect with a RULE outline (mockup
      * v4), four per page. The front picture is the A8 master, recoloured

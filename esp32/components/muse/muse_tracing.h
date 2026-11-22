@@ -14,24 +14,31 @@
  * Grading, per attempt: the finger's points are sampled (one stored
  * point per MUSE_TRACING_SAMPLE_PX of travel) and compared with the
  * reference strokes resampled every MUSE_TRACING_SAMPLE_STEP_PX. A
- * stroke is covered when MUSE_TRACING_COVER_FRAC percent of its
- * samples have a traced point within MUSE_TRACING_COVER_DIST_PX.
- * The character is done when every stroke is covered. A traced point
- * farther than MUSE_TRACING_STRAY_DIST_PX from every sample is stray;
- * once MUSE_TRACING_WRONG_MIN_POINTS points are down and more than
- * MUSE_TRACING_WRONG_STRAY_FRAC percent of them are stray, the
- * attempt is wrong (描错标红重来, user decision 2026-11-20). The
- * wrong call only ever fires on genuinely off-glyph ink: a correct
- * trace has ~0 stray points, and a half-finished trace has too few
- * points to trip it. All distances are field pixels (the 228x228
- * grid); the thresholds are the tuning knobs for the real-board
- * pass, not constants of the scoring -- see the header note on each.
+ * sample is covered when a traced point lies within
+ * MUSE_TRACING_COVER_DIST_PX of it; the per-stroke coverage
+ * (stroke_cover) is only a diagnostic -- the verdict is the overall
+ * coverage (covered samples / all samples): >= MUSE_TRACING_PASS_PCT
+ * (50) passes the attempt, >= MUSE_TRACING_PRAISE_PCT (90) earns
+ * the praise line and the 2-coin reward, 50..89 is "继续加油"
+ * (counts as written, pays nothing). Below 50 the attempt is not
+ * finished. A traced point farther than MUSE_TRACING_STRAY_DIST_PX
+ * from every sample is stray; once MUSE_TRACING_WRONG_MIN_POINTS
+ * points are down and more than MUSE_TRACING_WRONG_STRAY_FRAC
+ * percent of them are stray, the attempt is wrong (描错标红重来,
+ * user decision 2026-11-20). The wrong call only ever fires on
+ * genuinely off-glyph ink: a correct trace has ~0 stray points, and
+ * a half-finished trace has too few points to trip it. All distances
+ * are field pixels (the 228x228 grid); the thresholds are the tuning
+ * knobs for the real-board pass, not constants of the scoring -- see
+ * the header note on each.
  *
  * Timing is in milliseconds and advances only through
  * muse_tracing_tick(), so the host test drives it deterministically
  * (no lv_tick_get() here). There is no clock in this game at all:
  * the tick only ages the WRONG flash (the UI clears the ink after
- * MUSE_TRACING_WRONG_MS); grading itself happens on every point.
+ * MUSE_TRACING_WRONG_MS); grading itself happens on settle -- the UI
+ * calls muse_tracing_grade() once the pen has rested two seconds,
+ * never mid-stroke.
  */
 #pragma once
 
@@ -68,9 +75,6 @@
  * is the pen radius (5) plus the ghost stroke's half-width at
  * 170 px (~7) plus a child's wobble (~4). */
 #define MUSE_TRACING_COVER_DIST_PX 16
-/* Percent of a stroke's samples that must be covered for that
- * stroke to count (per-stroke view, kept for the harness). */
-#define MUSE_TRACING_COVER_FRAC 60u
 /* Overall coverage (covered samples / all samples) decides the result
  * (user decision 2026-11-21): >= PASS_PCT passes the attempt, and only
  * >= PRAISE_PCT earns the 2-coin reward and the praise line. 50..89 is

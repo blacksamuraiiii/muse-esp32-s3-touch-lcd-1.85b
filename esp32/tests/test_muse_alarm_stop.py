@@ -19,6 +19,13 @@ the point here is the stop *decision*, not the re-arm that follows it.
 The A-10 ordering (ring timestamp written before the ringing flag) is
 pinned by a source assertion, since the race it closes is not
 observable from the host.
+
+R-3 (2026-11-22) is pinned behaviourally too, against a controllable
+clock: a console test ring (`alarm_start("console")`) stamps nothing,
+so the day's real alarm still arms; a real ring stamps the date and
+the (h, m), and moving the alarm later the same day re-arms today,
+while an unchanged time keeps the F-A1 skip (a clock jump back over
+a ring that already fired still cannot ring twice).
 """
 import os
 from pathlib import Path
@@ -87,7 +94,19 @@ static int64_t fake_now_us;
 static int64_t esp_timer_get_time(void) { return fake_now_us; }
 static void esp_logi(const char *tag, const char *fmt, ...) { (void)tag; (void)fmt; }
 #define ESP_LOGI esp_logi
+#define ESP_LOGW esp_logi
 #define TAG "muse_input"
+
+typedef int esp_err_t;
+#define ESP_OK 0
+static const char *esp_err_to_name(esp_err_t err)
+{
+    (void)err;
+    return "OK";
+}
+#define ALARM_DAYS_DAILY 0x7F
+static const char *const WEEKDAY_NAMES[7] =
+    {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
 
 static bool fake_talk_down;
 static bool fake_talk_down_fn(void) { return fake_talk_down; }
@@ -95,12 +114,37 @@ typedef struct { bool (*talk_down)(void); } muse_board_t;
 static muse_board_t fake_board = { fake_talk_down_fn };
 #define muse_board (&fake_board)
 
-static bool muse_rtc_now(time_t *out) { (void)out; return false; }
+/* Controllable clock for the R-3 arm checks (the stop-path tests
+ * above leave it off, so muse_rtc_now() stays false there). */
+static bool fake_rtc_ok;
+static time_t fake_rtc_now;
+static bool muse_rtc_now(time_t *out)
+{
+    if (!fake_rtc_ok) {
+        return false;
+    }
+    *out = fake_rtc_now;
+    return true;
+}
+static bool muse_rtc_present(void) { return true; }
+static int fake_alarm_h = 7;
+static int fake_alarm_m = 0;
+static int muse_rtc_arm_wakeup_in(uint32_t secs)
+{
+    (void)secs;
+    return ESP_OK;
+}
+static int muse_rtc_arm_wakeup_weekly(uint32_t secs)
+{
+    (void)secs;
+    return ESP_OK;
+}
 static void set_asleep(bool asleep, const char *why) { (void)asleep; (void)why; }
 static void muse_state_poke(void) {}
 static void muse_state_set_caption(const char *fmt, ...) { (void)fmt; }
-static int muse_settings_alarm_hour(void) { return 7; }
-static int muse_settings_alarm_min(void) { return 0; }
+static int muse_settings_alarm_hour(void) { return fake_alarm_h; }
+static int muse_settings_alarm_min(void) { return fake_alarm_m; }
+static int muse_settings_alarm_days(void) { return 0x7F; }
 
 /* ---- the alarm state the extracted code shares ---- */
 #define GRACE_US 6000000
@@ -129,8 +173,11 @@ static bool s_alarm_ringing;
 static int64_t s_alarm_ring_us;
 static int64_t s_alarm_sfx_us;
 static int64_t s_alarm_quiet_us;
+static time_t s_alarm_target;
 static int s_alarm_last_rung_year = -1;
 static int s_alarm_last_rung_yday = -1;
+static int s_alarm_last_rung_h = -1;
+static int s_alarm_last_rung_m = -1;
 static bool s_talk_down_seen;
 static int alarm_stop_calls;
 
@@ -141,11 +188,31 @@ static void reset_alarm(void) {
     s_alarm_ring_us = 0;
     s_alarm_sfx_us = 0;
     s_alarm_quiet_us = 0;
+    s_alarm_target = 0;
+    s_alarm_last_rung_year = -1;
+    s_alarm_last_rung_yday = -1;
+    s_alarm_last_rung_h = -1;
+    s_alarm_last_rung_m = -1;
     s_talk_down_seen = false;
     alarm_stop_calls = 0;
 }
+
+/* 2026-11-22 (a Sunday) at h:m local -- the R-3 scenarios all run on
+ * one day, so mktime/localtime_r round-trip in whatever TZ the host
+ * runs in. */
+static time_t mk_time(int day, int h, int m) {
+    struct tm tm = {0};
+    tm.tm_year = 2026 - 1900;
+    tm.tm_mon = 10;
+    tm.tm_mday = day;
+    tm.tm_hour = h;
+    tm.tm_min = m;
+    tm.tm_isdst = -1;
+    return mktime(&tm);
+}
 """
         code += function(source, "void", "alarm_start") + "\n"
+        code += function(source, "void", "alarm_arm_next") + "\n"
         code += function(source, "bool", "muse_input_alarm_stop") + "\n"
         code += function(source, "bool", "muse_input_alarm_ringing") + "\n"
         code += """
@@ -212,6 +279,47 @@ int main(void) {
     alarm_start("test");
     ring_key_poll(MUSE_BTN_AUX_PRESS, 0, 51000000);
     assert(!muse_input_alarm_ringing() && alarm_stop_calls == 1);
+
+    /* R-3 (2026-11-22): a console test ring stamps nothing, so the
+     * day's real alarm still arms. */
+    reset_alarm();
+    fake_rtc_ok = true; fake_rtc_now = mk_time(22, 6, 30);
+    fake_alarm_h = 7; fake_alarm_m = 0;
+    alarm_start("console");
+    assert(s_alarm_last_rung_yday == -1 && s_alarm_last_rung_h == -1 &&
+           s_alarm_last_rung_m == -1);
+    alarm_arm_next();
+    assert(s_alarm_target == mk_time(22, 7, 0));
+
+    /* A real 07:00 ring stamps date + time; moving the alarm to 09:00
+     * at 08:00 re-arms today 09:00. */
+    reset_alarm();
+    fake_rtc_now = mk_time(22, 6, 30); fake_alarm_h = 7; fake_alarm_m = 0;
+    alarm_start("clock");
+    assert(s_alarm_last_rung_yday >= 0);
+    assert(s_alarm_last_rung_h == 7 && s_alarm_last_rung_m == 0);
+    fake_rtc_now = mk_time(22, 8, 0); fake_alarm_h = 9; fake_alarm_m = 0;
+    alarm_arm_next();
+    assert(s_alarm_target == mk_time(22, 9, 0));
+
+    /* Same ring, no time change: 08:00 re-arm skips today and arms
+     * tomorrow 07:00. */
+    reset_alarm();
+    fake_rtc_now = mk_time(22, 6, 30); fake_alarm_h = 7; fake_alarm_m = 0;
+    alarm_start("clock");
+    fake_rtc_now = mk_time(22, 8, 0);
+    alarm_arm_next();
+    assert(s_alarm_target == mk_time(23, 7, 0));
+
+    /* And the F-A1 protection itself still holds with the time
+     * unchanged: after the 07:00 ring, the clock jumping back to
+     * 06:00 the same day must NOT re-arm today 07:00. */
+    reset_alarm();
+    fake_rtc_now = mk_time(22, 6, 30); fake_alarm_h = 7; fake_alarm_m = 0;
+    alarm_start("clock");
+    fake_rtc_now = mk_time(22, 6, 0);
+    alarm_arm_next();
+    assert(s_alarm_target == mk_time(23, 7, 0));
 
     printf("alarm stop paths OK (grace=%d us)\n", GRACE_US);
     return 0;

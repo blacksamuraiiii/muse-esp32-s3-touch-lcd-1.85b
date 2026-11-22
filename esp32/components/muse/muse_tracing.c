@@ -163,20 +163,27 @@ static void rebuild_samples(muse_tracing_t *t)
     int count = 0;
     const muse_tracing_stroke_t *strokes = muse_tracing_strokes(t->char_idx, &count);
     t->sample_count = 0;
+    /* A fresh attempt starts from zero coverage: clear the whole
+     * state here, set_char() and reset() both funnel through this --
+     * including the no-character case (strokes == NULL, before any
+     * character is picked), so a stale attempt's coverage never
+     * survives into the next one (M-18). */
+    t->sample_total = 0;
+    t->sample_covered = 0;
+    memset(t->stroke_total, 0, sizeof(t->stroke_total));
+    memset(t->stroke_cover, 0, sizeof(t->stroke_cover));
+    memset(t->stroke_covered_count, 0, sizeof(t->stroke_covered_count));
+    memset(t->sample_covered_flag, 0, sizeof(t->sample_covered_flag));
+    t->score_pct = 0;
     if (strokes == NULL) {
-        t->sample_total = 0;
-        memset(t->stroke_total, 0, sizeof(t->stroke_total));
         return;
     }
     for (int i = 0; i < count; i++) {
         resample_stroke(t, &strokes[i], (uint8_t)i);
     }
-    /* Per-stroke and total sample counts, cached for the incremental
-     * coverage path (2026-11-21 review P1-2): add_point() needs the
-     * denominators without rescanning. Also a fresh attempt starts
-     * from zero coverage, so clear the whole state here -- set_char()
-     * and reset() both funnel through this. */
-    memset(t->stroke_total, 0, sizeof(t->stroke_total));
+    /* Per-stroke sample counts, cached for the incremental coverage
+     * path (2026-11-21 review P1-2): add_point() needs the
+     * denominators without rescanning. */
     for (uint16_t i = 0; i < t->sample_count; i++) {
         uint8_t s = t->sample_stroke[i];
         if (s < MUSE_TRACING_MAX_STROKES) {
@@ -184,11 +191,6 @@ static void rebuild_samples(muse_tracing_t *t)
         }
     }
     t->sample_total = t->sample_count;
-    t->sample_covered = 0;
-    memset(t->stroke_cover, 0, sizeof(t->stroke_cover));
-    memset(t->stroke_covered_count, 0, sizeof(t->stroke_covered_count));
-    memset(t->sample_covered_flag, 0, sizeof(t->sample_covered_flag));
-    t->score_pct = 0;
 }
 
 /* Full rescan: the judging authority. Rebuilds the per-sample covered

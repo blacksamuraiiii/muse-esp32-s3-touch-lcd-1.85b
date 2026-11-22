@@ -26,7 +26,7 @@
 # pairs cost ~20 KB and the 16 px UI never relied on them). Re-running
 # this script reproduces the shipped file byte-for-byte.
 #
-# COMPRESSSION STAYS OFF (2026-11-21, 1.5.4e): the compressed variant
+# COMPRESSION STAYS OFF (2026-11-21, 1.5.4e): the compressed variant
 # saved ~131 KB of app slot and its bitmaps decode CORRECTLY on a
 # single draw unit (same-scenario double build vs the 1.5.4d face:
 # 1,761 differing bytes, all accountable to --no-kerning and the GB2312

@@ -260,9 +260,16 @@ static time_t s_alarm_target;   /* local epoch the current arm is for; 0 unknown
 /* Local date of the last ring (F-A1): alarm_start() stamps it, alarm_arm_next()
  * skips it, so an SNTP jump back over a ring that already fired does not ring
  * the same day twice. Memory only: a reboot loses it (plan §1.5). -1 = no ring
- * yet this boot. */
+ * yet this boot. The (h, m) stamped with it is the R-3 comparison: a user who
+ * moves the alarm later the same day still wants today's new time to ring, so
+ * alarm_arm_next() only applies the date skip when the time is unchanged
+ * since the ring. A console test ring (">alarm.test") stamps nothing at all
+ * (R-3): it is not a real ring, and stamping it swallowed the day's real
+ * alarm. */
 static int s_alarm_last_rung_year = -1;   /* tm_year + 1900 of the last ring */
 static int s_alarm_last_rung_yday = -1;   /* tm_yday of the last ring */
+static int s_alarm_last_rung_h = -1;      /* alarm hour stamped with the ring */
+static int s_alarm_last_rung_m = -1;      /* alarm minute stamped with the ring */
 /* talk_down() as of the previous poll, for the ring's stop path: only a
  * rising edge counts as a key press there (see input_task), so the wake-up
  * phantom -- a press that is already down and stays down -- cannot stop a
@@ -307,12 +314,21 @@ static void alarm_arm_next(void)
         if (t <= now + 1) {
             continue;   /* today's time is already gone */
         }
-        if (s_alarm_last_rung_yday >= 0 && cand.tm_year + 1900 == s_alarm_last_rung_year &&
+        /* Already rang on this local date (F-A1): a clock jump back must
+         * not ring it twice. The search keeps walking, so the next day
+         * the mask names is armed instead; a once alarm never reaches
+         * here, it turns itself off on stop. The skip applies only when
+         * the alarm time is unchanged since that ring (R-3, 2026-11-22):
+         * 07:00 rang, 08:00 moved to 09:00 -- today's 09:00 still has
+         * to ring, so a changed (h, m) re-arms today. The stamp is the
+         * (h, m) alarm_start() recorded with the ring; no stamp (a
+         * console test never stamps) means the check cannot trigger. */
+        const bool time_unchanged =
+            s_alarm_last_rung_h == h && s_alarm_last_rung_m == m;
+        if (time_unchanged && s_alarm_last_rung_yday >= 0 &&
+            cand.tm_year + 1900 == s_alarm_last_rung_year &&
             cand.tm_yday == s_alarm_last_rung_yday) {
-            continue;   /* already rang on this local date (F-A1): a clock jump
-                         * back must not ring it twice. The search keeps walking,
-                         * so the next day the mask names is armed instead; a once
-                         * alarm never reaches here, it turns itself off on stop. */
+            continue;
         }
         if (filter && !(days & (1u << cand.tm_wday))) {
             continue;
@@ -385,16 +401,25 @@ static void alarm_start(const char *why)
      * skips it, so an SNTP jump back over a ring that already fired does
      * not ring the same day twice. Stamped here, at the ring itself - not
      * in alarm_stop(), where the date may already have rolled over - and
-     * once per ring: every trigger (poll, deep-sleep boot, console test)
-     * funnels through here, and the guard above keeps a second entry out.
+     * once per ring: every real trigger (poll, deep-sleep boot) funnels
+     * through here, and the guard above keeps a second entry out. The
+     * (h, m) is stamped with the date (R-3): it is the comparison
+     * alarm_arm_next() uses to tell "same time, already rang" from "the
+     * user moved the alarm later today". A console test ring
+     * (">alarm.test", why == "console") stamps nothing: it is not a
+     * real ring, and stamping it swallowed the day's real alarm.
      * Memory only: a reboot loses it (plan §1.5). If the clock cannot be
      * read the stamp is left alone and the arm behaves as before. */
-    time_t now;
-    if (muse_rtc_now(&now)) {
-        struct tm lt;
-        localtime_r(&now, &lt);
-        s_alarm_last_rung_year = lt.tm_year + 1900;
-        s_alarm_last_rung_yday = lt.tm_yday;
+    if (why == NULL || strcmp(why, "console") != 0) {
+        time_t now;
+        if (muse_rtc_now(&now)) {
+            struct tm lt;
+            localtime_r(&now, &lt);
+            s_alarm_last_rung_year = lt.tm_year + 1900;
+            s_alarm_last_rung_yday = lt.tm_yday;
+            s_alarm_last_rung_h = muse_settings_alarm_hour();
+            s_alarm_last_rung_m = muse_settings_alarm_min();
+        }
     }
     ESP_LOGI(TAG, "alarm ringing (%s)", why);
 #if CONFIG_MUSE_TELEMETRY

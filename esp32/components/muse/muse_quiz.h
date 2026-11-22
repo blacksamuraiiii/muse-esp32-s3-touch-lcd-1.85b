@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 /*
- * muse_quiz.h -- 英语口语（听力练习）logic (no LVGL, no ESP-IDF).
+ * muse_quiz.h -- 英语听力logic (no LVGL, no ESP-IDF).
  *
  * One 60-second round of 5 questions (user decision 2026-11-11: was
  * 120 seconds): hear the English word, pick its picture from three
@@ -168,6 +168,12 @@ void muse_quiz_clear_pending_audio(muse_quiz_t *g);
  * replay) and on every round reset, so each deal or replay gets at
  * most one retry and the 50 ms drain can never spin a retry loop. */
 bool muse_quiz_retry_failed_audio(muse_quiz_t *g, int i);
+
+/* Hand the one tap retry back (M-17): the fetch task calls this when
+ * a single-word retry died at the internal-RAM floor without ever
+ * reaching the network. Clears only the retry flag; the word stays
+ * FAILED, so the next tap can retry it. */
+void muse_quiz_refund_retry(muse_quiz_t *g);
 
 /* The current question's answer word (its English text is what the
  * speaker reads, its art is what the right option shows). NULL

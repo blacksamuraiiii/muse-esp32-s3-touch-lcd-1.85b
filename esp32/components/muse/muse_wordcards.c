@@ -365,6 +365,19 @@ bool muse_wordcards_retry_failed_audio(muse_wordcards_t *g, int i)
     return true;
 }
 
+/* Hand the one tap retry back (M-17): the fetch task calls this when
+ * a single-word retry failed at the internal-RAM floor without ever
+ * reaching the network -- the retry the tap spent was never really
+ * used, so the next tap may retry the word again. Clears only the
+ * retry flag; the word stays FAILED. */
+void muse_wordcards_refund_retry(muse_wordcards_t *g)
+{
+    if (!g) {
+        return;
+    }
+    g->pending_audio_retried = false;
+}
+
 void muse_wordcards_cache_begin(muse_wordcards_t *g)
 {
     /* A word already READY for this set generation stays READY: the UI

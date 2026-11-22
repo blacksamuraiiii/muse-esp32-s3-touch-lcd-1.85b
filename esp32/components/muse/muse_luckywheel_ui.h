@@ -19,7 +19,6 @@ void muse_luckywheel_ui_hide(void);
 /* Worker refusals, called from the interact page's feedback drain:
  * cancel an in-flight spin and show the reason on the page. */
 void muse_luckywheel_ui_fee_refused(void);
-void muse_luckywheel_ui_limit_reached(void);
 void muse_luckywheel_ui_storage_error(void);
 
 #ifdef __cplusplus

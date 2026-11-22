@@ -138,7 +138,7 @@ if(CONFIG_MUSE_ENABLED)
     # glyphs it draws (digits and colon, ~4.8 KB). The full
     # lv_font_montserrat_48 face is ~128 KB (unverified) and does not fit the 4 MB app
     # slot -- enabling it made the link fail with "all app partitions are
-    # too small". Regenerate with tools/muse/gen_clock_font.sh.
+    # too small". Regenerate with `bash tools/muse/gen_clock_font.sh`.
     list(APPEND srcs "fonts/muse_font_clock_48.c")
     if(CONFIG_MUSE_CJK_FONT)
         list(APPEND srcs "fonts/muse_font_cjk_noto_16.c")  # the one CJK face: Noto Sans SC Medium 16 px 4bpp (GB2312)

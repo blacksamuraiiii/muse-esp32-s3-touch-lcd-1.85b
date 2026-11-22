@@ -601,6 +601,10 @@ void muse_whackamole_ui_build(lv_obj_t *page, lv_event_cb_t back_cb)
 
 void muse_whackamole_ui_show(void)
 {
+    /* M-19: clear a stale refusal note before the refresh, or a
+     * "金币不够" from a receipt that landed while the page was hidden
+     * would still be up on return (the snake page already did this). */
+    hide_note();
     refresh_display();
 }
 
@@ -610,6 +614,7 @@ void muse_whackamole_ui_hide(void)
         muse_whackamole_pause(&s_game);
         lv_timer_pause(s_timer);
     }
+    hide_note();
     refresh_display();
 }
 

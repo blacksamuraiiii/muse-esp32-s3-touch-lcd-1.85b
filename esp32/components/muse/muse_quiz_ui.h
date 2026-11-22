@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 /*
- * muse_quiz_ui.h -- 英语口语（听力练习）subpage inside the interaction tile.
+ * muse_quiz_ui.h -- 英语听力subpage inside the interaction tile.
  *
  * Owned by muse_interact_ui.c like the feed / game / fortune subpages:
  * the page group lives inside the interaction tile (NOT a top-level
@@ -24,7 +24,7 @@
  * "本局 n 分 · 剩余 s 秒" while PLAYING and turns GOLD with
  * "本局 n 分，+m 金币" at OVER. The net is deliberately NOT printed
  * (kids cannot tell net apart) and the OVER card carries no line of
- * its own (the page title stays "英语口语").
+ * its own (the page title stays "英语听力").
  *
  * The verdict line (y=280, the math game's slot) reads "第 n/5 题"
  * while a question is open and, for 600 ms after a pick, "✓ 答对了，

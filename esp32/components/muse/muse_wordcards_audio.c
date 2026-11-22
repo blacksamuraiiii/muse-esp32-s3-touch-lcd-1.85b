@@ -393,6 +393,18 @@ static void fetch_task(void *arg)
                 list.mark_failed(list.ctx, i, gen);
             }
         }
+        /* M-17: a single-word retry died at the RAM floor without ever
+         * reaching the network -- hand its retry back, but only for
+         * the current generation (a stale fetch refunds nothing).
+         * The word stays FAILED, so the next tap can retry it; the
+         * whole-list case never spent a retry, so there is nothing
+         * to refund. The ensure_slots branch above does not refund:
+         * that failure means the slot pool itself is gone, not a
+         * transient RAM dip. */
+        if (single && gen == list.cur_gen(list.ctx) &&
+            list.refund_retry) {
+            list.refund_retry(list.ctx);
+        }
         fetch_task_exit();
         return;
     }
@@ -554,6 +566,11 @@ static uint32_t wc_cur_gen(void *ctx)
     return ((muse_wordcards_t *)ctx)->set_gen;
 }
 
+static void wc_refund_retry(void *ctx)
+{
+    muse_wordcards_refund_retry((muse_wordcards_t *)ctx);
+}
+
 static void quiz_mark_begin(void *ctx)
 {
     muse_quiz_cache_begin((muse_quiz_t *)ctx);
@@ -579,6 +596,11 @@ static uint32_t quiz_cur_gen(void *ctx)
     return ((muse_quiz_t *)ctx)->quiz_gen;
 }
 
+static void quiz_refund_retry(void *ctx)
+{
+    muse_quiz_refund_retry((muse_quiz_t *)ctx);
+}
+
 static void wc_list_for(muse_wordcards_t *g, muse_wc_fetch_list_t *list)
 {
     list->count = muse_wordcards_set_words(g->set);
@@ -592,6 +614,7 @@ static void wc_list_for(muse_wordcards_t *g, muse_wc_fetch_list_t *list)
     list->mark_failed = wc_mark_failed;
     list->is_ready = wc_is_ready;
     list->cur_gen = wc_cur_gen;
+    list->refund_retry = wc_refund_retry;
     list->ctx = g;
 }
 
@@ -635,6 +658,7 @@ static void quiz_list_for(muse_quiz_t *g, muse_wc_fetch_list_t *list)
     list->mark_failed = quiz_mark_failed;
     list->is_ready = quiz_is_ready;
     list->cur_gen = quiz_cur_gen;
+    list->refund_retry = quiz_refund_retry;
     list->ctx = g;
 }
 
@@ -669,7 +693,10 @@ bool muse_wordcards_audio_single_ok_now(void)
      * word FAILED and the one-shot retry mark is gone), and a shared
      * connection owned by the reply fetch or the prewarm probe (the raw
      * fetch refuses). Checking here lets the retry paths leave the mark
-     * intact for the next tap instead of burning it on a certainty. */
+     * intact for the next tap instead of burning it on a certainty.
+     * The refund in fetch_task's memory-gate branch (M-17) is the
+     * backstop for the race between this check and the task start:
+     * RAM can dip below the floor after the tap passed the check. */
     size_t largest_int = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL);
     if (largest_int < WC_MIN_INTERNAL_FOR_TLS) {
         return false;

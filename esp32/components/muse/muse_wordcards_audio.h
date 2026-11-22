@@ -70,6 +70,14 @@ typedef struct {
     void (*mark_failed)(void *ctx, int slot, uint32_t gen);
     bool (*is_ready)(void *ctx, int slot);
     uint32_t (*cur_gen)(void *ctx);
+    /* Hand the one tap retry back (M-17): called only from the fetch
+     * task's internal-RAM floor branch, only for a single-word retry
+     * of the current generation -- the word failed without ever
+     * reaching the network, so the retry the tap spent was never
+     * really used. Clears only the retry flag; the word stays FAILED
+     * so a fresh tap can retry it. NULL when the list has no retry
+     * to refund (whole-list prefetches never spend one). */
+    void (*refund_retry)(void *ctx);
     void *ctx;
     bool single;     /* true: fetch only single_slot, not the list */
     int single_slot; /* the one slot to fetch when single is true */
