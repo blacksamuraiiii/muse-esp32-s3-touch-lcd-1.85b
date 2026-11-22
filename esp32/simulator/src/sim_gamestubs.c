@@ -171,6 +171,10 @@ void muse_tracing_ui_build_trace(lv_obj_t *page, lv_event_cb_t back_cb)
 void muse_tracing_ui_open_char(int idx) { (void)idx; }
 void muse_tracing_ui_refresh_list(void) {}
 STUB0(muse_tracing_ui_hide)
+/* E-1 (1.5.4e review, 2026-11-22): the interact page's drain calls this on
+ * the PET_TRACING_SOLVE receipt; the stub trace pages never show a verdict,
+ * so it is a no-op -- but the link needs it. */
+void muse_tracing_ui_reward_settled(bool paid) { (void)paid; }
 
 STUB0(muse_alarm_ui_tick)
 
