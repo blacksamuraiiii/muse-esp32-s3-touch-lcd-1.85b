@@ -552,6 +552,7 @@ static int ws_upgrade(esp_tls_t *tls, const char *vm_id, const char *token)
     size_t cap = 512 + strlen(id) + strlen(token) + strlen(s_host) + strlen(relay_token);
     char *req = static_cast<char *>(malloc(cap));
     if (!req) {
+        ESP_LOGE(TAG, "ws upgrade: out of memory (%u B request)", (unsigned)cap);
         return 0;
     }
     int len = snprintf(req, cap,
@@ -568,16 +569,20 @@ static int ws_upgrade(esp_tls_t *tls, const char *vm_id, const char *token)
     bool sent = write_all(tls, req, len);
     free(req);
     if (!sent) {
+        ESP_LOGW(TAG, "ws upgrade: request write failed (%d B)", len);
         return 0;
     }
     /* Edge error responses carry a ~1.4 KB Proxy-Status header. */
     const size_t kCap = 4096;
     char *hdr = static_cast<char *>(malloc(kCap));
     if (!hdr) {
+        ESP_LOGE(TAG, "ws upgrade: out of memory (%u B header)", (unsigned)kCap);
         return 0;
     }
     size_t have = 0;
     int status = 0;
+    ssize_t read_err = 0;      /* last non-WANT read result: 0 = peer closed */
+    bool closed_early = false;
     int64_t deadline = now_us() + IO_TIMEOUT_US;
     while (now_us() < deadline && have < kCap) {
         ssize_t n = esp_tls_conn_read(tls, hdr + have, kCap - have);
@@ -597,9 +602,15 @@ static int ws_upgrade(esp_tls_t *tls, const char *vm_id, const char *token)
         } else if (n == ESP_TLS_ERR_SSL_WANT_READ || n == ESP_TLS_ERR_SSL_WANT_WRITE) {
             vTaskDelay(1);
         } else {
+            closed_early = true;
+            read_err = n;
             break;
         }
     }
+    /* Name the failure: "VM connect failed (HTTP 0)" alone cannot tell a
+     * 15 s silent upstream from a peer close from a malformed reply, and
+     * the relay's own logs sit on the server (2026-11-23: an eight-minute
+     * Meta-side 502 window looked identical on the screen). */
     if (have >= 12 && !memcmp(hdr, "HTTP/", 5)) {
         /* hdr is not NUL-terminated (the header search above stops at
          * "\r\n\r\n" but keeps no terminator). atoi only needs the three
@@ -610,6 +621,15 @@ static int ws_upgrade(esp_tls_t *tls, const char *vm_id, const char *token)
         hdr[12] = '\0';
         status = atoi(hdr + 9);
         hdr[12] = saved;
+    } else {
+        char peek[13];
+        size_t k = have < 12 ? have : 12;
+        memcpy(peek, hdr, k);
+        peek[k] = '\0';
+        ESP_LOGW(TAG, "ws upgrade: no status line (%u B, %s, read=%d, head=\"%s\")",
+                 (unsigned)have,
+                 closed_early ? "peer closed" : "read timed out",
+                 (int)read_err, peek);
     }
     free(hdr);
     return status;
