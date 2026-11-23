@@ -156,6 +156,15 @@ STUB0(muse_wordcards_ui_hide)
 void muse_wordcards_ui_set_coins(const char *text) { (void)text; }
 void muse_wordcards_ui_open_set(int set) { (void)set; }
 
+void muse_tracing_ui_build_phases(lv_obj_t *page, lv_event_cb_t back_cb,
+                                  muse_tracing_open_phase_cb_t open_cb)
+{
+    (void)page;
+    (void)back_cb;
+    (void)open_cb;
+}
+void muse_tracing_ui_refresh_phases(void) {}
+void muse_tracing_ui_show_phase(int phase) { (void)phase; }
 void muse_tracing_ui_build_list(lv_obj_t *page, lv_event_cb_t back_cb,
                                 muse_tracing_open_char_cb_t open_cb)
 {

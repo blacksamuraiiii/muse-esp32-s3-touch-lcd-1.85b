@@ -35,6 +35,7 @@
 #endif
 #include "esp_timer.h"
 #include "esp_system.h"
+#include "esp_debug_helpers.h"   /* esp_backtrace_print_all_tasks(): UI stall dump */
 #include "esp_attr.h"
 #include "esp_ota_ops.h"
 #include "esp_partition.h"
@@ -3154,6 +3155,45 @@ void app_run(void) {
         size_t free_psram = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
         uint32_t ui_frames = 0, bands_sent = 0;
         muse_state_screen_stats(&ui_frames, &bands_sent);
+        /* UI stall watchdog (2026-11-23, first report: the chat page froze,
+         * touch dead, only the long power press got the board back). The
+         * LVGL task also reads the touch panel, so a thread blocked inside
+         * it freezes the whole screen; the task and interrupt watchdogs are
+         * OFF in sdkconfig.defaults, so nothing recovers on its own. The
+         * frame counter is the cheap evidence: while awake it climbs every
+         * frame, so a long gap is a blocked thread, not a slow one. At 20 s
+         * dump every task's backtrace (the root-cause evidence); at 30 s
+         * restart, so the board comes back by itself. Asleep on battery the
+         * board pauses LVGL on purpose (muse_input.c display_pause), so the
+         * counter legitimately stops then -- only judge while awake. */
+        {
+            static uint32_t ui_prev;
+            static int64_t ui_seen_us;
+            static bool ui_dumped;
+            int64_t now_us = esp_timer_get_time();
+            if (ui_frames != ui_prev) {
+                ui_prev = ui_frames;
+                ui_seen_us = now_us;
+                ui_dumped = false;
+            } else if (!muse_state_asleep()) {
+                int64_t stall_s = (now_us - ui_seen_us) / 1000000;
+                if (stall_s >= 20 && !ui_dumped) {
+                    ui_dumped = true;
+                    ESP_LOGE(HEARTBEAT_TAG,
+                             "UI stalled %llds: no frame since t=%llds (int=%uK/%uK psram=%uK); "
+                             "dumping all task backtraces",
+                             (long long)stall_s, (long long)(ui_seen_us / 1000000),
+                             (unsigned)(free_int / 1024),
+                             (unsigned)(largest_int / 1024),
+                             (unsigned)(free_psram / 1024));
+                    esp_backtrace_print_all_tasks(10);
+                } else if (stall_s >= 30) {
+                    ESP_LOGE(HEARTBEAT_TAG, "UI stalled %llds: restarting",
+                             (long long)stall_s);
+                    esp_restart();
+                }
+            }
+        }
         tunnel_stats_t tun;
         tunnel_netif_get_stats(&tun);
         ESP_LOGI(HEARTBEAT_TAG, "hb t=%llds setup=%s wifi=%s ws=%s raw=%s ble=%s "

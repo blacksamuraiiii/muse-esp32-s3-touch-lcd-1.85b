@@ -391,13 +391,13 @@ static void show_page(int page)
      * hide list, 2) the show mapping if-chain below, 3) the hide hooks
      * in on_back(), 4) the hide hooks in muse_interact_ui_on_hidden().
      * (A single static page registry driving all four is a follow-up,
-     * not done here -- 2026-11-17 review fix.) Check 21/21 after any
+     * not done here -- 2026-11-17 review fix.) Check 22/22 after any
      * change, from esp32/components/muse:
      *   grep -o "s_[a-z_]*_page" muse_interact_ui.c | sort -u | wc -l
-     *     (= 21 distinct page objects)
+     *     (= 22 distinct page objects)
      *   sed -n '/^static void show_page/,/^    lv_obj_t \*show/p' \
      *       muse_interact_ui.c | grep -c "^    lv_obj_add_flag"
-     *     (= 21 hide lines in this list -- one add_flag per page object;
+     *     (= 22 hide lines in this list -- one add_flag per page object;
      *     the lv_obj_remove_flag below is the one show, not a hide, so
      *     it is not counted). */
     lv_obj_add_flag(s_fortune_sub_page, LV_OBJ_FLAG_HIDDEN);

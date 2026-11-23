@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Regenerate fonts/muse_font_tracing_kai_48_v1.c -- the 语文练习 trace
- * page's big ghost character and the character list's 48 px face.
+# page's big ghost character and the character list's 48 px face.
 #
 # Why a cut-down face instead of the full 48 px 霞鹜文楷: the full 48 px
 # LXGW WenKai Medium is far over 100 KB and the 1.85B's app slot has ~50 KB
