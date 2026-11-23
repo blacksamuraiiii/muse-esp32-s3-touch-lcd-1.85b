@@ -56,7 +56,7 @@
 - **学习页卡片换图（2026-11-22 用户选型）**：数学练习换七档中式算盘（game-icons 无中式算盘，按用户规格自绘——外框外扩、7 档、上下算珠同尺寸、默认落下归零：上珠落梁、下珠落底框）；英语单词换红苹果（复用词卡 `muse_wordcards_art_apple` 母版，零新增体积）；连带语文朱红→竹青 `#7bcf9e`、单词浅蓝→苹果红 `#ff4136`；计算器与翻开的书母版删除，模拟器色表同步。
 - **模拟器补桩**：`muse_tracing_ui_reward_settled`（E-1 新调用在模拟器侧缺桩，评审机无工具链未编译，本机合并前构建发现并补上）。
 
-状态：正式版发布（tag `v1.5.4`，资产 bin 4,067,328 B、sha256 `f442c878…4bcc669`，与 v1.5.3 同为 64 KB 对齐桶）。dist 公开镜像编译 exit=0（不含本机 Wi-Fi、静态 IP、SDK token、TTS 密钥与中继地址；发版全量字符串扫零泄露——裸 `mgst_` 前缀为 SDK 令牌格式常量，v1.5.3 公开镜像同样含）；板侧测试镜像（本机配置）编译 exit=0 已刷开发板（`App version: 1.5.4f`、`UI up: 360x360`、无 panic）。host 定向验收——触及模块（alarm_stop/tracing/wordcards/quiz/pet_economy/luckywheel）全过、link 家族 8 条既有失败与 main 基线逐条一致零新增；`esp32/notes/20261122-1.5.4e评审修补说明.md` 留 9 项实机复核。遗留：R-1 闹钟 7 秒自停待台架复现；M-1 chmod 与 E-5 数独真删须本地操作。
+状态：正式版发布（tag `v1.5.4`，资产 bin 4,067,328 B、sha256 `f442c878…4bcc669`，与 v1.5.3 同为 64 KB 对齐桶）。dist 公开镜像编译 exit=0（不含本机 Wi-Fi、静态 IP、SDK token、TTS 密钥与中继地址；发版全量字符串扫零泄露——裸 `mgst_` 前缀为 SDK 令牌格式常量，v1.5.3 公开镜像同样含）；板侧测试镜像（本机配置）编译 exit=0 已刷开发板（`App version: 1.5.4f`、`UI up: 360x360`、无 panic）。host 定向验收——触及模块（alarm_stop/tracing/wordcards/quiz/pet_economy/luckywheel）全过、全量 link 家族 FAIL 15 + ERROR 3（test_link_* 模块：9 个方法 + sensecap/reterminal/discovery 3 个 setUpClass）与 main 基线逐条一致零新增；`esp32/notes/20261122-1.5.4e评审修补说明.md` 留 9 项实机复核。遗留：R-1 闹钟 7 秒自停待台架复现；M-1 chmod 与 E-5 数独真删须本地操作。
 
 ### v1.5.4c（2026-11-21，测试版）
 

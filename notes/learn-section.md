@@ -70,15 +70,22 @@
   同色，由 `refresh_status()` 实时刷新，新增 `s_learn_coins`）。
   三张卡放得下，不用滚动。点击进对应页不变
   （`on_open_mathpractice` / `on_open_wordcards` / `on_open_quiz`）。
-- 图标（game-icons，CC BY 3.0；A8 128×128 master，运行时按卡重着色，
-  单词卡片同款做法——主网格是全白，这里每张卡一个色）：
-  数学练习 `delapouite/calculator.svg` 金 #f6cb4b（= `MUSE_THEME_GOLD`）、
-  英语单词 `lorc/open-book.svg` 浅蓝 #8ec9ff、英语听力
-  `delapouite/microphone.svg` 粉 #ff8fb3。生成器
-  `~/workspace/learn-cards-art-gen.py`（同一管线，IoU 验收 ≥0.99，
-  实测 0.9924–0.9998）。Art 表 `muse_learn_art.{c,h}` + 3 个 master
-  `muse_learn_art_{calculator,open_book,microphone}.c`。
+- 图标（A8 128×128 master，运行时按卡重着色，单词卡片同款做法——
+  主网格是全白，这里每张卡一个色；2026-11-22 用户选型换图后共四张卡，
+  顺序语文练习 / 数学练习 / 英语单词 / 英语听力）：
+  语文练习 `delapouite/pencil-brush.svg` 竹青 #7bcf9e（game-icons，
+  CC BY 3.0；生成器 `~/workspace/learn-pencil-brush-gen.py`）、
+  数学练习自绘七档中式算盘金 #f6cb4b（= `MUSE_THEME_GOLD`；game-icons
+  无中式算盘，生成器 `esp32/tools/muse/gen_learn_abacus_art.py`，画布
+  512 见 `muse_learn_art.h`）、英语单词红苹果 `#ff5c5c`（复用词卡母版
+  `muse_wordcards_art_apple`，与词卡页同色 = `MUSE_THEME_DANGER`）、
+  英语听力 `delapouite/headphones.svg` 粉 #ff8fb3（game-icons，CC BY 3.0；
+  2026-11-21 话筒换耳机，因「英语口语」改名「英语听力」）。Art 表
+  `muse_learn_art.{c,h}` + 4 个 master（含复用的苹果）。
   v7 手画像素画版（计算器/书/话筒 16×16）用户看过后否决，改回 v6。
+  （注：本节其余“3 张卡片 / 标语 y=84”已过期——2026-11-20 语文练习
+  加入后学习页为 4 张卡 2×2 网格，标语已删；几何以
+  `muse_interact_ui.c` build_learn 为准。）
 
 ## 验收
 

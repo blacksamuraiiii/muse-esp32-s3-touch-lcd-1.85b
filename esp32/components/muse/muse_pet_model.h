@@ -161,7 +161,9 @@
                                          * character per day (user decision
                                          * 2026-11-20, same as math practice
                                          * per question) */
-#define MUSE_PET_TRACING_CHARS 10u      /* 天 地 人 日 月 山 川 木 水 火 */
+#define MUSE_PET_TRACING_CHARS 30u      /* 描红三期 × 10 字，与
+                                        * MUSE_TRACING_TABLE 同序
+                                        * (2026-11-23: 10 → 30) */
 
 /*
  * "No real time yet" threshold, taken from muse_rtc.c ("Older than this means
@@ -203,9 +205,14 @@ typedef struct {
     uint32_t jiaobei_last;       /* last result today: 0 none, 1 holy,
                                   * 2 laughing, 3 yin (the codes below) */
     int32_t tracing_day;         /* day of the 描红 ledger, -1 = none */
-    uint32_t tracing_mask;       /* bits 0..9: that character already
+    uint32_t tracing_mask;       /* bits 0..29: that character already
                                   * paid today (same index as
-                                  * MUSE_TRACING_TABLE) */
+                                  * MUSE_TRACING_TABLE; 30 bits fit the
+                                  * uint32_t, and a v8 blob's mask
+                                  * (< 1024, ten characters) still
+                                  * validates, so no migration and no
+                                  * version bump for the 10 -> 30 widening
+                                  * -- the layout is unchanged) */
     int32_t luckywheel_day;      /* day of the 幸运大转盘 ledger, -1 = none */
     uint32_t luckywheel_count;   /* paid spins settled today (ledger only,
                                     * no cap since 2026-11-21) */
@@ -297,7 +304,7 @@ typedef struct {
  * minus the 10-coin entry fee the UI already charged with PET_FEE; the
  * model never nets the two itself.
  * PET_TRACING_SOLVE is the 描红 completion reward (user decision
- * 2026-11-20): arg is the character index (0..9, same as
+ * 2026-11-20): arg is the character index (0..29, same as
  * MUSE_TRACING_TABLE); it pays MUSE_PET_TRACING_COINS (2) for the
  * day's first correct trace of that character and PET_CAP for every
  * later one -- the same once-a-day-per-item shape as the feed mask
@@ -430,7 +437,7 @@ void muse_pet_jiaobei_result_today(const muse_pet_model_t *s, int64_t now,
 /*
  * Today's 描红 ledger, as a UI can read it without duplicating the
  * day rule: *paid_mask is the bits of the characters already paid
- * today (0..9, same index as MUSE_TRACING_TABLE; 0 on a new day or
+ * today (0..29, same index as MUSE_TRACING_TABLE; 0 on a new day or
  * when nothing has been traced today). Derived from the snapshot;
  * nothing is written. The pointer may be NULL.
  */

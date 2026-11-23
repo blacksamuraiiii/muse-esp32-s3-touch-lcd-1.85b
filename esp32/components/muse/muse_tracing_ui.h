@@ -1,20 +1,27 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 /*
  * muse_tracing_ui.h -- 描红写字 (语文练习) subpages inside the
- * interaction tile (user decision 2026-11-20, mockup v1).
+ * interaction tile (user decision 2026-11-20, mockup v1; phases page
+ * added 2026-11-23 for the second and third ten, mockup v2).
  *
- * Two pages, two levels: the 学习 page's "语文练习" row opens the
- * character list (muse_tracing_ui_build_list: one row of ten 100 px
- * cards in a horizontal strip, swipe left/right, snap per card, the
- * last card landing flush right; each card shows its character in
- * the 48 px tracing face with its pinyin underneath as a pre-rendered
- * A8 bitmap, and a character already paid today shows its glyph in
- * gold), and a card opens that character's trace page
- * (muse_tracing_ui_build_trace: a 228x228 田字格 centred at (66,66)
- * -- red solid border, dashed red cross -- with the character's
- * ghost inside (the 48 px face scaled to 170 px, faint fill) and the
- * child's ink drawn over it in white ~10 px lines). Back goes one
- * level up at a time: trace page -> list -> 学习 page.
+ * Three pages, three levels: the 学习 page's "语文练习" row opens the
+ * 期 list (muse_tracing_ui_build_phases: one row of three 100 px
+ * cards in a horizontal strip, same geometry as the character list;
+ * each card shows its 期号 (一 / 二 / 三) in the 48 px tracing face
+ * with its pinyin underneath as a pre-rendered A8 bitmap, and a 期
+ * characters all paid today shows its glyph in gold), a 期 card
+ * opens that 期的 character list (muse_tracing_ui_build_list: one
+ * row of ten 100 px cards in a horizontal strip, swipe left/right,
+ * snap per card, the last card landing flush right; each card shows
+ * its character in the 48 px tracing face with its pinyin
+ * underneath as a pre-rendered A8 bitmap, and a character already
+ * paid today shows its glyph in gold), and a card opens that
+ * character's trace page (muse_tracing_ui_build_trace: a 228x228
+ * 田字格 centred at (66,66) -- red solid border, dashed red cross
+ * -- with the character's ghost inside (the 48 px face scaled to
+ * 170 px, faint fill) and the child's ink drawn over it in white
+ * ~10 px lines). Back goes one level up at a time: trace page ->
+ * list -> phases -> 学习 page.
  *
  * No start page (the word-cards "进组即玩" precedent: tapping a
  * character opens its trace page directly), no summary page (a
@@ -64,17 +71,43 @@
 
 #include "lvgl.h"
 
+/* Callback the phases page calls when a 期 card is tapped: the
+ * owner (muse_interact_ui.c) shows that 期的 character list.
+ * `phase` is 0..2 (0: 天地人…, 1: 一二三…, 2: 六七八…). */
+typedef void (*muse_tracing_open_phase_cb_t)(int phase);
+
 /* Callback the list page calls when a character card is tapped: the
  * owner (muse_interact_ui.c) shows the trace page for that
- * character. `idx` is 0..9, the MUSE_TRACING_TABLE index. */
+ * character. `idx` is 0..29, the MUSE_TRACING_TABLE index. */
 typedef void (*muse_tracing_open_char_cb_t)(int idx);
+
+/* Build the 期 list inside `page` (a 360x360 group created by
+ * muse_interact_ui.c). `back_cb` is the back-arrow handler (back to
+ * the 学习 page); `open_cb` runs when a 期 card is tapped. Safe to
+ * call once, in the LVGL task. */
+void muse_tracing_ui_build_phases(lv_obj_t *page, lv_event_cb_t back_cb,
+                                  muse_tracing_open_phase_cb_t open_cb);
+
+/* Refresh the phases page's gold from the snapshot (today's paid
+ * mask): a 期 turns gold only when all ten of its characters paid
+ * today. The owner calls this when showing the phases page. No-op
+ * before the phases page is built. Safe in the LVGL task. */
+void muse_tracing_ui_refresh_phases(void);
 
 /* Build the character list inside `page` (a 360x360 group created by
  * muse_interact_ui.c). `back_cb` is the back-arrow handler (back to
- * the 学习 page); `open_cb` runs when a character card is tapped.
- * Safe to call once, in the LVGL task. */
+ * the 期 list); `open_cb` runs when a character card is tapped. The
+ * page shows one 期的 ten characters; which 期 is set by
+ * muse_tracing_ui_show_phase() (initially 期 0). Safe to call once,
+ * in the LVGL task. */
 void muse_tracing_ui_build_list(lv_obj_t *page, lv_event_cb_t back_cb,
                                 muse_tracing_open_char_cb_t open_cb);
+
+/* Show 期 `phase` (0..2) on the list page: title ("语文练习 ·
+ * 第一期 / 第二期 / 第三期"), the ten cards' glyphs, pinyin and tap
+ * targets, then a refresh. No-op for an out-of-range phase or before
+ * the list page is built. Safe in the LVGL task. */
+void muse_tracing_ui_show_phase(int phase);
 
 /* Build the trace page inside `page` (a 360x360 group created by
  * muse_interact_ui.c). `back_cb` is the back-arrow handler (back to
@@ -83,7 +116,7 @@ void muse_tracing_ui_build_list(lv_obj_t *page, lv_event_cb_t back_cb,
  * shows the first character. Safe to call once, in the LVGL task. */
 void muse_tracing_ui_build_trace(lv_obj_t *page, lv_event_cb_t back_cb);
 
-/* Prepare the trace page for character `idx` (0..9): fresh attempt,
+/* Prepare the trace page for character `idx` (0..29): fresh attempt,
  * ghost + progress rebuilt, ink cleared, praise hidden. The owner
  * calls this before showing the trace page. No-op for an
  * out-of-range index (the page keeps its current character). */

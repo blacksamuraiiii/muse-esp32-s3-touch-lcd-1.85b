@@ -3,18 +3,18 @@
  * muse_tracing_ui.c -- 描红写字 (语文练习) subpages (see
  * muse_tracing_ui.h).
  *
- * Layout is the mockup v1 geometry, measured from the same numbers
- * the mockup script used (~/workspace/tracing-mockup-v1.py,
- * ~/workspace/learn-layout-v3.py): 360x360 page, title y=44
- * (muse_page_title), hint y=84 (DIM), list cards 104x104 in a
- * 2x2 grid over 3 swiped pages (4/4/2), dots y=340; trace grid
- * 228x228 at (66,66), hint y=302 (DIM), progress y=322.
- *
- * The list page is the word-cards category strip idiom (flex row,
- * snap per page, scrollbar off, no elastic, scroll-end clamp):
- * pages are 216 px wide (2x104 + 8 gap) with 72 px end pads, so
- * the scroll stops are 0 / 224 / 448 and the dots read
- * (scroll_x + 112) / 224.
+ * Layout is the mockup geometry, measured from the same numbers
+ * the mockup scripts used (~/workspace/tracing-mockup-v1.py,
+ * ~/workspace/learn-layout-v3.py,
+ * ~/workspace/tracing-phase2-mockup-v2.py): 360x360 page, title
+ * y=44 (muse_page_title), list cards 100x100 in a horizontal strip
+ * (360x128 at y=120, 22 px end pads, 8 px gaps, snap per card, the
+ * last card landing flush right), pinyin line under each card (item
+ * y=108), coin line y=302. The phases page (2026-11-23, three 期)
+ * is the same strip with three cards (the first card of each 期:
+ * 天 / 一 / 六); the list page shows one 期的 ten cards and its
+ * title names the 期 ("语文练习 · 第一期 / 第二期 / 第三期").
+ * Trace grid 228x228 at (66,66), hint y=302 (DIM), progress y=322.
  *
  * Ink is one lv_line per pen-down (at most MUSE_TRACING_UI_MAX_LINES
  * per attempt; a child tracing stroke by stroke lifts at most 9
@@ -125,10 +125,20 @@ LV_FONT_DECLARE(muse_font_tracing_kai_48_v1);
  * logic grades once; until then coverage is only recomputed. */
 #define TRACING_UI_SETTLE_MS 2000
 
+static lv_obj_t *s_phases_page;
+static lv_obj_t *s_phases_glyphs[MUSE_TRACING_PHASES];
+static lv_obj_t *s_phases_coins;
+static muse_tracing_open_phase_cb_t s_open_phase_cb;
+
 static lv_obj_t *s_list_page;
-static lv_obj_t *s_list_glyphs[MUSE_TRACING_CHARS];
+static lv_obj_t *s_list_title;
+static lv_obj_t *s_list_glyphs[MUSE_TRACING_CHARS_PER_PHASE];
+static lv_obj_t *s_list_pinyin[MUSE_TRACING_CHARS_PER_PHASE];
+static lv_obj_t *s_list_cards[MUSE_TRACING_CHARS_PER_PHASE];
 static lv_obj_t *s_list_coins;
 static muse_tracing_open_char_cb_t s_open_cb;
+/* Which 期 the list page currently shows (0..MUSE_TRACING_PHASES - 1). */
+static int s_phase;
 
 static lv_obj_t *s_trace_page;
 static lv_obj_t *s_ghost;
@@ -435,6 +445,134 @@ static void on_touch(lv_event_t *e)
      * clock above. */
 }
 
+/* --- phases page --------------------------------------------------- */
+
+/* The coin line, shared by the phases and list pages: the wallet
+ * balance from the snapshot, or the "--" placeholder when there is
+ * no snapshot yet (the real balance is simply unknown -- never a
+ * made-up 0, the same wording as the other status lines). */
+static void refresh_coins(lv_obj_t *coins_label)
+{
+    if (coins_label == NULL) {
+        return;
+    }
+    muse_pet_model_t snap;
+    bool have = muse_pet_snapshot(&snap);
+    char buf[32];
+    snprintf(buf, sizeof(buf), have ? "金币 %u/100" : "金币 --/100",
+             (unsigned)(have ? snap.coins : 0));
+    lv_label_set_text(coins_label, buf);
+}
+
+/* Today's paid mask from the snapshot (0 when there is none). */
+static uint32_t paid_today(void)
+{
+    muse_pet_model_t snap;
+    uint32_t paid = 0;
+    if (muse_pet_snapshot(&snap)) {
+        muse_pet_tracing_today(&snap, time(NULL), &paid);
+    }
+    return paid;
+}
+
+/* Phase numbers, not the phase's first character (user decision
+ * 2026-11-23, mockup v2): the three cards read 一 / 二 / 三. The
+ * pinyin bitmaps are MUSE_TRACING_PINYIN_ART[10 + phase]: table
+ * entries 10/11/12 are yī/èr/sān, matching the phase numbers. */
+static const char *const PHASE_NUMBERS[MUSE_TRACING_PHASES] = {
+    "一", "二", "三",
+};
+
+static void on_phase_card(lv_event_t *e)
+{
+    int phase = (int)(intptr_t)lv_event_get_user_data(e);
+    if (s_open_phase_cb) {
+        s_open_phase_cb(phase);
+    }
+}
+
+void muse_tracing_ui_build_phases(lv_obj_t *page, lv_event_cb_t back_cb,
+                                  muse_tracing_open_phase_cb_t open_cb)
+{
+    s_phases_page = page;
+    s_open_phase_cb = open_cb;
+    muse_back_button(page, back_cb);
+    muse_page_title(page, "语文练习", 44);
+    /* Same strip as the character list (mockup v2, one row of cards):
+     * three cards fill the row exactly (22 + 100 + 8 + 100 + 8 + 100
+     * + 22 = 360), so no scrolling is needed; later 期 are appended
+     * to the strip, which scrolls the same way the list does. Each
+     * card shows its 期号 (一 / 二 / 三) with its pinyin under
+     * it. */
+    lv_obj_t *strip = lv_obj_create(page);
+    lv_obj_remove_style_all(strip);
+    lv_obj_set_size(strip, 360, TRACING_LIST_STRIP_H);
+    lv_obj_align(strip, LV_ALIGN_TOP_MID, 0, TRACING_LIST_STRIP_Y);
+    lv_obj_set_flex_flow(strip, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(strip, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START,
+                          LV_FLEX_ALIGN_START);
+    lv_obj_set_style_pad_left(strip, 22, 0);
+    lv_obj_set_style_pad_right(strip, 22, 0);
+    lv_obj_set_style_pad_column(strip, 8, 0);
+    lv_obj_set_scroll_dir(strip, LV_DIR_HOR);
+    lv_obj_set_scrollbar_mode(strip, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_set_scroll_snap_x(strip, LV_SCROLL_SNAP_START);
+    lv_obj_remove_flag(strip, LV_OBJ_FLAG_SCROLL_ELASTIC);
+    muse_strip_snap_clamp(strip, TRACING_LIST_CARD + 8);
+
+    for (int phase = 0; phase < (int)MUSE_TRACING_PHASES; phase++) {
+        lv_obj_t *item = lv_obj_create(strip);
+        lv_obj_remove_style_all(item);
+        lv_obj_set_size(item, TRACING_LIST_CARD, TRACING_LIST_ITEM_H);
+        lv_obj_remove_flag(item, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_t *card = muse_card(item, TRACING_LIST_CARD,
+                                   TRACING_LIST_CARD, 14);
+        lv_obj_set_pos(card, 0, 0);
+        lv_obj_t *glyph = label(card, TRACING_FONT, MUSE_THEME_TEXT);
+        lv_label_set_text(glyph, PHASE_NUMBERS[phase]);
+        lv_obj_center(glyph);
+        lv_obj_remove_flag(glyph, LV_OBJ_FLAG_CLICKABLE);
+        s_phases_glyphs[phase] = glyph;
+        lv_obj_t *py = lv_image_create(item);
+        lv_image_set_src(py, MUSE_TRACING_PINYIN_ART[10 + phase]);
+        lv_obj_set_style_image_recolor(py, lv_color_hex(MUSE_THEME_DIM), 0);
+        lv_obj_set_style_image_recolor_opa(py, LV_OPA_COVER, 0);
+        lv_obj_align(py, LV_ALIGN_TOP_MID, 0, TRACING_LIST_NAME_Y);
+        lv_obj_remove_flag(py, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_add_event_cb(card, on_phase_card, LV_EVENT_CLICKED,
+                            (void *)(intptr_t)phase);
+    }
+    s_phases_coins = label(page, muse_font_cjk(), MUSE_THEME_TEXT);
+    lv_label_set_text(s_phases_coins, "金币 --/100");
+    lv_obj_align(s_phases_coins, LV_ALIGN_TOP_MID, 0, TRACING_LIST_COINS_Y);
+    muse_tracing_ui_refresh_phases();
+}
+
+void muse_tracing_ui_refresh_phases(void)
+{
+    if (!s_phases_page) {
+        return;
+    }
+    uint32_t paid = paid_today();
+    refresh_coins(s_phases_coins);
+    for (int p = 0; p < (int)MUSE_TRACING_PHASES; p++) {
+        if (!s_phases_glyphs[p]) {
+            continue;
+        }
+        /* A 期 turns gold only when all ten of its characters paid
+         * today (the same "all done" rule as the list page's
+         * per-character gold, one level up). The mask's ten bits for
+         * 期 p are (0x3FFu << (p * 10)). */
+        uint32_t bits =
+            (0x3FFu << ((uint32_t)p * MUSE_TRACING_CHARS_PER_PHASE));
+        lv_obj_set_style_text_color(
+            s_phases_glyphs[p],
+            lv_color_hex((paid & bits) == bits ? MUSE_THEME_GOLD
+                                               : MUSE_THEME_TEXT),
+            0);
+    }
+}
+
 /* --- list page ----------------------------------------------------- */
 
 static void on_card(lv_event_t *e)
@@ -451,13 +589,14 @@ void muse_tracing_ui_build_list(lv_obj_t *page, lv_event_cb_t back_cb,
     s_list_page = page;
     s_open_cb = open_cb;
     muse_back_button(page, back_cb);
-    muse_page_title(page, "语文练习", 44);
+    s_list_title = muse_page_title(page, "语文练习 · 第一期", 44);
     /* Horizontal strip, the 英语单词 sets page's idiom (user decision
-     * 2026-11-21): one row of ten 100 px cards, swipe left/right, snap
+     * 2026-11-21): one row of 100 px cards, swipe left/right, snap
      * per card, scrollbar off, hard edge while dragging. Each item is
-     * the card plus its pinyin line under it, so the pinyin scrolls with
-     * its character. Reading order is the table order,
-     * 天 地 人 日 月 山 川 木 水 火. */
+     * the card plus its pinyin line under it, so the pinyin scrolls
+     * with its character. The page shows one 期的 ten characters;
+     * muse_tracing_ui_show_phase() fills the cards (glyph, pinyin,
+     * tap target) and the title. */
     lv_obj_t *strip = lv_obj_create(page);
     lv_obj_remove_style_all(strip);
     lv_obj_set_size(strip, 360, TRACING_LIST_STRIP_H);
@@ -477,8 +616,7 @@ void muse_tracing_ui_build_list(lv_obj_t *page, lv_event_cb_t back_cb,
      * gap. */
     muse_strip_snap_clamp(strip, TRACING_LIST_CARD + 8);
 
-    for (int idx = 0; idx < (int)MUSE_TRACING_CHARS; idx++) {
-        const muse_tracing_char_t *ch = &MUSE_TRACING_TABLE[idx];
+    for (int local = 0; local < (int)MUSE_TRACING_CHARS_PER_PHASE; local++) {
         lv_obj_t *item = lv_obj_create(strip);
         lv_obj_remove_style_all(item);
         lv_obj_set_size(item, TRACING_LIST_CARD, TRACING_LIST_ITEM_H);
@@ -489,27 +627,67 @@ void muse_tracing_ui_build_list(lv_obj_t *page, lv_event_cb_t back_cb,
         /* The character at its native 48 px: a 100 px card is the one
          * place the tracing face needs no scaling. */
         lv_obj_t *glyph = label(card, TRACING_FONT, MUSE_THEME_TEXT);
-        lv_label_set_text(glyph, ch->utf8);
+        lv_label_set_text(glyph, MUSE_TRACING_TABLE[local].utf8);
         lv_obj_center(glyph);
         lv_obj_remove_flag(glyph, LV_OBJ_FLAG_CLICKABLE);
-        s_list_glyphs[idx] = glyph;
+        s_list_glyphs[local] = glyph;
         /* Pinyin under the card, as the pre-rendered A8 bitmap: the
          * tone marks drew blank through the font path, images do not
          * (see muse_tracing_pinyin_art.h). Recolored DIM at runtime,
          * the word-cards art idiom. */
         lv_obj_t *py = lv_image_create(item);
-        lv_image_set_src(py, MUSE_TRACING_PINYIN_ART[idx]);
+        lv_image_set_src(py, MUSE_TRACING_PINYIN_ART[local]);
         lv_obj_set_style_image_recolor(py, lv_color_hex(MUSE_THEME_DIM), 0);
         lv_obj_set_style_image_recolor_opa(py, LV_OPA_COVER, 0);
         lv_obj_align(py, LV_ALIGN_TOP_MID, 0, TRACING_LIST_NAME_Y);
         lv_obj_remove_flag(py, LV_OBJ_FLAG_CLICKABLE);
+        s_list_pinyin[local] = py;
+        s_list_cards[local] = card;
         lv_obj_add_event_cb(card, on_card, LV_EVENT_CLICKED,
-                            (void *)(intptr_t)idx);
+                            (void *)(intptr_t)local);
     }
     /* Coin line, the sets page's slot (y = 302). */
     s_list_coins = label(page, muse_font_cjk(), MUSE_THEME_TEXT);
     lv_label_set_text(s_list_coins, "金币 --/100");
     lv_obj_align(s_list_coins, LV_ALIGN_TOP_MID, 0, TRACING_LIST_COINS_Y);
+    /* Fill 期 0 (the build above already holds its glyphs and
+     * pinyin; show_phase rewrites the title, the tap targets and the
+     * gold, so the page is consistent from the first show). */
+    muse_tracing_ui_show_phase(0);
+}
+
+void muse_tracing_ui_show_phase(int phase)
+{
+    if (phase < 0 || phase >= (int)MUSE_TRACING_PHASES || !s_list_page) {
+        return;
+    }
+    s_phase = phase;
+    static const char *const titles[MUSE_TRACING_PHASES] = {
+        "语文练习 · 第一期",
+        "语文练习 · 第二期",
+        "语文练习 · 第三期",
+    };
+    if (s_list_title) {
+        lv_label_set_text(s_list_title, titles[phase]);
+    }
+    for (int local = 0; local < (int)MUSE_TRACING_CHARS_PER_PHASE; local++) {
+        int idx = phase * (int)MUSE_TRACING_CHARS_PER_PHASE + local;
+        const muse_tracing_char_t *ch = &MUSE_TRACING_TABLE[idx];
+        if (s_list_glyphs[local]) {
+            lv_label_set_text(s_list_glyphs[local], ch->utf8);
+        }
+        if (s_list_pinyin[local]) {
+            lv_image_set_src(s_list_pinyin[local],
+                             MUSE_TRACING_PINYIN_ART[idx]);
+        }
+        if (s_list_cards[local]) {
+            /* The tap target is the global character index: the
+             * trace page and the reward both take it directly. */
+            lv_obj_remove_event_cb(s_list_cards[local], on_card);
+            lv_obj_add_event_cb(s_list_cards[local], on_card,
+                                LV_EVENT_CLICKED, (void *)(intptr_t)idx);
+        }
+    }
     muse_tracing_ui_refresh_list();
 }
 
@@ -518,31 +696,20 @@ void muse_tracing_ui_refresh_list(void)
     if (!s_list_page) {
         return;
     }
-    muse_pet_model_t snap;
-    uint32_t paid = 0;
-    bool have = muse_pet_snapshot(&snap);
-    if (have) {
-        muse_pet_tracing_today(&snap, time(NULL), &paid);
-    }
-    if (s_list_coins != NULL) {
-        char buf[32];
-        /* No snapshot: show the placeholder, not a made-up 0 -- the
-         * wallet's real balance is simply unknown (same wording as the
-         * other status lines' "--"). */
-        snprintf(buf, sizeof(buf), have ? "金币 %u/100" : "金币 --/100",
-                 (unsigned)(have ? snap.coins : 0));
-        lv_label_set_text(s_list_coins, buf);
-    }
-    for (int i = 0; i < (int)MUSE_TRACING_CHARS; i++) {
-        if (!s_list_glyphs[i]) {
+    uint32_t paid = paid_today();
+    refresh_coins(s_list_coins);
+    for (int local = 0; local < (int)MUSE_TRACING_CHARS_PER_PHASE; local++) {
+        if (!s_list_glyphs[local]) {
             continue;
         }
         /* Paid today: the glyph turns gold. The 34 px card has no room
          * for the ✓ the old 104 px card carried. */
+        int idx = s_phase * (int)MUSE_TRACING_CHARS_PER_PHASE + local;
         lv_obj_set_style_text_color(
-            s_list_glyphs[i],
-            lv_color_hex((paid & (1u << (uint32_t)i)) != 0 ? MUSE_THEME_GOLD
-                                                          : MUSE_THEME_TEXT),
+            s_list_glyphs[local],
+            lv_color_hex((paid & (1u << (uint32_t)idx)) != 0
+                             ? MUSE_THEME_GOLD
+                             : MUSE_THEME_TEXT),
             0);
     }
 }

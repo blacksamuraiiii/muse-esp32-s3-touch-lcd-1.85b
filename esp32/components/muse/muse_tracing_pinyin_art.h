@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 /*
- * muse_tracing_pinyin_art.h -- the ten pinyin lines of the 语文练习
+ * muse_tracing_pinyin_art.h -- the thirty pinyin lines of the 语文练习
  * pages as A8 bitmaps, one per character in MUSE_TRACING_TABLE order.
  *
  * The 16 px CJK face carries the tone-marked vowels as glyphs, but the

@@ -33,7 +33,7 @@
  *     nothing; a bare request (arg 0) charges and counts but records
  *     no result.
  *   - PET_TRACING_SOLVE (user decision 2026-11-20): 2 coins for the
- *     day's first correct trace of one character (arg 0..9), PET_CAP
+ *     day's first correct trace of one character (arg 0..29), PET_CAP
  *     for every later trace of the same character the same day; a
  *     new day rolls the mask, a rollback never re-grants a character,
  *     and an out-of-range arg settles nothing (PET_BUSY).
@@ -676,7 +676,8 @@ int main(void)
 
     /* --- tracing: 2 coins for the day's first trace of a character -----
      * (user decision 2026-11-20: same once-a-day-per-item shape as the
-     * feed mask, arg is the character index 0..9). */
+     * feed mask, arg is the character index 0..29 -- three 期 of ten,
+     * 2026-11-23). */
     muse_pet_model_init(&m);
     m.coins = 50;
     uint32_t paid_mask = 0;
@@ -697,17 +698,26 @@ int main(void)
     assert(apply(&m, PET_TRACING_SOLVE, d1, 1) == PET_OK);
     assert(m.coins == 50 + 2 * MUSE_PET_TRACING_COINS);
     assert(m.tracing_mask == 0x3u);
+    /* The widened mask reaches the second and third 期: character 10
+     * (一) and 29 (去) pay, and bit 29 lands in the mask. */
+    assert(apply(&m, PET_TRACING_SOLVE, d1, 10) == PET_OK);
+    assert(m.tracing_mask == 0x403u);
+    assert(apply(&m, PET_TRACING_SOLVE, d1, 29) == PET_OK);
+    assert(m.coins == 50 + 4 * MUSE_PET_TRACING_COINS);
+    assert(m.tracing_mask == 0x20000403u);
+    muse_pet_tracing_today(&m, day_now(d1), &paid_mask);
+    assert(paid_mask == 0x20000403u);
     /* An out-of-range character settles nothing (PET_BUSY): no coins,
-     * no mask bit, no day stamped. */
-    assert(apply(&m, PET_TRACING_SOLVE, d1, 10) == PET_BUSY);
+     * no mask bit, no day stamped. The bound is 30 now, not 10. */
+    assert(apply(&m, PET_TRACING_SOLVE, d1, 30) == PET_BUSY);
     assert(apply(&m, PET_TRACING_SOLVE, d1, -1) == PET_BUSY);
-    assert(m.coins == 50 + 2 * MUSE_PET_TRACING_COINS);
-    assert(m.tracing_mask == 0x3u);
+    assert(m.coins == 50 + 4 * MUSE_PET_TRACING_COINS);
+    assert(m.tracing_mask == 0x20000403u);
     /* The wallet cap still applies: 99 + 2 is 100, not 101. */
     m.coins = 99;
     assert(apply(&m, PET_TRACING_SOLVE, d1, 2) == PET_OK);
     assert(m.coins == MUSE_PET_COINS_MAX);
-    assert(m.tracing_mask == 0x7u);
+    assert(m.tracing_mask == 0x20000407u);
     /* A new day rolls the mask (the living cost is settled first). */
     assert(apply(&m, PET_TRACING_SOLVE, d2, 0) == PET_OK);
     assert(m.coins == MUSE_PET_COINS_MAX - MUSE_PET_DECAY_PER_DAY +
@@ -729,6 +739,34 @@ int main(void)
     assert(apply(&m, PET_TRACING_SOLVE, d2 - 1, 0) == PET_CAP);
     assert(m.tracing_mask == 0x3u);
 
+    /* --- phase gold is a mask check, not a separate ledger ------------
+     * (2026-11-23: a 期 card turns gold when all ten of its
+     * characters paid today). Host-side there is no LVGL, so this
+     * tests the model-layer equivalent the UI applies: the 期的 ten
+     * mask bits all set <=> gold, one bit missing <=> not gold. The
+     * UI reads the same mask through muse_pet_tracing_today() and
+     * applies the same ten-bit test in muse_tracing_ui_refresh_phases(). */
+    muse_pet_model_init(&m);
+    m.coins = 50;
+    for (int i = 10; i < 20; i++) {
+        assert(apply(&m, PET_TRACING_SOLVE, d1, i) == PET_OK);
+    }
+    assert(m.tracing_mask == 0xFFC00u); /* bits 10..19 */
+    muse_pet_tracing_today(&m, day_now(d1), &paid_mask);
+    assert((paid_mask & (0x3FFu << 10)) == (0x3FFu << 10)); /* 期 1 gold */
+    assert((paid_mask & 0x3FFu) != 0x3FFu);                  /* 期 0 not */
+    assert((paid_mask & (0x3FFu << 20)) != (0x3FFu << 20)); /* 期 2 not */
+    /* One bit short of a full 期 is not gold: nine of 期 2's ten. */
+    for (int i = 20; i < 29; i++) {
+        assert(apply(&m, PET_TRACING_SOLVE, d1, i) == PET_OK);
+    }
+    muse_pet_tracing_today(&m, day_now(d1), &paid_mask);
+    assert((paid_mask & (0x3FFu << 20)) != (0x3FFu << 20));
+    /* The tenth completes it. */
+    assert(apply(&m, PET_TRACING_SOLVE, d1, 29) == PET_OK);
+    muse_pet_tracing_today(&m, day_now(d1), &paid_mask);
+    assert((paid_mask & (0x3FFu << 20)) == (0x3FFu << 20));
+
     /* --- validation catches a corrupt tracing ledger ------------------- */
     muse_pet_model_init(&m);
     m.tracing_day = -2;
@@ -736,6 +774,12 @@ int main(void)
     muse_pet_model_init(&m);
     m.tracing_mask = 1u << MUSE_PET_TRACING_CHARS;
     assert(!muse_pet_model_valid(&m));
+    /* But a v8 blob's mask (< 1024, ten characters) still validates
+     * under the widened 30-bit bound -- the 10 -> 30 widening needs
+     * no migration and no version bump. */
+    muse_pet_model_init(&m);
+    m.tracing_mask = 0x3FFu;
+    assert(muse_pet_model_valid(&m));
     muse_pet_model_init(&m);
     m.tracing_day = d1;
     m.tracing_mask = (1u << MUSE_PET_TRACING_CHARS) - 1;

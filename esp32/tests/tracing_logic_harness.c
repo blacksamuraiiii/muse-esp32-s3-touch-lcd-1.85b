@@ -4,10 +4,11 @@
  *
  * The rules under test are the ones the user settled on 2026-11-20:
  *
- *   - one character at a time (10: 天 地 人 日 月 山 川 木 水 火),
- *     graded against that character's reference strokes -- the
- *     skeleton centrelines of its 170 px Noto glyph, measured from
- *     the rendered pixels (muse_tracing.c's table);
+ *   - one character at a time (30: three 期 of ten -- 天 地 人 日 月 山
+ *     川 木 水 火 / 一 二 三 上 口 耳 目 手 田 禾 / 六 七 八 十 九 王
+ *     午 下 个 去), graded against that character's reference strokes
+ *     -- the skeleton centrelines of its 170 px Noto glyph, measured
+ *     from the rendered pixels (muse_tracing.c's table);
  *   - grading is the overall coverage (covered samples / all
  *     samples): >= 50% passes, >= 90% earns the praise line and
  *     the 2-coin reward, 50..89 is "继续加油". No stroke-order
@@ -47,6 +48,10 @@
 static const uint32_t WANT_CODEPOINTS[MUSE_TRACING_CHARS] = {
     0x5929, 0x5730, 0x4EBA, 0x65E5, 0x6708,
     0x5C71, 0x5DDD, 0x6728, 0x6C34, 0x706B,
+    0x4E00, 0x4E8C, 0x4E09, 0x4E0A, 0x53E3,
+    0x8033, 0x76EE, 0x624B, 0x7530, 0x79BE,
+    0x516D, 0x4E03, 0x516B, 0x5341, 0x4E5D,
+    0x738B, 0x5348, 0x4E0B, 0x4E2A, 0x53BB,
 };
 
 /* Feed points along one segment in 2 px steps (the logic samples at
@@ -157,8 +162,8 @@ int main(void)
     assert(t.char_idx == -1);
     assert(t.phase == MUSE_TRACING_IDLE);
 
-    /* The character table: ten entries, codepoints in list order. */
-    assert(MUSE_TRACING_CHARS == 10);
+    /* The character table: thirty entries, codepoints in list order. */
+    assert(MUSE_TRACING_CHARS == 30);
     for (int i = 0; i < (int)MUSE_TRACING_CHARS; i++) {
         assert(MUSE_TRACING_TABLE[i].codepoint == WANT_CODEPOINTS[i]);
         assert(MUSE_TRACING_TABLE[i].utf8 != NULL &&
@@ -169,10 +174,10 @@ int main(void)
 
     /* Out-of-range characters are refused, state untouched. */
     assert(!muse_tracing_set_char(&t, -1));
-    assert(!muse_tracing_set_char(&t, 10));
+    assert(!muse_tracing_set_char(&t, 30));
     assert(t.char_idx == -1);
     assert(muse_tracing_strokes(-1, NULL) == NULL);
-    assert(muse_tracing_strokes(10, NULL) == NULL);
+    assert(muse_tracing_strokes(30, NULL) == NULL);
     assert(muse_tracing_stroke_coverage(&t, -1) == 0);
     assert(muse_tracing_stroke_coverage(&t, 99) == 0);
 

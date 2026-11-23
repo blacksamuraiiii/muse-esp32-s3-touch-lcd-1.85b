@@ -62,7 +62,14 @@
  *   2. render 256x256 PNG, white on transparent, then Lanczos-resize
  *      to 128x128 (one master, LVGL scales it at runtime).
  * The abacus master is drawn (frame, beam, rods, bead pills) on a
- * 1024-square canvas, then Lanczos-resized the same way.
+ * 512-square canvas, then Lanczos-resized the same way. (C-1,
+ * 2026-11-23: the .c header said 512 and this file said 1024; the
+ * 512 canvas fits the committed master clearly better -- mean
+ * |alpha| diff 5.32 vs 6.86 at 1024, mask IoU 0.9654 vs 0.9584 --
+ * so 512 is the real canvas. Generator:
+ * tools/muse/gen_learn_abacus_art.py; the regenerated master is a
+ * documented reproduction, not byte-identical -- see there for the
+ * geometry and the sub-pixel gap against the committed file.)
  */
 #pragma once
 

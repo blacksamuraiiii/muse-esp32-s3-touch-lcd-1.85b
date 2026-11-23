@@ -22,8 +22,10 @@ const uint32_t MUSE_LEARN_ART_COLOR[MUSE_LEARN_COUNT] = {
                  the vermilion so the red apple owns the warm slot;
                  vermilion had been the colour since mockup v1) */
     0xf6cb4b, /* abacus (gold, = MUSE_THEME_GOLD, mockup v6) */
-    0xff4136, /* apple (red -- an apple is red, user 2026-11-22; the
-                 slot was open_book light blue #8ec9ff, mockup v6) */
+    0xff5c5c, /* apple (red -- an apple is red, user 2026-11-22; the
+                 same red as the word-cards page, 0xff5c5c =
+                 MUSE_THEME_DANGER in muse_wordcards_art.c:38, so the
+                 one apple master shows one red on both pages) */
     0xff8fb3, /* headphones (pink, mockup v6; was the microphone until
                  英语口语 became 英语听力, 2026-11-21) */
 };

@@ -742,7 +742,7 @@ bool muse_pet_request_jiaobei_toss(int32_t result)
 
 bool muse_pet_request_tracing_solve(int char_idx)
 {
-    /* Only 0..9 are queued; an out-of-range index is refused here so
+    /* Only 0..29 are queued; an out-of-range index is refused here so
      * a UI bug cannot mint coins or corrupt the ledger -- the model
      * re-checks (PET_BUSY) anyway. */
     if (char_idx < 0 || char_idx >= (int)MUSE_PET_TRACING_CHARS) {

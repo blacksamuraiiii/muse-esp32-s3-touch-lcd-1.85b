@@ -45,11 +45,18 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-/* The ten characters, in list order (user decision 2026-11-20: the
- * 人教版一年级上册 "天地人" "日月水火" "山川" three lessons' own
- * characters). The order is the list order and the "第 N/10 个字"
- * number; the reward mask (muse_pet_model.h) uses the same index. */
-#define MUSE_TRACING_CHARS 10u
+/* The thirty characters, in list order: three 期 of ten (user decision
+ * 2026-11-20 for the first ten: the 人教版一年级上册 "天地人" "日月水火"
+ * "山川" three lessons' own characters; 2026-11-23 for the second and
+ * third ten, same book order, skipping the first ten: 一 二 三 上 口
+ * 耳 目 手 田 禾 / 六 七 八 十 九 王 午 下 个 去). The order is the
+ * list order and the "第 N/30 个字" number; the reward mask
+ * (muse_pet_model.h) uses the same index. A character's 期 is
+ * idx / MUSE_TRACING_CHARS_PER_PHASE. */
+#define MUSE_TRACING_CHARS 30u
+/* Characters per 期 (three 期 of ten). */
+#define MUSE_TRACING_PHASES 3u
+#define MUSE_TRACING_CHARS_PER_PHASE 10u
 /* Longest reference polyline, points (measured: 月's outer box has
  * 8; the table in muse_tracing.c must stay within this). */
 #define MUSE_TRACING_STROKE_MAX_PTS 8u
@@ -96,8 +103,9 @@
  * is mostly stray. */
 #define MUSE_TRACING_WRONG_STRAY_FRAC 35u
 
-/* Most reference strokes of any one character (measured: 天 has 9). */
-#define MUSE_TRACING_MAX_STROKES 9u
+/* Most reference strokes of any one character (measured: 禾 has 10,
+ * the most of the thirty; 天 has 9). */
+#define MUSE_TRACING_MAX_STROKES 10u
 /* Resampled reference samples for one character: the longest
  * character's strokes total ~600 px of arc, so 320 samples at a 4 px
  * step is ~2x headroom. */

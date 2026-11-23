@@ -541,7 +541,7 @@ muse_pet_result_t muse_pet_model_apply(muse_pet_model_t *s, muse_pet_action_t ac
          * the same character the same day -- the once-a-day-per-item
          * shape of the feed mask. The ledger rolls like sudoku's (no
          * calibrated clock required). An out-of-range arg settles
-         * nothing: the UI only ever sends 0..9, and a stray value
+         * nothing: the UI only ever sends 0..29, and a stray value
          * must not mint coins or corrupt the mask. The trace page
          * shows the praise either way; only the payout is once a day. */
         if (arg < 0 || arg >= (int)MUSE_PET_TRACING_CHARS) {
