@@ -5,11 +5,15 @@
  * One character at a time (user decision 2026-11-20): the child traces
  * the ghost of a first-grade character in a 228x228 田字格, and the
  * trace is graded against the character's reference strokes -- the
- * skeleton centrelines of its 170 px Noto Sans SC Medium glyph,
- * measured from the rendered pixels (see
- * ~/workspace/tracing-strokes-extract.py; the table lives in
- * muse_tracing.c). No stroke-order check (user decision): only the
- * shape counts.
+ * skeleton centrelines of its on-screen ghost glyph, extracted
+ * from the 48 px LXGW WenKai (霞鹜文楷) font bitmaps in
+ * muse_font_tracing_kai_48_v1.c and scaled to the 228 px field
+ * (see ~/workspace/tracing-strokes-extract-lxgw22.py; the table
+ * lives in muse_tracing.c). The eight replacement characters
+ * (云 雨 虫 力 男 土 心 尺) still carry Noto-extracted strokes
+ * until the font is regenerated with them -- see
+ * esp32/notes/20261124-1.5.5a评审修补说明.md. No stroke-order
+ * check (user decision): only the shape counts.
  *
  * Grading, per attempt: the finger's points are sampled (one stored
  * point per MUSE_TRACING_SAMPLE_PX of travel) and compared with the
@@ -48,8 +52,11 @@
 /* The thirty characters, in list order: three 期 of ten (user decision
  * 2026-11-20 for the first ten: the 人教版一年级上册 "天地人" "日月水火"
  * "山川" three lessons' own characters; 2026-11-23 for the second and
- * third ten, same book order, skipping the first ten: 一 二 三 上 口
- * 耳 目 手 田 禾 / 六 七 八 十 九 王 午 下 个 去). The order is the
+ * third ten, same book order, skipping the first ten: 云 雨 虫 上 口
+ * 耳 目 手 田 禾 / 力 男 土 心 尺 王 午 下 个 去 -- the eight numeral
+ * characters 一 二 三 / 六 七 八 十 九 were replaced on 2026-11-24,
+ * user decision: too easy, and they duplicate the 一/二/三 phase
+ * cards). The order is the
  * list order and the "第 N/30 个字" number; the reward mask
  * (muse_pet_model.h) uses the same index. A character's 期 is
  * idx / MUSE_TRACING_CHARS_PER_PHASE. */
@@ -103,9 +110,11 @@
  * is mostly stray. */
 #define MUSE_TRACING_WRONG_STRAY_FRAC 35u
 
-/* Most reference strokes of any one character (measured: 禾 has 10,
- * the most of the thirty; 天 has 9). */
-#define MUSE_TRACING_MAX_STROKES 10u
+/* Most reference strokes of any one character (measured 2026-11-24
+ * on the LXGW table: 手 has 17, 地 16; the Noto table peaked at
+ * 禾 10). 20 leaves headroom for the eight replacement characters
+ * once they are re-extracted from LXGW. */
+#define MUSE_TRACING_MAX_STROKES 20u
 /* Resampled reference samples for one character: the longest
  * character's strokes total ~600 px of arc, so 320 samples at a 4 px
  * step is ~2x headroom. */

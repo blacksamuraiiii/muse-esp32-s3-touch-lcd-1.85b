@@ -13,13 +13,15 @@ Writes components/muse/muse_tracing_pinyin_art.c
 
 The font is SourceHanSansSC-Normal (the LVGL built-in-font copy under
 managed_components/, present after a build). Set PINYIN_FONT to render
-with another face instead -- 2026-11-23 the twenty 二/三期 lines were
-rendered with NotoSansSC-Medium as a stand-in because this checkout
-has no managed_components/ yet; the ten first-grade lines in the
-committed file are the SourceHanSansSC originals and were left
-byte-for-byte (spliced back after the run, see the branch notes).
-Re-running with the real font refreshes the twenty new bitmaps to
-the canonical face and reproduces the ten old ones exactly.
+with another face instead -- 2026-11-24 the eight replacement lines
+were rendered with NotoSansSC-Medium as a stand-in because this
+checkout has no managed_components/ yet; the twenty-two unchanged
+lines in the committed file are the SourceHanSansSC originals and
+were left byte-for-byte (spliced back after the run, see the branch
+notes). Re-running with the real font refreshes the eight new bitmaps
+to the canonical face and reproduces the twenty-two old ones exactly.
+(History: on 2026-11-23 the twenty 二/三期 lines were the stand-in
+ones; the 1.5.5a local run re-rendered all thirty with the real font.)
 """
 from __future__ import annotations
 
@@ -36,13 +38,15 @@ FONT = pathlib.Path(
 OUT = ROOT / "components/muse/muse_tracing_pinyin_art.c"
 
 # Same order as MUSE_TRACING_TABLE in muse_tracing.c: three 期 of ten
-# (2026-11-23: 10 -> 30). Tone marks verified against the lesson
-# order; the codepoints are MUSE_TRACING_TABLE's.
+# (2026-11-23: 10 -> 30; 2026-11-24: the eight numerals replaced --
+# 二期 一 二 三 -> 云 雨 虫, 三期 六 七 八 十 九 -> 力 男 土 心 尺).
+# Tone marks verified against the lesson order; the codepoints are
+# MUSE_TRACING_TABLE's.
 PINYIN = ["tiān", "dì", "rén", "rì", "yuè",
           "shān", "chuān", "mù", "shuǐ", "huǒ",
-          "yī", "èr", "sān", "shàng", "kǒu",
+          "yún", "yǔ", "chóng", "shàng", "kǒu",
           "ěr", "mù", "shǒu", "tián", "hé",
-          "liù", "qī", "bā", "shí", "jiǔ",
+          "lì", "nán", "tǔ", "xīn", "chǐ",
           "wáng", "wǔ", "xià", "gè", "qù"]
 SIZE = 17  # px: the UI's 16 px line, a touch larger so the marks stay legible
 PAD = 1
@@ -75,8 +79,9 @@ def main() -> None:
         " * board drew them blank; images sidestep the text path entirely.",
         " * Recolor at runtime (MUSE_THEME_DIM / MUSE_THEME_TEXT / GOLD), the",
         " * project's usual A8 idiom. Regenerate with",
-        " * tools/muse/gen_pinyin_art.py. The ten first-grade lines are the",
-        " * SourceHanSansSC originals; the twenty 二/三期 lines were rendered",
+        " * tools/muse/gen_pinyin_art.py. The twenty-two unchanged lines",
+        " * are the SourceHanSansSC originals; the eight replacement lines",
+        " * (yún/yǔ/chóng/lì/nán/tǔ/xīn/chǐ, 2026-11-24) were rendered",
         " * with NotoSansSC-Medium as a stand-in (see the generator) --",
         " * re-running with the real font refreshes them.",
         " */",

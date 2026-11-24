@@ -5,10 +5,12 @@
  * The rules under test are the ones the user settled on 2026-11-20:
  *
  *   - one character at a time (30: three 期 of ten -- 天 地 人 日 月 山
- *     川 木 水 火 / 一 二 三 上 口 耳 目 手 田 禾 / 六 七 八 十 九 王
+ *     川 木 水 火 / 云 雨 虫 上 口 耳 目 手 田 禾 / 力 男 土 心 尺 王
  *     午 下 个 去), graded against that character's reference strokes
- *     -- the skeleton centrelines of its 170 px Noto glyph, measured
- *     from the rendered pixels (muse_tracing.c's table);
+ *     -- the skeleton centrelines of its on-screen ghost glyph,
+ *     extracted from the 48 px LXGW WenKai font (the eight
+ *     replacement characters still carry Noto strokes until the
+ *     font is regenerated -- see the 1.5.5a review fix note);
  *   - grading is the overall coverage (covered samples / all
  *     samples): >= 50% passes, >= 90% earns the praise line and
  *     the 2-coin reward, 50..89 is "继续加油". No stroke-order
@@ -48,9 +50,9 @@
 static const uint32_t WANT_CODEPOINTS[MUSE_TRACING_CHARS] = {
     0x5929, 0x5730, 0x4EBA, 0x65E5, 0x6708,
     0x5C71, 0x5DDD, 0x6728, 0x6C34, 0x706B,
-    0x4E00, 0x4E8C, 0x4E09, 0x4E0A, 0x53E3,
+    0x4E91, 0x96E8, 0x866B, 0x4E0A, 0x53E3,
     0x8033, 0x76EE, 0x624B, 0x7530, 0x79BE,
-    0x516D, 0x4E03, 0x516B, 0x5341, 0x4E5D,
+    0x529B, 0x7537, 0x571F, 0x5FC3, 0x5C3A,
     0x738B, 0x5348, 0x4E0B, 0x4E2A, 0x53BB,
 };
 
@@ -211,14 +213,15 @@ int main(void)
     assert(muse_tracing_set_char(&t, 0));
     int count = 0;
     const muse_tracing_stroke_t *strokes = muse_tracing_strokes(0, &count);
-    assert(strokes != NULL && count == 9);
+    assert(strokes != NULL && count == 10); /* 天: 10 strokes on the
+     * LXGW table (was 9 on the Noto table) */
     trace_stroke(&t, &strokes[0]);
     assert(t.phase == MUSE_TRACING_TRACING);
     assert(muse_tracing_stroke_coverage(&t, 0) >=
            HARNESS_STROKE_COVERED_PCT);
-    /* Stroke 1 shares the top horizontal's junction with stroke 0,
-     * so its first sample is covered by stroke 0's end -- but the
-     * stroke as a whole is far from covered. */
+    /* Stroke 1 is the other half of the same top bar (stroke 0 is
+     * the right half, x 143..164; stroke 1 the left, x 60..82), so
+     * tracing stroke 0 leaves it uncovered. */
     assert(muse_tracing_stroke_coverage(&t, 1) <
            HARNESS_STROKE_COVERED_PCT);
     /* Incremental == full rescan (2026-11-21 review P1-2): grade()
@@ -226,9 +229,11 @@ int main(void)
      * equal the incremental state the mid-trace reads showed. Any
      * drift means the O(sample_count) per-point path disagrees with
      * the judging authority. The verdict itself may legitimately be
-     * DONE here: stroke 0 is the long one and its 16 px cover radius
-     * reaches into the neighbours, so a fully traced first stroke can
-     * already sit at MUSE_TRACING_PASS_PCT. */
+     * DONE here: a fully traced first stroke's 16 px cover radius
+     * reaches into the neighbours, so it can already sit at
+     * MUSE_TRACING_PASS_PCT. (On the old Noto table stroke 0 was
+     * the long one; on the LXGW table it is the short right half of
+     * the top bar, so in practice the verdict here is TRACING.) */
     {
         uint8_t mid_cover[MUSE_TRACING_MAX_STROKES];
         memcpy(mid_cover, t.stroke_cover, sizeof(mid_cover));

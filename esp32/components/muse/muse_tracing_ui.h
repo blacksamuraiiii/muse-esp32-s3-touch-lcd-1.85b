@@ -73,7 +73,7 @@
 
 /* Callback the phases page calls when a 期 card is tapped: the
  * owner (muse_interact_ui.c) shows that 期的 character list.
- * `phase` is 0..2 (0: 天地人…, 1: 一二三…, 2: 六七八…). */
+ * `phase` is 0..2 (0: 天地人…, 1: 云雨虫…, 2: 力男土…). */
 typedef void (*muse_tracing_open_phase_cb_t)(int phase);
 
 /* Callback the list page calls when a character card is tapped: the

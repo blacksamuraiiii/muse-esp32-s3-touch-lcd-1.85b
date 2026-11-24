@@ -11,8 +11,9 @@
  * (360x128 at y=120, 22 px end pads, 8 px gaps, snap per card, the
  * last card landing flush right), pinyin line under each card (item
  * y=108), coin line y=302. The phases page (2026-11-23, three 期)
- * is the same strip with three cards (the first card of each 期:
- * 天 / 一 / 六); the list page shows one 期的 ten cards and its
+ * is the same strip with three 期号 cards (一 / 二 / 三, the phase
+ * numbers -- not the phases' first characters); the list page shows
+ * one 期的 ten cards and its
  * title names the 期 ("语文练习 · 第一期 / 第二期 / 第三期").
  * Trace grid 228x228 at (66,66), hint y=302 (DIM), progress y=322.
  *
