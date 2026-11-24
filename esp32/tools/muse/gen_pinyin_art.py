@@ -13,13 +13,12 @@ Writes components/muse/muse_tracing_pinyin_art.c
 
 The font is SourceHanSansSC-Normal (the LVGL built-in-font copy under
 managed_components/, present after a build). Set PINYIN_FONT to render
-with another face instead -- 2026-11-24 the eight replacement lines
-were rendered with NotoSansSC-Medium as a stand-in because this
-checkout has no managed_components/ yet; the twenty-two unchanged
-lines in the committed file are the SourceHanSansSC originals and
-were left byte-for-byte (spliced back after the run, see the branch
-notes). Re-running with the real font refreshes the eight new bitmaps
-to the canonical face and reproduces the twenty-two old ones exactly.
+with another face instead. All thirty lines in the committed file are
+now that face: the eight replacement lines were first rendered with
+NotoSansSC-Medium as a stand-in in a checkout without
+managed_components/, then refreshed from the real font on 2026-11-24 --
+the twenty-two others came out byte-for-byte identical, which confirms
+the font and the settings.
 (History: on 2026-11-23 the twenty 二/三期 lines were the stand-in
 ones; the 1.5.5a local run re-rendered all thirty with the real font.)
 """
@@ -48,6 +47,14 @@ PINYIN = ["tiān", "dì", "rén", "rì", "yuè",
           "ěr", "mù", "shǒu", "tián", "hé",
           "lì", "nán", "tǔ", "xīn", "chǐ",
           "wáng", "wǔ", "xià", "gè", "qù"]
+
+# The 期 cards show the phase NUMBER (一 / 二 / 三), not the phase's first
+# character, so their pinyin cannot come from PINYIN -- the numerals left
+# the character table on 2026-11-24 and entries 10/11/12 are now
+# yún/yǔ/chóng (2026-11-24: the cards showed a box for the glyph and the
+# wrong pinyin under it). Render these three after the thirty and expose
+# them as MUSE_TRACING_PHASE_PINYIN_ART, one per phase.
+PHASE_PINYIN = ["yī", "èr", "sān"]
 SIZE = 17  # px: the UI's 16 px line, a touch larger so the marks stay legible
 PAD = 1
 
@@ -55,7 +62,7 @@ PAD = 1
 def main() -> None:
     font = ImageFont.truetype(str(FONT), SIZE)
     images: list[Image.Image] = []
-    for text in PINYIN:
+    for text in [*PINYIN, *PHASE_PINYIN]:
         # Render on a generous canvas, then crop to the ink.
         canvas = Image.new("L", (128, 48), 0)
         draw = ImageDraw.Draw(canvas)
@@ -72,18 +79,21 @@ def main() -> None:
     lines = [
         "/* SPDX-License-Identifier: Apache-2.0 */",
         "/*",
-        " * muse_tracing_pinyin_art.c -- the thirty pinyin lines of the 语文练习",
-        " * pages, pre-rendered A8 bitmaps (generated, do not hand-edit).",
+        " * muse_tracing_pinyin_art.c -- the pinyin lines of the 语文练习 pages:",
+        " * thirty for the character table, plus three for the 期号 cards",
+        " * (yī / èr / sān), pre-rendered A8 bitmaps (generated, do not",
+        " * hand-edit).",
         " *",
         " * The tone-marked vowels exist in the 16 px CJK face as glyphs but the",
         " * board drew them blank; images sidestep the text path entirely.",
         " * Recolor at runtime (MUSE_THEME_DIM / MUSE_THEME_TEXT / GOLD), the",
         " * project's usual A8 idiom. Regenerate with",
-        " * tools/muse/gen_pinyin_art.py. The twenty-two unchanged lines",
-        " * are the SourceHanSansSC originals; the eight replacement lines",
-        " * (yún/yǔ/chóng/lì/nán/tǔ/xīn/chǐ, 2026-11-24) were rendered",
-        " * with NotoSansSC-Medium as a stand-in (see the generator) --",
-        " * re-running with the real font refreshes them.",
+        " * tools/muse/gen_pinyin_art.py. All thirty-three lines are rendered with",
+        " * SourceHanSansSC-Normal (the LVGL built-in font); the eight",
+        " * replacement lines (yún/yǔ/chóng/lì/nán/tǔ/xīn/chǐ, 2026-11-24)",
+        " * were first rendered with NotoSansSC-Medium as a stand-in in a",
+        " * checkout without managed_components/ and refreshed from the real",
+        " * font on 2026-11-24, the twenty-two others unchanged.",
         " */",
         '#include "muse_tracing_pinyin_art.h"',
         "",
@@ -121,9 +131,19 @@ def main() -> None:
             "",
         ]
     lines += [
+        "/* One per character, MUSE_TRACING_TABLE order. */",
         "const lv_image_dsc_t *const MUSE_TRACING_PINYIN_ART[MUSE_TRACING_CHARS] = {",
     ]
-    for name in names:
+    for name in names[:len(PINYIN)]:
+        lines.append(f"    &{name},")
+    lines += [
+        "};",
+        "",
+        "/* The 期 cards' pinyin (yī / èr / sān -- the phase numbers, not each",
+        " * phase's first character), one per phase. */",
+        "const lv_image_dsc_t *const MUSE_TRACING_PHASE_PINYIN_ART[MUSE_TRACING_PHASES] = {",
+    ]
+    for name in names[len(PINYIN):]:
         lines.append(f"    &{name},")
     lines += ["};", ""]
     OUT.write_text("\n".join(lines), encoding="utf-8")

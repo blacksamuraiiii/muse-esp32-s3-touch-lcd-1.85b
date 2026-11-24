@@ -42,23 +42,29 @@ class TracingLogicTest(unittest.TestCase):
                  "-o", str(binary), "-lm"],
                 capture_output=True, text=True)
             self.assertEqual(built.returncode, 0, built.stdout + built.stderr)
+            ran = None
             # ASan's shadow setup is flaky under WSL: roughly one run in
             # three aborts at startup with a repeating
             # "AddressSanitizer:DEADLYSIGNAL" and never exits, while the
-            # very same binary passes in ~12 ms on the next try (measured
-            # 2026-11-07). That is the environment, not the logic, so one
-            # retry is allowed on exactly that signature; a real logic
-            # failure still fails the test.
-            ran = None
-            try:
-                ran = subprocess.run([str(binary)], capture_output=True,
-                                     text=True, timeout=20)
-            except subprocess.TimeoutExpired:
-                pass  # the DEADLYSIGNAL loop never exits; retry below
-            if ran is None or (ran.returncode != 0
-                               and "DEADLYSIGNAL" in ran.stderr):
-                ran = subprocess.run([str(binary)], capture_output=True,
-                                     text=True, timeout=20)
+            # same binary passes in ~6 ms (the thirty-character harness)
+            # on the next try. That is the environment, not the logic, so
+            # retries are allowed on exactly those two signatures; a real
+            # logic failure (non-zero exit without DEADLYSIGNAL) still
+            # fails the test. The 5 s timeout is ~800x the real run time:
+            # a process still alive after it is the hang, so killing it
+            # quickly beats waiting out a 20 s timeout per attempt.
+            for _ in range(3):
+                try:
+                    ran = subprocess.run([str(binary)], capture_output=True,
+                                         text=True, timeout=5)
+                except subprocess.TimeoutExpired:
+                    ran = None
+                    continue
+                if ran.returncode == 0 or "DEADLYSIGNAL" not in ran.stderr:
+                    break
+                ran = None
+            self.assertIsNotNone(ran, "tracing harness hung in all three attempts (WSL ASan flake)")
+            assert ran is not None
             self.assertEqual(ran.returncode, 0, ran.stdout + ran.stderr)
             self.assertEqual(ran.stdout.strip(), "ok")
 

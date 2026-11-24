@@ -8,11 +8,10 @@
  * skeleton centrelines of its on-screen ghost glyph, extracted
  * from the 48 px LXGW WenKai (霞鹜文楷) font bitmaps in
  * muse_font_tracing_kai_48_v1.c and scaled to the 228 px field
- * (see ~/workspace/tracing-strokes-extract-lxgw22.py; the table
- * lives in muse_tracing.c). The eight replacement characters
- * (云 雨 虫 力 男 土 心 尺) still carry Noto-extracted strokes
- * until the font is regenerated with them -- see
- * esp32/notes/20261124-1.5.5a评审修补说明.md. No stroke-order
+ * (see ~/workspace/tracing-strokes-extract-lxgw22.py for the first
+ * twenty-two and esp32/tools/muse notes for the last eight; the
+ * table lives in muse_tracing.c). All thirty characters come from
+ * the same font since 2026-11-24. No stroke-order
  * check (user decision): only the shape counts.
  *
  * Grading, per attempt: the finger's points are sampled (one stored
@@ -111,10 +110,10 @@
 #define MUSE_TRACING_WRONG_STRAY_FRAC 35u
 
 /* Most reference strokes of any one character (measured 2026-11-24
- * on the LXGW table: 手 has 17, 地 16; the Noto table peaked at
- * 禾 10). 20 leaves headroom for the eight replacement characters
- * once they are re-extracted from LXGW. */
-#define MUSE_TRACING_MAX_STROKES 20u
+ * on the LXGW table: 男 23, 手 17, 地 16; the Noto table peaked at
+ * 禾 10). The walk segmentation produces more, shorter pieces than
+ * the handwriting's real stroke count, hence 32. */
+#define MUSE_TRACING_MAX_STROKES 32u
 /* Resampled reference samples for one character: the longest
  * character's strokes total ~600 px of arc, so 320 samples at a 4 px
  * step is ~2x headroom. */

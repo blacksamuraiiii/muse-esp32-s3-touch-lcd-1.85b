@@ -25,18 +25,15 @@
  * decision: too easy, and they duplicate the 一/二/三 phase cards):
  * 二期 一 二 三 -> 云 雨 虫, 三期 六 七 八 十 九 -> 力 男 土 心 尺
  * (same book order, skipping used characters; pinyin from the 写字表
- * photo). Their strokes were extracted with
- * ~/workspace/tracing-strokes-extract-new8.py, the same method plus
- * one rule the 8-point stroke cap forces: a polyline with more than
- * MUSE_TRACING_STROKE_MAX_PTS (8) points is split into the fewest
- * pieces of <= 8, cutting at the sharpest interior turn (ties ->
- * lowest index), recursing -- 虫 needed it (13 -> 4 pieces) and 男
- * (9 -> 2 pieces); the cut points are real skeleton corners, and
- * grading is overall coverage, so a split changes nothing but the
- * per-stroke diagnostic. The 霞鹜文楷 ghost-alignment check (1.5.5a
- * method: LVGL formula, font dsc, per-point distance to the ghost
- * ink) still has to be run for these eight once the font is
- * regenerated -- see esp32/notes/20261124-语文练习数字字替换说明.md.
+ * photo). Their strokes were first carried over from the Noto table,
+ * then re-extracted from the regenerated LXGW font (see the review
+ * entry below). The 8-point stroke cap forces a split: a polyline
+ * with more than MUSE_TRACING_STROKE_MAX_PTS (8) points becomes the
+ * fewest pieces of <= 8, cut at the sharpest interior turn (ties ->
+ * lowest index), recursively -- 虫 needed it (8 -> 3 pieces); the
+ * cut points are real skeleton corners, and grading is overall
+ * coverage, so a split changes nothing but the per-stroke
+ * diagnostic.
  *
  * On 2026-11-24 the 1.5.5a review (B-1) flagged the Noto table
  * against the 霞鹜文楷 ghost, so the twenty-two characters whose
@@ -46,13 +43,20 @@
  * LVGL ghost geometry -- 48 px label, line height 46, transform
  * scale 907/256 about the field centre -- then the same Zhang-Suen
  * walk, DP eps 3, < 8 px drop, and the > 8-point split above).
- * The eight replacement characters keep their Noto strokes as
- * placeholders (the font has no glyphs for them yet); their LXGW
- * extraction is a separate step, see esp32/notes/20261124-1.5.5a
- * 评审修补说明.md. Table grew 163 -> 237 strokes; the longest
- * character is now 手 at 17 strokes (MUSE_TRACING_MAX_STROKES
- * raised 10 -> 20) and 地 at 213 resampled samples (limit 320
- * untouched).
+ * The font was then regenerated with the eight replacement glyphs
+ * (gen_tracing_font.sh --range already listed them) and their
+ * strokes extracted the same way -- skeleton on the 48 px bitmap
+ * (thinning the 3.54x magnified ghost produced stair-step
+ * junctions), direction-continuation walk, DP eps 3 on field
+ * coordinates, < 8 px drop, then a head-to-tail merge of pieces
+ * turning less than 35 degrees (the walk segmentation splits a
+ * stroke at every junction; the merge puts the straight halves
+ * back together). All thirty characters now share one source.
+ * Table 163 -> 288 strokes; the longest character is 男 at 23
+ * strokes (MUSE_TRACING_MAX_STROKES raised 10 -> 32) and 地 at 213
+ * resampled samples (limit 320 untouched). Every character was
+ * re-checked against its own ghost ink (100% of the resampled
+ * reference points within the 16 px cover radius).
  */
 #include "muse_tracing.h"
 
@@ -182,29 +186,47 @@ static const muse_tracing_stroke_t muse_tracing_stroke_table[] = {
     { 3, { {163,78}, {158,89}, {121,127} } },
     { 3, { {107,126}, {89,158}, {44,188} } },
     /* 云 */
-    { 2, { {65,48}, {163,48} } },
-    { 4, { {46,96}, {95,96}, {96,105}, {89,120} } },
-    { 2, { {181,96}, {98,98} } },
-    { 2, { {140,126}, {174,174} } },
-    { 2, { {59,168}, {129,162} } },
-    { 2, { {88,122}, {70,149} } },
-    { 2, { {69,151}, {65,165} } },
-    { 2, { {159,160}, {131,162} } },
+    { 2, { {144,59}, {119,59} } },
+    { 2, { {84,63}, {116,63} } },
+    { 2, { {169,102}, {137,102} } },
+    { 2, { {56,109}, {66,109} } },
+    { 2, { {141,137}, {151,148} } },
+    { 2, { {98,130}, {91,137} } },
+    { 2, { {95,137}, {87,144} } },
+    { 2, { {91,144}, {84,151} } },
+    { 2, { {151,148}, {151,158} } },
+    { 2, { {80,165}, {73,172} } },
+    { 2, { {77,169}, {112,169} } },
+    { 2, { {70,105}, {102,105} } },
+    { 2, { {109,105}, {133,105} } },
+    { 2, { {102,112}, {102,123} } },
+    { 2, { {137,162}, {148,162} } },
+    { 2, { {116,165}, {133,165} } },
     /* 雨 */
-    { 7, { {45,47}, {112,47}, {114,83}, {175,84}, {174,173}, {171,178}, {153,179} } },
-    { 2, { {182,47}, {114,47} } },
-    { 2, { {75,107}, {92,117} } },
-    { 2, { {132,107}, {154,117} } },
-    { 3, { {67,140}, {74,140}, {92,152} } },
-    { 2, { {130,140}, {152,152} } },
-    { 4, { {113,176}, {113,84}, {53,83}, {52,179} } },
+    { 2, { {73,59}, {95,59} } },
+    { 2, { {112,158}, {112,56} } },
+    { 2, { {56,165}, {56,91} } },
+    { 3, { {144,56}, {109,56}, {98,56} } },
+    { 3, { {148,87}, {109,87}, {91,87} } },
+    { 2, { {59,91}, {87,91} } },
+    { 2, { {169,176}, {169,87} } },
+    { 2, { {151,84}, {165,84} } },
     /* 虫 */
-    { 8, { {112,43}, {113,67}, {166,68}, {166,121}, {113,121}, {111,67}, {58,67}, {57,120} } },
-    { 3, { {57,120}, {111,121}, {113,171} } },
-    { 2, { {113,171}, {165,168} } },
-    { 3, { {165,168}, {163,156}, {152,145} } },
-    { 2, { {48,175}, {111,171} } },
-    { 2, { {179,182}, {167,167} } },
+    { 2, { {112,56}, {112,165} } },
+    { 2, { {66,172}, {77,172} } },
+    { 3, { {158,80}, {109,80}, {95,80} } },
+    { 2, { {70,84}, {91,84} } },
+    { 2, { {66,87}, {66,123} } },
+    { 2, { {66,119}, {73,126} } },
+    { 3, { {155,123}, {109,123}, {95,123} } },
+    { 2, { {144,123}, {144,141} } },
+    { 2, { {70,126}, {91,126} } },
+    { 2, { {144,137}, {155,148} } },
+    { 2, { {144,141}, {155,151} } },
+    { 2, { {155,148}, {155,158} } },
+    { 2, { {112,165}, {141,165} } },
+    { 2, { {158,91}, {158,119} } },
+    { 2, { {80,169}, {109,169} } },
     /* 上 */
     { 3, { {106,47}, {109,101}, {165,99} } },
     { 2, { {39,170}, {78,172} } },
@@ -283,40 +305,73 @@ static const muse_tracing_stroke_t muse_tracing_stroke_table[] = {
     { 2, { {125,55}, {113,62} } },
     { 2, { {125,95}, {172,95} } },
     /* 力 */
-    { 4, { {104,43}, {105,78}, {174,79}, {171,122} } },
-    { 3, { {50,78}, {102,78}, {100,109} } },
-    { 2, { {40,180}, {52,180} } },
-    { 3, { {133,182}, {152,182}, {164,172} } },
-    { 2, { {100,111}, {94,128} } },
-    { 2, { {171,124}, {167,159} } },
-    { 3, { {91,135}, {77,159}, {54,179} } },
-    { 2, { {167,161}, {164,170} } },
+    { 2, { {112,59}, {112,84} } },
+    { 2, { {126,169}, {133,176} } },
+    { 2, { {112,84}, {148,84} } },
+    { 2, { {98,130}, {87,141} } },
+    { 2, { {95,137}, {84,148} } },
+    { 2, { {87,148}, {52,183} } },
+    { 2, { {133,172}, {141,180} } },
+    { 2, { {56,176}, {48,183} } },
+    { 2, { {141,180}, {155,180} } },
+    { 2, { {151,80}, {165,80} } },
+    { 2, { {77,84}, {105,84} } },
+    { 2, { {169,84}, {169,105} } },
+    { 2, { {105,98}, {105,109} } },
+    { 2, { {165,109}, {165,137} } },
+    { 2, { {162,141}, {162,158} } },
+    { 2, { {158,162}, {158,176} } },
     /* 男 */
-    { 4, { {48,131}, {102,132}, {93,155}, {74,169} } },
-    { 2, { {39,174}, {55,176} } },
-    { 3, { {125,175}, {136,180}, {158,177} } },
-    { 5, { {64,45}, {111,45}, {114,73}, {164,73}, {165,101} } },
-    { 5, { {165,101}, {114,102}, {113,74}, {62,73}, {61,48} } },
-    { 3, { {116,45}, {163,45}, {165,73} } },
-    { 6, { {61,73}, {62,102}, {108,102}, {109,131}, {169,131}, {168,149} } },
-    { 2, { {168,151}, {164,167} } },
-    { 2, { {72,169}, {58,176} } },
+    { 2, { {73,52}, {133,52} } },
+    { 2, { {77,52}, {70,59} } },
+    { 2, { {112,52}, {112,102} } },
+    { 2, { {70,56}, {70,73} } },
+    { 2, { {151,73}, {133,73} } },
+    { 2, { {155,73}, {155,98} } },
+    { 2, { {73,77}, {130,77} } },
+    { 2, { {73,77}, {73,102} } },
+    { 2, { {151,98}, {137,98} } },
+    { 2, { {77,102}, {133,102} } },
+    { 2, { {109,102}, {109,130} } },
+    { 2, { {109,126}, {102,133} } },
+    { 3, { {144,130}, {98,130}, {84,130} } },
+    { 2, { {102,130}, {102,148} } },
+    { 2, { {102,148}, {77,172} } },
+    { 2, { {137,48}, {155,48} } },
+    { 2, { {158,52}, {158,70} } },
+    { 2, { {148,126}, {158,126} } },
+    { 2, { {162,130}, {162,144} } },
+    { 2, { {158,148}, {158,162} } },
+    { 2, { {155,165}, {155,176} } },
+    { 2, { {73,172}, {66,180} } },
+    { 2, { {137,180}, {151,180} } },
     /* 土 */
-    { 3, { {113,48}, {114,99}, {171,99} } },
-    { 4, { {56,99}, {113,100}, {114,180}, {182,180} } },
-    { 2, { {45,180}, {113,180} } },
+    { 2, { {112,63}, {112,165} } },
+    { 2, { {144,102}, {84,102} } },
+    { 2, { {169,165}, {91,165} } },
+    { 2, { {56,169}, {87,169} } },
     /* 心 */
-    { 2, { {97,48}, {131,75} } },
-    { 5, { {87,90}, {88,174}, {97,180}, {141,180}, {152,170} } },
-    { 3, { {57,103}, {48,148}, {42,156} } },
-    { 2, { {154,153}, {152,168} } },
-    { 2, { {167,97}, {183,148} } },
+    { 2, { {148,141}, {155,148} } },
+    { 2, { {172,119}, {180,126} } },
+    { 2, { {95,144}, {112,162} } },
+    { 2, { {151,148}, {158,155} } },
+    { 2, { {158,155}, {158,169} } },
+    { 2, { {155,169}, {130,169} } },
+    { 2, { {87,116}, {87,126} } },
     /* 尺 */
-    { 3, { {40,176}, {47,174}, {57,153} } },
-    { 6, { {66,45}, {66,97}, {122,98}, {140,145}, {158,165}, {179,175} } },
-    { 4, { {68,45}, {167,45}, {168,97}, {124,99} } },
-    { 2, { {66,98}, {57,150} } },
-    { 2, { {152,158}, {158,164} } },
+    { 2, { {144,52}, {105,52} } },
+    { 2, { {148,56}, {148,95} } },
+    { 2, { {77,98}, {77,66} } },
+    { 2, { {77,102}, {123,102} } },
+    { 2, { {80,102}, {73,109} } },
+    { 2, { {112,119}, {162,169} } },
+    { 2, { {119,130}, {151,162} } },
+    { 2, { {158,162}, {169,172} } },
+    { 3, { {59,162}, {52,169}, {45,176} } },
+    { 2, { {52,172}, {45,180} } },
+    { 2, { {84,56}, {102,56} } },
+    { 2, { {126,98}, {144,98} } },
+    { 2, { {73,109}, {73,126} } },
     /* 王 */
     { 3, { {161,52}, {161,59}, {169,60} } },
     { 4, { {59,62}, {109,63}, {111,112}, {157,115} } },
@@ -363,12 +418,12 @@ static const muse_tracing_stroke_t muse_tracing_stroke_table[] = {
 
 /* First stroke index per character, in MUSE_TRACING_CHARS
  * order; the count is the next entry minus this one. */
-static const uint8_t muse_tracing_stroke_first[] = {
+static const uint16_t muse_tracing_stroke_first[] = {
     0, 10, 26, 30, 36, 47, 51, 58, 66, 73,
-    79, 87, 94, 100, 105, 112, 124, 133, 150, 161,
-    170, 178, 187, 190, 195, 200, 209, 216, 223, 227,
+    79, 95, 103, 118, 123, 130, 142, 151, 168, 179,
+    188, 204, 227, 231, 238, 251, 260, 267, 274, 278,
 };
-/* Total strokes: 237. */
+/* Total strokes: 288. */
 
 static int dist2(int x0, int y0, int x1, int y1)
 {

@@ -22,6 +22,13 @@ extern "C" {
 extern const lv_image_dsc_t *const
     MUSE_TRACING_PINYIN_ART[MUSE_TRACING_CHARS];
 
+/* The 期 cards' pinyin: yī / èr / sān, the phase NUMBERS (the cards show
+ * 一 / 二 / 三, not each phase's first character), one per phase. Kept
+ * separate from the table-ordered array above: the numerals are not in
+ * MUSE_TRACING_TABLE since 2026-11-24. */
+extern const lv_image_dsc_t *const
+    MUSE_TRACING_PHASE_PINYIN_ART[MUSE_TRACING_PHASES];
+
 #ifdef __cplusplus
 }
 #endif

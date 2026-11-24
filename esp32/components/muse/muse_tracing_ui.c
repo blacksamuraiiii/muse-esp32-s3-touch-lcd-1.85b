@@ -477,9 +477,11 @@ static uint32_t paid_today(void)
 }
 
 /* Phase numbers, not the phase's first character (user decision
- * 2026-11-23, mockup v2): the three cards read 一 / 二 / 三. The
- * pinyin bitmaps are MUSE_TRACING_PINYIN_ART[10 + phase]: table
- * entries 10/11/12 are yī/èr/sān, matching the phase numbers. */
+ * 2026-11-23, mockup v2): the three cards read 一 / 二 / 三, and their
+ * pinyin comes from MUSE_TRACING_PHASE_PINYIN_ART (yī / èr / sān).
+ * The earlier [10 + phase] read of the table-ordered array broke on
+ * 2026-11-24, when the numerals left the character table: the cards
+ * drew the glyphs as boxes and showed yún/yǔ/chóng underneath. */
 static const char *const PHASE_NUMBERS[MUSE_TRACING_PHASES] = {
     "一", "二", "三",
 };
@@ -535,7 +537,7 @@ void muse_tracing_ui_build_phases(lv_obj_t *page, lv_event_cb_t back_cb,
         lv_obj_remove_flag(glyph, LV_OBJ_FLAG_CLICKABLE);
         s_phases_glyphs[phase] = glyph;
         lv_obj_t *py = lv_image_create(item);
-        lv_image_set_src(py, MUSE_TRACING_PINYIN_ART[10 + phase]);
+        lv_image_set_src(py, MUSE_TRACING_PHASE_PINYIN_ART[phase]);
         lv_obj_set_style_image_recolor(py, lv_color_hex(MUSE_THEME_DIM), 0);
         lv_obj_set_style_image_recolor_opa(py, LV_OPA_COVER, 0);
         lv_obj_align(py, LV_ALIGN_TOP_MID, 0, TRACING_LIST_NAME_Y);

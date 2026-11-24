@@ -8,9 +8,9 @@
  *     川 木 水 火 / 云 雨 虫 上 口 耳 目 手 田 禾 / 力 男 土 心 尺 王
  *     午 下 个 去), graded against that character's reference strokes
  *     -- the skeleton centrelines of its on-screen ghost glyph,
- *     extracted from the 48 px LXGW WenKai font (the eight
- *     replacement characters still carry Noto strokes until the
- *     font is regenerated -- see the 1.5.5a review fix note);
+ *     extracted from the 48 px LXGW WenKai font (all thirty
+ *     characters from that one font since 2026-11-24, see the
+ *     1.5.5a review fix note);
  *   - grading is the overall coverage (covered samples / all
  *     samples): >= 50% passes, >= 90% earns the praise line and
  *     the 2-coin reward, 50..89 is "继续加油". No stroke-order
