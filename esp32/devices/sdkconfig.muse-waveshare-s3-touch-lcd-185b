@@ -58,6 +58,15 @@ CONFIG_HOMEHUB_SETUP_TASKS_IN_PSRAM=y
 CONFIG_SPIRAM_ALLOW_BSS_SEG_EXTERNAL_MEMORY=y
 # CONFIG_SPIRAM_IGNORE_NOTFOUND is not set
 
+# Avatar + audio static buffers in PSRAM (~17 KB of zero-initialized
+# statics: muse_pixel frame/mask/LUTs, muse_audio I2S staging + chirp).
+# Only the CPU touches them (the avatar scales into LVGL's draw buffer,
+# the I2S driver copies to its own DMA buffers), so no DMA constraint.
+# From lichuang's memory recipe (2026-11-25); same Kconfig the Watcher
+# uses to pay for light-sleep retention. Frees ~17 KB of internal RAM;
+# exact figure needs the build map (no toolchain here).
+CONFIG_MUSE_STATIC_BUFFERS_IN_PSRAM=y
+
 # That forces Wi-Fi's TX buffers static, in internal RAM: 8, not 16, at 1.6 KB
 # each, which voice over the tunnel doesn't fill.
 CONFIG_ESP_WIFI_STATIC_TX_BUFFER_NUM=8
