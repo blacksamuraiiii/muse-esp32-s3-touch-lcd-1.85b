@@ -190,6 +190,13 @@ muse_link_state_t muse_link_state(void)
     return s_link;
 }
 
+/* The preview stands in for a paired board (s_chat starts REACHABLE): the UI
+ * reads this to decide whether an unreachable link means "the VM is asleep". */
+bool muse_link_hatch_linked(void)
+{
+    return s_chat.state != MUSE_HATCH_NOT_SET;
+}
+
 void muse_settings_ui_build(lv_obj_t *tile)
 {
     lv_obj_t *label = lv_label_create(tile);

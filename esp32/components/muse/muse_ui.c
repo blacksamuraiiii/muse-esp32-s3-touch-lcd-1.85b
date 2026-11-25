@@ -1535,7 +1535,15 @@ static void update_chrome(float now)
      * "SLEEPING" (8 chars) fits the 280 px label easily; the
      * ", RECONNECTING" half would not. */
     static float s_link_down_since = -1.0f;
-    if (w.state == MUSE_WIFI_CONNECTED && muse_link_state() != MUSE_LINK_ONLINE) {
+    muse_link_state_t link = muse_link_state();
+    /* Paired only, and only the two states a paired board sits in while the
+     * VM is asleep: an unpaired board advertises with Wi-Fi up (MUSE_LINK_
+     * UNPAIRED) and would otherwise read SLEEPING forever, and an error or a
+     * pairing prompt is not sleep either. Link retries on its own. */
+    bool vm_unreachable = w.state == MUSE_WIFI_CONNECTED &&
+                          (link == MUSE_LINK_CONNECTING || link == MUSE_LINK_OFFLINE) &&
+                          muse_link_hatch_linked();
+    if (vm_unreachable) {
         if (s_link_down_since < 0) {
             s_link_down_since = now;
         }
