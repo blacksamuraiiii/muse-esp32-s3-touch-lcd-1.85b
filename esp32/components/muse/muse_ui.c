@@ -1527,7 +1527,24 @@ static void update_chrome(float now)
     if (strcmp(wifi, lv_label_get_text(s_wifi_icon)) != 0) {
         lv_label_set_text(s_wifi_icon, wifi);
     }
-    s_idle_name = idle_name(w.state);
+    /* Wi-Fi is up but the link has not come ONLINE for a while: the VM
+     * may be asleep (idle-sleep) and the board reconnects on its own.
+     * After 30 s say so in the idle label instead of READY. The label
+     * only shows in IDLE mode (update_status), so no mode check here.
+     * Wording follows the other state labels (all caps, short):
+     * "SLEEPING" (8 chars) fits the 280 px label easily; the
+     * ", RECONNECTING" half would not. */
+    static float s_link_down_since = -1.0f;
+    if (w.state == MUSE_WIFI_CONNECTED && muse_link_state() != MUSE_LINK_ONLINE) {
+        if (s_link_down_since < 0) {
+            s_link_down_since = now;
+        }
+    } else {
+        s_link_down_since = -1.0f;
+    }
+    s_idle_name = (s_link_down_since >= 0 && now - s_link_down_since > 30.0f)
+                      ? "SLEEPING"
+                      : idle_name(w.state);
     muse_ble_status_t b;
     muse_ble_status(&b);
     const char *ble = b.state != MUSE_BLE_OFF ? LV_SYMBOL_BLUETOOTH : "";
